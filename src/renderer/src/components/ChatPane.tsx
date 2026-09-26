@@ -23,6 +23,7 @@ import { MessageMarkdown, QuoteMarkdown } from './MessageMarkdown'
 import type { ProfileAnchor } from './MemberProfilePopover'
 import { summarizeRuntimeError, type RuntimeErrorSummary } from '../../../shared/bot/errors'
 import { insertMention, mentionQuery, type MentionQuery } from '../../../shared/bot/mentions'
+import { formatMessageQuote, parseMessageQuote, quotedImageCount } from '../../../shared/messageQuote'
 import { socialFollowUpTarget } from '../../../shared/socialFollowUp'
 import { AgentAvatar, EmptyAvatar, UserAvatar, agentDisplayName, conversationDisplayName, dayLabel, formatTime, isDifferentDay } from './common'
 import {
@@ -812,18 +813,34 @@ export function SystemMessage({ message, onOpenCredits }: { message: ChatMessage
   )
 }
 
-function MessageQuote({ author, text, onCancel }: { author: string; text: string; onCancel?: () => void }): ReactElement {
+function MessageQuote({ author, text, attachments, onCancel }: { author: string; text: string; attachments?: MessageAttachment[]; onCancel?: () => void }): ReactElement {
+  const imageLabel = attachments?.map((image) => image.name || t('Image')).join(', ') ?? ''
+  const title = [`${author}: ${text}`, imageLabel].filter(Boolean).join('\n')
   return <div className={`message-quote${onCancel ? ' composer-quote' : ''}`}>
-    <div className="message-quote-text" title={`${author}: ${text}`}><span>{author}: </span><QuoteMarkdown text={text} /></div>
+    <div className="message-quote-text" title={title}><span>{author}: </span>{text ? <QuoteMarkdown text={text} /> : null}</div>
+    {attachments?.length ? <div className="message-quote-images">{attachments.map((attachment) => <MessageImage key={attachment.id} attachment={attachment} />)}</div> : null}
     {onCancel && <button type="button" aria-label={t('Cancel quote')} onClick={onCancel}><X size={11} strokeWidth={2.5} /></button>}
   </div>
 }
 
-function UserMessageText({ text }: { text: string }): ReactElement {
+function UserMessageText({ text, attachments }: { text: string; attachments?: MessageAttachment[] }): ReactElement {
   // Existing replies store their quote as an author line followed by quoted lines.
-  const quote = /^> ([^\r\n]+):\r?\n((?:>[^\r\n]*(?:\r?\n|$))+)\r?\n?/.exec(text)
+  const quote = parseMessageQuote(text)
   if (!quote) return text.startsWith('> ') ? <MessageMarkdown text={text} /> : <span>{text}</span>
-  return <><MessageQuote author={quote[1]} text={quote[2].replace(/^> ?/gm, '').trim()} /><span>{text.slice(quote[0].length)}</span></>
+  const images = attachments?.slice(0, quotedImageCount(text, attachments.length))
+  return <><MessageQuote author={quote.author} text={quote.text} attachments={images} /><span>{quote.rest}</span></>
+}
+
+async function quotedImageInput(attachment: MessageAttachment): Promise<MessageImageInput> {
+  const dataUrl = await window.douchat.getAttachmentData(attachment.id)
+  const marker = ';base64,'
+  const split = dataUrl.indexOf(marker)
+  if (!dataUrl.startsWith(`data:${attachment.mimeType}`) || split < 0) throw new Error('Image could not be loaded')
+  const binary = atob(dataUrl.slice(split + marker.length))
+  const data = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) data[index] = binary.charCodeAt(index)
+  if (!data.byteLength || data.byteLength > MAX_PASTED_IMAGE_BYTES) throw new Error('Each image must be 8 MB or smaller.')
+  return { name: attachment.name || 'image', mimeType: attachment.mimeType, data }
 }
 
 function usePresenceTime(): number {
@@ -894,7 +911,9 @@ export function MessageRow({
   }
   if (message.kind === 'system') return <SystemMessage message={message} onOpenCredits={onOpenCredits} />
   if (message.authorId === 'user') {
-    const hasAttachments = Boolean(message.attachments?.length)
+    const quotedImages = quotedImageCount(message.text, message.attachments?.length ?? 0)
+    const replyAttachments = message.attachments?.slice(quotedImages)
+    const hasAttachments = Boolean(replyAttachments?.length)
     const channel = message.sourceChannel && {
       wechat: { name: t('WeChat'), icon: 'wechat.svg' },
       feishu: { name: t('Feishu'), icon: 'feishu.png' },
@@ -908,10 +927,10 @@ export function MessageRow({
         <div className={`message-bubble user-bubble ${hasAttachments ? 'has-attachments' : ''} ${!message.text && hasAttachments ? 'image-only' : ''}`}>
           {message.text && (message.sourceChannel && /\]\(<douchat-file:/.test(message.text)
             ? <MessageMarkdown text={message.text} />
-            : <UserMessageText text={message.text} />)}
+            : <UserMessageText text={message.text} attachments={message.attachments} />)}
           {message.socialTasks && <SocialTaskStatus tasks={message.socialTasks} agents={socialAgents ?? []} />}
           {message.deliveryState && <small className="message-delivery-state" role="status">{message.deliveryState === 'sending' ? '发送中…' : message.deliveryState === 'confirming' ? '已发送，正在同步接单状态…' : '发送未确认，请在队列中重试'}</small>}
-          <MessageAttachments attachments={message.attachments} />
+          <MessageAttachments attachments={replyAttachments} />
         </div>
         {onOpenUserProfile ? (
           <button
@@ -1106,7 +1125,10 @@ export function ChatPane({
   const [deletedIds, setDeletedIds] = useState<Set<string>>(() => new Set())
   const menuRef = useRef<HTMLDivElement>(null)
   const [messageActionError, setMessageActionError] = useState('')
-  const messageText = (message: ChatMessage): string => message.text || message.attachments?.map((image) => `[${image.name || t('Image')}]`).join('\n') || t(message.error || 'Message')
+  const quotePreview = (message: ChatMessage): { text: string; attachments: MessageAttachment[] } => ({
+    text: message.text.trim() || (message.attachments?.length ? '' : t(message.error || 'Message')),
+    attachments: message.attachments ?? []
+  })
   useEffect(() => {
     if (!messageMenu) return
     menuRef.current?.querySelector<HTMLButtonElement>('button')?.focus()
@@ -1382,12 +1404,35 @@ export function ChatPane({
     const content = draft.trim()
     if ((!content && !pendingImages.length) || !conversation || sending || voiceState !== 'idle') return
     const quote = quotedMessage
-    const outgoing = quote ? `> ${quote.authorId === 'user' ? userName : quote.authorName}:\n${messageText(quote).split(/\r?\n/).map((line) => `> ${line}`).join('\n')}\n\n${content}` : content
+    const preview = quote ? quotePreview(quote) : undefined
+    const quotedAttachments = preview?.attachments ?? []
     const sendingImages = pendingImages
+    if (quotedAttachments.length + sendingImages.length > MAX_PASTED_IMAGES) {
+      setAttachmentError(t('You can paste up to 4 images at a time.'))
+      return
+    }
+    if (quotedAttachments.reduce((sum, image) => sum + image.size, 0) + sendingImages.reduce((sum, image) => sum + image.size, 0) > MAX_PASTED_IMAGE_TOTAL_BYTES) {
+      setAttachmentError(t('Images must total 20 MB or less.'))
+      return
+    }
     const sendingImageIds = new Set(sendingImages.map((image) => image.id))
     setSending(true)
+    let quotedImages: MessageImageInput[]
     try {
-      const images: MessageImageInput[] = sendingImages.map(({ name, mimeType, data }) => ({ name, mimeType, data }))
+      quotedImages = await Promise.all(quotedAttachments.map(quotedImageInput))
+    } catch {
+      setSending(false)
+      setAttachmentError(t('Image could not be loaded'))
+      return
+    }
+    try {
+      const images: MessageImageInput[] = [
+        ...quotedImages,
+        ...sendingImages.map(({ name, mimeType, data }) => ({ name, mimeType, data }))
+      ]
+      const outgoing = quote && preview
+        ? `${formatMessageQuote(quote.authorId === 'user' ? userName : quote.authorName, preview.text, quotedImages.length)}${content}`
+        : content
       setDraft('')
       setPendingImages((current) => current.filter((image) => !sendingImageIds.has(image.id)))
       setMention(null)
@@ -1618,7 +1663,8 @@ export function ChatPane({
         <div className={`composer ${draft.trim() || pendingImages.length ? 'has-content' : ''}`}>
           {quotedMessage && <MessageQuote
             author={quotedMessage.authorId === 'user' ? userName : quotedMessage.authorName}
-            text={messageText(quotedMessage)}
+            text={quotePreview(quotedMessage).text}
+            attachments={quotePreview(quotedMessage).attachments}
             onCancel={() => setQuotedMessage(null)}
           />}
           {pendingImages.length > 0 && (

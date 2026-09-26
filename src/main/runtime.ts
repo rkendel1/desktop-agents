@@ -11,6 +11,7 @@ import { groupRoutingProfile } from '../shared/groupProfile'
 import { agentIdentityPrompt, agentPersona } from '../shared/agentCustomization'
 import { groupMemoryPrompt, userMemoryPrompt, localUserMemoryEdits, MEMORY_OPEN, MEMORY_CLOSE, type UserMemoryEdit } from '../shared/userMemory'
 import { groupNotice, groupText } from '../shared/groupText'
+import { modelVisibleText } from '../shared/messageQuote'
 import { CUSTOM_PROVIDER_PREFIX } from '../shared/customModels'
 import { cancellableGroupPlan, firstGroupPlan, planningFailureReason, GROUP_PLANNING_ATTEMPT_MS, GROUP_PLANNING_BUDGET_MS } from './groupPlanning'
 import { DecisionEscalation, GroupDecisionService } from './groupDecision'
@@ -270,7 +271,8 @@ function validInputImages(images: MessageImageInput[] | undefined): MessageImage
 }
 
 function imagePrompt(text: string, imageCount: number): string {
-  if (text) return text
+  const visible = modelVisibleText(text)
+  if (visible) return visible
   return imageCount === 1
     ? 'The human sent an image. Examine it and respond helpfully.'
     : `The human sent ${imageCount} images. Examine them and respond helpfully.`
@@ -2170,7 +2172,7 @@ export class DouchatRuntime {
         // a global CLI session across contacts, groups, or topics.
         const history = context === 'direct' && sessionKey.startsWith(`direct:${conversationId}:`)
           ? this.store.contextMessages(conversationId, topicId).slice(-20)
-              .map((message) => `${message.authorName}: ${message.text}`).join('\n').slice(-24000)
+              .map((message) => `${message.authorName}: ${modelVisibleText(message.text)}`).join('\n').slice(-24000)
           : ''
         const abort = new AbortController()
         const forwardAbort = (): void => abort.abort()
@@ -2533,7 +2535,7 @@ export class DouchatRuntime {
         role: message.authorId === 'user' ? ('user' as const) : ('assistant' as const),
         sender: message.authorId === 'user' ? undefined : { id: message.authorId, name: message.authorName },
         recipients: message.recipients,
-        content: message.text,
+        content: modelVisibleText(message.text),
         ...(message.attachments?.length ? { artifacts: message.attachments.map(({ id, name }) => ({ id, name })) } : {})
       }))
   }
@@ -2889,7 +2891,7 @@ export class DouchatRuntime {
         .map((message) => ({
           authorId: message.authorId,
           authorName: message.authorName,
-          content: message.text,
+          content: modelVisibleText(message.text),
           source: message.source
         })),
       !this.sessions.has(sessionKey) || history.some(message => Boolean(message.sourceChannel))
@@ -2906,8 +2908,8 @@ export class DouchatRuntime {
       runId,
       signal,
       images,
-      routineRequest: user.authorId === 'user' ? user.text : undefined,
-      memoryRequest: user.authorId === 'user' ? user.text : undefined
+      routineRequest: user.authorId === 'user' ? modelVisibleText(user.text) : undefined,
+      memoryRequest: user.authorId === 'user' ? modelVisibleText(user.text) : undefined
     }).finally(() => this.handoffReplies.delete(sessionKey))
     if (signal.aborted) return undefined
 
@@ -3337,8 +3339,8 @@ export class DouchatRuntime {
           runId,
           signal,
           images: taskImages,
-          routineRequest: user.authorId === 'user' ? user.text : undefined,
-          groupMemoryRequest: user.authorId === 'user' ? { groupId: conversation.id, speaker: { id: this.store.currentAccountId, name: this.store.userName }, text: user.text } : undefined,
+          routineRequest: user.authorId === 'user' ? modelVisibleText(user.text) : undefined,
+          groupMemoryRequest: user.authorId === 'user' ? { groupId: conversation.id, speaker: { id: this.store.currentAccountId, name: this.store.userName }, text: modelVisibleText(user.text) } : undefined,
           toolsDisabled: turn.waitForHuman || turn.participationOnly,
           onProgress: () => journal.progress(stepKey(member, turn)),
           timeoutMs: turn.participationOnly ? 60_000 : 120_000

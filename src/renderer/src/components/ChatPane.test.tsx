@@ -204,6 +204,27 @@ describe('private delivery disclosure', () => {
     expect(container.querySelector('.user-bubble > span')?.textContent).toBe('My reply')
   })
 
+  it('shows quoted images inside the quote and keeps later images with the reply', async () => {
+    const quoted = { id: '11111111-1111-4111-8111-111111111111', kind: 'image' as const, name: 'cat.png', mimeType: 'image/png' as const, size: 8 }
+    const added = { ...quoted, id: '22222222-2222-4222-8222-222222222222', name: 'note.png' }
+    window.douchat = { getAttachmentData: vi.fn().mockResolvedValue('data:image/png;base64,iVBORw0KGgo=') } as unknown as typeof window.douchat
+    const message = {
+      ...incomingReply,
+      authorId: 'user',
+      text: '> Dobi:\n> Look\n> [[douchat-quote-images:1]]\n\nWhat is it?',
+      attachments: [quoted, added]
+    }
+    await act(async () => root.render(<MessageRow messages={[message]} agents={agents} relatedMessages={[]} userName="You" userAvatar="" showAuthor={false} />))
+    await act(async () => { await Promise.resolve() })
+    const quote = container.querySelector('.message-quote')!
+    expect(quote.textContent).toBe('Dobi: Look')
+    expect(quote.querySelectorAll('img')).toHaveLength(1)
+    expect(quote.querySelector('img')?.getAttribute('alt')).toBe('cat.png')
+    expect(container.querySelectorAll('.message-attachments img')).toHaveLength(1)
+    expect(container.querySelector('.message-attachments img')?.getAttribute('alt')).toBe('note.png')
+    expect(container.querySelector('.user-bubble > span')?.textContent).toBe('What is it?')
+  })
+
   it('keeps the latest message visible when the queue grows without pulling readers away from history', async () => {
     const messages = [{ ...incomingReply, conversationId: directConversation.id }]
     const render = async (count: number) => act(async () => root.render(<ChatPane userName="You" userAvatar="" conversation={directConversation} messages={messages} allMessages={messages} agents={agents} members={agents} offline={false} onConnect={() => {}} inspectorOpen={false} onToggleInspector={() => {}} onOpenAgentProfile={() => {}} onOpenUserProfile={() => {}} onSend={async () => {}} onStop={() => {}}
@@ -277,7 +298,10 @@ describe('private delivery disclosure', () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'My reply')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await act(async () => { container.querySelector<HTMLButtonElement>('.send-button')!.click() })
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.send-button')!.click()
+      await Promise.resolve()
+    })
     expect(send).toHaveBeenCalledWith(expect.stringContaining(`> ${message.text}\n\nMy reply`), [])
     expect(container.querySelector('.composer-quote')).toBeNull()
     await open()
@@ -297,6 +321,38 @@ describe('private delivery disclosure', () => {
     await click('Delete')
     expect(deleteMessage).toHaveBeenCalledWith(message.conversationId, message.id)
     expect(container.querySelector('.message-bubble')).toBeNull()
+  })
+
+  it('quotes the selected message images and sends them with the reply', async () => {
+    const image = { id: '11111111-1111-4111-8111-111111111111', kind: 'image' as const, name: 'cat.png', mimeType: 'image/png' as const, size: 8 }
+    const message = { ...incomingReply, conversationId: directConversation.id, source: undefined, text: 'Look', attachments: [image] }
+    const send = vi.fn().mockResolvedValue(undefined)
+    window.douchat = { getAttachmentData: vi.fn().mockResolvedValue('data:image/png;base64,iVBORw0KGgo=') } as unknown as typeof window.douchat
+    await act(async () => root.render(<ChatPane userName="You" userAvatar="" conversation={directConversation} messages={[message]} allMessages={[message]} agents={agents} members={agents} offline={false} onConnect={() => {}} inspectorOpen={false} onToggleInspector={() => {}} onOpenAgentProfile={() => {}} onOpenUserProfile={() => {}} onSend={send} onStop={() => {}} />))
+    await act(async () => {
+      container.querySelector('.message-bubble')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 100, clientY: 100 }))
+    })
+    await act(async () => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((button) => button.textContent === 'Quote')!.click()
+    })
+    await act(async () => { await Promise.resolve() })
+    expect(container.querySelector('.composer-quote')?.textContent).toContain('Look')
+    expect(container.querySelector('.composer-quote img')?.getAttribute('alt')).toBe('cat.png')
+    const reply = container.querySelector('textarea')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(reply, 'What is it?')
+      reply.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.send-button')!.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(send).toHaveBeenCalledWith(
+      '> 拽姐:\n> Look\n> [[douchat-quote-images:1]]\n\nWhat is it?',
+      [expect.objectContaining({ name: 'cat.png', mimeType: 'image/png', data: expect.any(Uint8Array) })]
+    )
+    expect(container.querySelector('.composer-quote')).toBeNull()
   })
 
   it('shows the follow-up recipient and hides it when explicitly addressing a human', async () => {

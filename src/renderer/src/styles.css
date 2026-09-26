@@ -6366,6 +6366,9 @@ html[data-platform='win32'] .messenger .app-rail {
 .permission-requester-copy small { font-size: 12px; }
 
 .message-quote { display: flex; align-items: center; gap: 14px; min-width: 0; margin: 0 0 10px; padding: 1px 0 1px 11px; font: inherit; letter-spacing: inherit; }
+.message-quote-images { display: flex; flex: 0 0 auto; gap: 4px; }
+.message-quote-images .message-image,
+.message-quote-images .message-image-state { width: 40px; height: 40px; max-width: 40px; max-height: 40px; border-radius: 4px; object-fit: cover; }
 .user-bubble :is(.message-quote, .message-markdown blockquote) { color: color-mix(in srgb, var(--ink) 50%, var(--muted)); border-left-color: color-mix(in srgb, var(--muted) 35%, transparent); }
 .message-quote-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; white-space: normal; flex: 1; min-width: 0; font-weight: inherit; }
 .message-quote-text strong { font-weight: inherit; }
