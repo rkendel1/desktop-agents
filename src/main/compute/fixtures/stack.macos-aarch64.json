@@ -1,0 +1,70 @@
+{
+  "format": "compute.distribution-profile@1",
+  "profile": "configured",
+  "name": "published-compute-ecosystem",
+  "compute": "0.1.5",
+  "platform": "macos-aarch64",
+  "distribution": {
+    "identity": "compute-configured-0.1.5-macos-aarch64",
+    "certification_status": "preview",
+    "base_asset": "compute-0.1.5-macos-aarch64.tar.gz",
+    "configured_asset": "compute-configured-0.1.5-macos-aarch64.tar.gz",
+    "pipeline": "distribution-certification",
+    "release": "https://github.com/rkendel1/compute/releases/tag/v0.1.5"
+  },
+  "runtime": {
+    "implementation": "base-compute",
+    "shared_binary": true,
+    "shared_cli": true,
+    "shared_ui": true
+  },
+  "state": {
+    "owner": "compute",
+    "root": "COMPUTE_HOME",
+    "model": "compute-state",
+    "authoritative_durable_backend": "compute-state-feltdb",
+    "shared_with_base": true,
+    "additional_stores": []
+  },
+  "configuration": {
+    "stack_path": "stacks/configured/stack.toml",
+    "activation": "COMPUTE_STACKS",
+    "idempotent": true
+  },
+  "migrations": [],
+  "packages": {
+    "@appport/core": "1.0.3",
+    "@appport/github": "1.0.2",
+    "@appport/runtime": "0.4.6",
+    "@appport/server": "1.0.2",
+    "@appport/services": "0.4.6",
+    "@appport/transport-http": "1.0.2",
+    "@appport/transport-inprocess": "1.0.2",
+    "@appport/transport-websocket": "1.0.2",
+    "@authboundry/core": "1.15.3",
+    "@feltdb/core": "0.11.9"
+  },
+  "contracts": {
+    "appport": "AppPort/1",
+    "github_ui": "AppPort/ui/1",
+    "feltdb_protocol": 1,
+    "git_source": 1
+  },
+  "allowed_version_skew": {
+    "@feltdb/core": {
+      "versions": [
+        "0.11.1",
+        "0.11.5",
+        "0.11.9"
+      ],
+      "reason": "@authboundry/core 1.15.3 embeds 0.11.5 and its @appport/services 0.3.2 embeds 0.11.1; the stack verifies the published graph against FeltDB protocol 1"
+    },
+    "@appport/services": {
+      "versions": [
+        "0.3.2",
+        "0.4.6"
+      ],
+      "reason": "@authboundry/core 1.15.3 embeds 0.3.2; @appport/github 1.0.2 uses 0.4.6"
+    }
+  }
+}

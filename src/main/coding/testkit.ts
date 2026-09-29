@@ -8,6 +8,7 @@ import { startDesktop, stopDesktop, type DesktopState } from '../desktop'
 import { addCustomLocalAgent, detectLocalAgents } from '../localAgents'
 import { DouchatRuntime } from '../runtime'
 import { CodingService } from './service'
+import type { ComputeClient } from '../compute/client'
 
 /** Shared by the coding tests: real repositories, real desktops, and the scripted stand-in agent (a real child process). */
 export const fixture = join(__dirname, 'fixtures', 'scripted-agent.cjs')
@@ -35,10 +36,10 @@ export class TestKit {
     return path
   }
 
-  async boot(root = this.temporary('coding-desktop-')): Promise<Booted> {
+  async boot(root = this.temporary('coding-desktop-'), options: { compute?: ComputeClient; pax?: string } = {}): Promise<Booted> {
     const desktop = await startDesktop({ userData: root, codec })
     const runtime = new DouchatRuntime(desktop.repository, idleComputer, () => undefined)
-    const booted = { root, desktop, runtime, coding: new CodingService(desktop.repository, runtime) }
+    const booted = { root, desktop, runtime, coding: new CodingService(desktop.repository, runtime, () => undefined, options) }
     this.running.push(booted)
     return booted
   }

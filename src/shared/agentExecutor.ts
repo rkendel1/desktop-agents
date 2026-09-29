@@ -28,7 +28,20 @@ export interface LocalAgentReply {
   images: LocalAgentImage[]
 }
 
+/**
+ * Where an agent's process is started. Absent, it is started on this computer. A coding session that runs on a Compute Computer
+ * supplies one that asks Compute to start the process there; the runtime treats what comes back as the process it always
+ * handled (output, exit status, a way to stop it).
+ */
+export interface LocalLauncher {
+  /** The working directory the agent will see, as it is on the machine that runs it. */
+  readonly workingDirectory: string
+  spawn(file: string, args: string[]): import('node:child_process').ChildProcessWithoutNullStreams & { stop?(): void }
+}
+
 export interface LocalRunOptions {
+  /** Start the agent's process somewhere other than this computer (a Compute Computer). One-shot agents only. */
+  launch?: LocalLauncher
   /** Validated, unsaved settings used only by the connection test. */
   agentOverride?: LocalAgent
   /** Read-only controllers must not gain image generation through MCP. */

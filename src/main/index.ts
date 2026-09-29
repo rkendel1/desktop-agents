@@ -46,6 +46,7 @@ import { DouchatRuntime } from './runtime'
 import { RoutineScheduler } from './scheduler'
 import { CodingService } from './coding/service'
 import { CodingApi } from './coding/api'
+import { ComputeClient } from './compute/client'
 import { startAppPortHost, type AppPortHost } from './appport/host'
 import { openDesktopServices } from './appport/services'
 import { connectGitHub, openDesktopGitHub, projectRemote } from './appport/github'
@@ -204,6 +205,7 @@ let updater: DesktopUpdater
 let emailConnectors: EmailConnectorManager
 let projection: DesktopProjection
 let coding: CodingService
+let computeClient: ComputeClient
 let codingApi: CodingApi
 let appPort: AppPortHost | undefined
 let appPortServices: AppPortServices | undefined
@@ -476,7 +478,8 @@ app.whenReady().then(async () => {
   runtime.setInterfaceLanguage(app.getLocale())
   scheduler = new RoutineScheduler(store, runtime)
   runtime.setRoutineCreator((input) => scheduler.createRoutine(input))
-  coding = new CodingService(store, runtime, () => ephemeralChanged())
+  computeClient = new ComputeClient()
+  coding = new CodingService(store, runtime, () => ephemeralChanged(), { compute: computeClient })
   // The one place approvals are answered: the desktop prompt and a remote client both end up here.
   const answerPermission = (id: string, allow: boolean): void => { runtime.resolveAgentPermission(id, allow); ephemeralChanged() }
   codingApi = new CodingApi(store, coding, answerPermission)
@@ -1008,21 +1011,31 @@ app.whenReady().then(async () => {
     if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
     return store.removeProject(id)
   })
-  ipcMain.handle('douchat:project-git-status', (event, id: unknown) => {
-    if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
-    return coding.gitStatus(id)
+  ipcMain.handle('douchat:project-git-status', (event, id: unknown, sessionId?: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (sessionId !== undefined && typeof sessionId !== 'string')) throw new Error('Unauthorized')
+    return coding.gitStatus(id, sessionId as string | undefined)
   })
-  ipcMain.handle('douchat:project-git-diff', (event, id: unknown, path?: unknown) => {
-    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (path !== undefined && typeof path !== 'string')) throw new Error('Unauthorized')
-    return coding.gitDiff(id, path as string | undefined)
+  ipcMain.handle('douchat:project-git-diff', (event, id: unknown, path?: unknown, sessionId?: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (path !== undefined && typeof path !== 'string') || (sessionId !== undefined && typeof sessionId !== 'string')) throw new Error('Unauthorized')
+    return coding.gitDiff(id, path as string | undefined, sessionId as string | undefined)
+  })
+  // What Compute says it has — read from Compute each time, never kept here. Compute's own UI is where Computers are managed.
+  ipcMain.handle('douchat:compute-inventory', event => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    return computeClient.inventory()
+  })
+  ipcMain.handle('douchat:open-compute-ui', async event => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    await shell.openExternal(`${computeClient.daemon.replace(/\/$/, '')}/ui/`)
   })
   ipcMain.handle('douchat:list-coding-sessions', (event, projectId?: unknown) => {
     if (!isDouchatRenderer(event.sender) || (projectId !== undefined && typeof projectId !== 'string')) throw new Error('Unauthorized')
     return store.codingSessions(projectId as string | undefined)
   })
-  ipcMain.handle('douchat:start-coding-session', (event, input: { projectId?: unknown; agentId?: unknown; task?: unknown }) => {
+  ipcMain.handle('douchat:start-coding-session', (event, input: { projectId?: unknown; agentId?: unknown; task?: unknown; execution?: { kind?: unknown; environment?: unknown } }) => {
     if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.agentId !== 'string' || typeof input.task !== 'string') throw new Error('Unauthorized')
-    return coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task })
+    const execution = input.execution?.kind === 'compute' && typeof input.execution.environment === 'string' ? { kind: 'compute' as const, environment: input.execution.environment } : undefined
+    return coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task, ...(execution ? { execution } : {}) })
   })
   ipcMain.handle('douchat:continue-coding-session', (event, id: unknown, text?: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (text !== undefined && typeof text !== 'string')) throw new Error('Unauthorized')

@@ -316,7 +316,7 @@ export async function runLocalAgent(
   const run = { agentId: config.id, sessionKey: options.sessionKey, abort: new AbortController() }
   activeLocalRuns.add(run)
   const combined = signal ? AbortSignal.any([signal, run.abort.signal]) : run.abort.signal
-  const connected = options.sessionKey && ['codex', 'claude'].includes(config.localAgentId!)
+  const connected = !options.launch && options.sessionKey && ['codex', 'claude'].includes(config.localAgentId!)
   let release: (() => void) | undefined
   try {
     if (!connected) release = await processBudget.acquire(combined, evictIdleConnection)
@@ -333,7 +333,7 @@ async function executeLocalAgent(
   options: LocalRunOptions = {}
 ): Promise<LocalAgentReply> {
   options.onProgress?.({ phase: 'connecting', elapsedSeconds: 0, silentSeconds: 0 })
-  if (options.sessionKey && ['codex', 'claude'].includes(config.localAgentId!)) {
+  if (!options.launch && options.sessionKey && ['codex', 'claude'].includes(config.localAgentId!)) {
     return runConnectedAgent(config, prompt, signal, inputImages, options)
   }
   const agent = options.agentOverride ?? await validateLocalAgent(config.localAgentId!)
@@ -369,7 +369,9 @@ async function executeLocalAgent(
     let grokStream: GrokStream | undefined
     let geminiStream: GeminiStream | undefined
     const run = (childEnvironment: NodeJS.ProcessEnv): Promise<string> => new Promise<string>((resolve, reject) => {
-      const child = spawn(command.file, [...command.prefix, ...(agent.custom ? customLocalAgentArguments(agent.args, effectivePrompt) : appendLocalAgentArguments(withLocalModel(agent.id, withLocalThinking(agent.id, localAgentArgs(agent.id, effectivePrompt, output, true), config.thinkingLevel), config.model), agent.args)), ...(geminiPolicyFile ? ['--policy', geminiPolicyFile] : [])], {
+      const agentArguments = [...command.prefix, ...(agent.custom ? customLocalAgentArguments(agent.args, effectivePrompt) : appendLocalAgentArguments(withLocalModel(agent.id, withLocalThinking(agent.id, localAgentArgs(agent.id, effectivePrompt, output, true), config.thinkingLevel), config.model), agent.args)), ...(geminiPolicyFile ? ['--policy', geminiPolicyFile] : [])]
+      // On a Compute Computer the launcher starts it there; otherwise it is started here, exactly as before.
+      const child = options.launch ? options.launch.spawn(command.file, agentArguments) : spawn(command.file, agentArguments, {
         cwd: directory, env: childEnvironment, windowsHide: true, detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe']
       })
@@ -378,7 +380,7 @@ async function executeLocalAgent(
       let stderr = ''
       let bytes = 0
       let failure: Error | undefined
-      const kill = (): void => killLocalProcess(child)
+      const kill = (): void => { if (options.launch) (child as { stop?(): void }).stop?.(); else killLocalProcess(child) }
       const abort = (): void => { failure = new Error('Stopped'); kill() }
       const started = Date.now()
       let lastOutput = started

@@ -41,6 +41,24 @@ if (task.action === 'fix-add') {
   lines.push(`git-after=${run('git', ['status', '--porcelain']).out.trim()}`)
   console.log(lines.join('\n'))
   if (task.log) appendFileSync(task.log, `end ${task.name} ${Date.now()}\n`)
+} else if (task.action === 'compute-work') {
+  // Evidence of where and how this ran, then real work through PAX and the project's own tools. Nothing here is simulated.
+  const { spawnSync } = require('node:child_process')
+  const os = require('node:os')
+  const sh = (file, args) => { const r = spawnSync(file, args, { cwd, encoding: 'utf8' }); return { code: r.status, out: r.stdout ?? '', err: r.stderr ?? '' } }
+  const evidence = { cwd, pid: process.pid, ppid: process.ppid, node: process.version, execPath: process.execPath, platform: process.platform, arch: process.arch, hostname: os.hostname() }
+  const info = sh(task.pax, ['--json', 'info'])
+  let manager = null
+  try { manager = JSON.parse(info.out).manager } catch { /* reported as null */ }
+  const before = sh(task.pax, ['test'])
+  const path = `${cwd}/src/math.js`
+  writeFileSync(path, readFileSync(path, 'utf8').replace('return a - b', 'return a + b'))
+  const after = sh(task.pax, ['test'])
+  if (task.hold) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, task.hold * 1000)
+  console.log('EVIDENCE ' + JSON.stringify({ ...evidence, pax: { infoExit: info.code, manager, testBefore: before.code, testAfter: after.code }, gitStatus: sh('git', ['status', '--short']).out }))
+} else if (task.action === 'exit-code') {
+  console.error('the agent stops with a failing status on purpose')
+  process.exit(task.code ?? 3)
 } else if (task.action === 'touch') {
   // Rewrites the named files (creating folders as needed), the way an agent editing a dirty tree would.
   const { mkdirSync } = require('node:fs')

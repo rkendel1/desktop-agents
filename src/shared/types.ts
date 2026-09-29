@@ -618,10 +618,12 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   /** Opens a folder picker; resolves with the project, or undefined if cancelled. */
   chooseProject: () => Promise<Project | undefined>
   removeProject: (id: string) => Promise<boolean>
-  projectGitStatus: (id: string) => Promise<GitState>
-  projectGitDiff: (id: string, path?: string) => Promise<{ diff: string; truncated: boolean }>
+  projectGitStatus: (id: string, sessionId?: string) => Promise<GitState>
+  projectGitDiff: (id: string, path?: string, sessionId?: string) => Promise<{ diff: string; truncated: boolean }>
   listCodingSessions: (projectId?: string) => Promise<CodingSession[]>
-  startCodingSession: (input: { projectId: string; agentId: string; task: string }) => Promise<CodingSession>
+  startCodingSession: (input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment: string } }) => Promise<CodingSession>
+  computeInventory: () => Promise<ComputeInventory>
+  openComputeUi: () => Promise<void>
   cancelCodingSession: (id: string) => Promise<void>
   continueCodingSession: (id: string, text?: string) => Promise<CodingSession>
   runCodingChecks: (id: string) => Promise<CommandResult | undefined>
@@ -691,6 +693,46 @@ export type CodingSessionStatus = 'running' | 'succeeded' | 'failed' | 'cancelle
  * working directory, the chat that carries the conversation and its events, and
  * the outcome. The OS process is not part of it and does not survive a restart.
  */
+/**
+ * Where a coding session's agent runs. Foundry keeps only the *reference* to a Compute resource — the environment's name and id and the
+ * repository checked out in it — never a copy of the Computer's state; Compute owns the Computer, its processes and its lifecycle.
+ */
+export type ExecutionTarget =
+  | { kind: 'local' }
+  | { kind: 'compute'; environment: string; environmentId?: string; repository: string }
+
+/** Which distribution a Computer runs and what Compute itself says about it. Never inferred from a successful run. */
+export interface ComputePlatformView {
+  platform: string
+  status: 'certified' | 'preview' | 'unverified'
+  /** e.g. "Linux x86_64 — Certified", "macOS ARM64 — Preview". */
+  label: string
+  computeVersion?: string
+  /** Where the status comes from: `compute-configured-verify`. */
+  evidence: string
+}
+
+export interface ComputeEnvironmentView {
+  name: string
+  environmentId: string
+  /** Compute's own words: what the Computer was last observed to be. */
+  observed: string
+  explanation?: string
+  target?: string
+}
+
+export interface ComputeInventory {
+  available: boolean
+  /** Why not, when it is not: Compute Configured missing, daemon not running, … */
+  reason?: string
+  installation?: { binary: string; version: string; configured: boolean }
+  platform?: ComputePlatformView
+  daemon: { endpoint: string; reachable: boolean }
+  environments: ComputeEnvironmentView[]
+  /** Compute's own control-plane UI, where the same Computers are observed and managed. */
+  uiUrl?: string
+}
+
 export interface CodingSession {
   id: string
   projectId: string
@@ -713,6 +755,8 @@ export interface CodingSession {
   changes: GitChange[]
   /** Paths that were dirty when the session started and are clean now. */
   cleaned?: string[]
+  /** Where the agent runs. Absent means this computer, as before. */
+  execution?: ExecutionTarget
   /** HEAD when the session last ended, to show whether commits were made meanwhile. */
   finalHead?: string
   /** Checks Foundry ran in the project for this session. */

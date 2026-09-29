@@ -1,12 +1,16 @@
 import type { PermissionEvent } from '../agentPermissions'
-import type { CodingActivity, CodingEvent, CodingSession, CommandResult, GitState, Project } from '../../shared/types'
+import type { CodingActivity, CodingEvent, CodingSession, CommandResult, ExecutionTarget, GitState, Project } from '../../shared/types'
+import type { LocalLauncher } from '../../shared/agentExecutor'
+import { ComputeClient } from '../compute/client'
+import { computeLauncher, ComputeInterruption } from '../compute/launcher'
+import { runPax, type PaxInspection, type PaxOperation, type PaxRun } from '../compute/pax'
 import { describeApproval, formatCommandLine } from '../../shared/coding'
 import type { CodingNotification } from '../../shared/codingApi'
 import type { DesktopRepository } from '../desktopRepository'
 import { resolveSavedWorkspace, validateWorkspaceFolder } from '../localWorkspaces'
 import type { EphemeralState } from '../projection'
 import { runCommand } from './commands'
-import { accountChanges, gitDiff, gitRoot, gitStatus } from './git'
+import { accountChanges, gitDiff, gitRemoteUrl, gitRoot, gitStatus, type GitLocation } from './git'
 
 /** What the service needs from the agent runtime: run a turn in a chat, stop it, and tell it what is going on. */
 export interface CodingRuntime {
@@ -16,6 +20,8 @@ export interface CodingRuntime {
   setTurnGuard?(guard: ((turn: { conversationId: string; topicId: string }) => Promise<void>) | undefined): void
   /** Withdraw an agent's pending approvals and reusable grants. */
   expirePermissions?(agentId: string): void
+  /** Where a chat's agent process is started when not here (a Compute Computer). */
+  setLaunchResolver?(resolver: ((turn: { conversationId: string; topicId: string }) => LocalLauncher | undefined) | undefined): void
   observePermissions?(observer: ((event: PermissionEvent) => void) | undefined): void
 }
 
@@ -25,7 +31,7 @@ const RESUME_PROMPT = 'Continue where you left off. Check the repository’s cur
 const INTERRUPTED_PROMPT = 'Your previous turn was interrupted when Foundry closed, so its process is gone. Check the repository’s current state and continue the task.'
 
 /** Live facts about one running session: the process side of it, gone when the app closes. */
-interface Live { projectId: string; sessionId: string; agentId: string; conversationId: string; projectName: string; workingDirectory: string; task: string; since: number }
+interface Live { topicId: string; projectId: string; sessionId: string; agentId: string; conversationId: string; projectName: string; workingDirectory: string; task: string; since: number }
 
 /**
  * Coding sessions: an agent working in a project folder.
@@ -51,7 +57,18 @@ export class CodingService {
   private recording: Promise<void> = Promise.resolve()
   private readonly listeners = new Set<(notification: CodingNotification) => void>()
 
-  constructor(private readonly repository: DesktopRepository, private readonly runtime: CodingRuntime, private readonly onActivityChange: () => void = () => undefined) {
+  /** A session that runs on a Compute Computer: its launcher (this turn's), and whether the Computer was lost while it ran. */
+  private readonly onCompute = new Map<string, { launcher: LocalLauncher; interruption?: ComputeInterruption }>()
+  private readonly compute?: ComputeClient
+  private readonly paxPath: string
+
+  constructor(private readonly repository: DesktopRepository, private readonly runtime: CodingRuntime, private readonly onActivityChange: () => void = () => undefined, options: { compute?: ComputeClient; pax?: string } = {}) {
+    this.compute = options.compute
+    this.paxPath = options.pax ?? process.env.FOUNDRY_PAX ?? 'pax'
+    runtime.setLaunchResolver?.(turn => {
+      const live = [...this.live.values()].find(item => item.conversationId === turn.conversationId && item.topicId === turn.topicId)
+      return live ? this.onCompute.get(live.sessionId)?.launcher : undefined
+    })
     runtime.setTurnGuard?.(turn => this.guard(turn))
     runtime.observePermissions?.(event => this.permission(event))
   }
@@ -94,14 +111,91 @@ export class CodingService {
 
   // ───────────────────────────── the repository, as it is right now ─────────────────────────────
 
-  async gitStatus(projectId: string): Promise<GitState> {
+  /** Where Git is asked for a project — or, for a session that runs on a Compute Computer, for that session: the checkout on the Computer. */
+  private async gitWhere(projectId: string, sessionId?: string): Promise<GitLocation> {
     const { directory } = await this.requireProject(projectId)
-    return gitStatus(directory, undefined, { fingerprints: true })
+    const session = sessionId ? await this.repository.codingSession(sessionId) : undefined
+    return session?.execution?.kind === 'compute' && session.projectId === projectId ? this.remoteGit(session.execution) : directory
   }
 
-  async gitDiff(projectId: string, path?: string): Promise<{ diff: string; truncated: boolean }> {
-    const { directory } = await this.requireProject(projectId)
-    return gitDiff(directory, { path })
+  async gitStatus(projectId: string, sessionId?: string): Promise<GitState> {
+    return gitStatus(await this.gitWhere(projectId, sessionId), undefined, { fingerprints: true })
+  }
+
+  async gitDiff(projectId: string, path?: string, sessionId?: string): Promise<{ diff: string; truncated: boolean }> {
+    return gitDiff(await this.gitWhere(projectId, sessionId), { path })
+  }
+
+  // ───────────────────────────── running on a Compute Computer ─────────────────────────────
+
+  private requireCompute(): ComputeClient {
+    if (!this.compute) throw new Error('Compute is not available in this build.')
+    return this.compute
+  }
+
+  /** Git, asked on the Computer: the same commands, run in the repository's checkout there as Compute jobs. */
+  private remoteGit(target: Extract<ExecutionTarget, { kind: 'compute' }>): GitLocation {
+    const compute = this.requireCompute()
+    return { execute: (argv, options) => compute.exec(target.environment, argv, { repository: target.repository, signal: options.signal, timeoutMs: 60_000 }) }
+  }
+
+  /** What Foundry asks PAX about the session's project, run where the session runs (the Computer, or here). Answers are PAX's, untouched. */
+  async pax(sessionId: string, command: PaxInspection | PaxOperation, options: { dryRun?: boolean; tool?: string } = {}): Promise<PaxRun> {
+    const session = await this.repository.codingSession(sessionId)
+    if (!session) throw new Error('Coding session not found')
+    if (session.execution?.kind === 'compute') {
+      const target = session.execution
+      const compute = this.requireCompute()
+      return runPax((argv, o) => compute.exec(target.environment, argv, { repository: target.repository, signal: o.signal, timeoutMs: 10 * 60_000 }), this.paxPath, command, options)
+    }
+    return runPax((argv, o) => runCommand(argv, { cwd: session.workingDirectory, signal: o.signal, timeoutMs: 10 * 60_000 }), this.paxPath, command, options)
+  }
+
+  /**
+   * Make the project available on the Computer through Compute's own mechanism — a repository in the environment, checked out at
+   * a revision — and return what Foundry records: a reference, never the Computer's state. Uncommitted local changes are not on
+   * the Computer, and the session says so.
+   */
+  private async prepareCompute(project: Project, directory: string, environment: string): Promise<{ target: Extract<ExecutionTarget, { kind: 'compute' }>; workingDirectory: string; notes: string[] }> {
+    const compute = this.requireCompute()
+    const computer = await compute.computer(environment)
+    if (computer.observed !== 'running') throw new Error(`The Computer for environment "${environment}" is ${computer.observed}${computer.explanation ? ` (${computer.explanation})` : ''}. Start it in Compute first.`)
+    const repository = `foundry-${project.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || 'project'}-${project.id.slice(-8)}`
+    const notes: string[] = []
+    const local = project.isGit ? await gitStatus(directory).catch(() => undefined) : undefined
+    if (!computer.repositories[repository]) {
+      if (!project.isGit) throw new Error('Only a Git project can be checked out on a Computer.')
+      const origin = await gitRemoteUrl(directory)
+      await compute.addRepository(environment, repository, origin ?? `file://${directory}`, local?.branch ?? local?.head ?? 'HEAD')
+      const deadline = Date.now() + 90_000
+      for (;;) {
+        const now = await compute.computer(environment)
+        if (now.repositories[repository]?.commit) break
+        if (Date.now() > deadline) throw new Error(`The repository did not appear in the Computer within 90 seconds (environment "${environment}").`)
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+    const there = (await compute.computer(environment)).repositories[repository]
+    if (local?.changes.length) notes.push(`${local.changes.length} uncommitted local file${local.changes.length === 1 ? ' is' : 's are'} not on the Computer`)
+    if (local?.head && there?.commit && local.head !== there.commit) notes.push(`the Computer's checkout is at ${there.commit.slice(0, 8)}, local HEAD is ${local.head.slice(0, 8)}`)
+    const target = { kind: 'compute' as const, environment, environmentId: computer.environmentId, repository }
+    const pwd = await compute.exec(environment, ['pwd'], { repository, timeoutMs: 30_000 })
+    return { target, workingDirectory: pwd.stdout.trim(), notes }
+  }
+
+  /** This turn's launcher: agents started through it run on the Computer, in the session's checkout. */
+  private async computeLauncherFor(session: CodingSession): Promise<LocalLauncher | undefined> {
+    if (session.execution?.kind !== 'compute') return undefined
+    const compute = this.requireCompute()
+    const target = session.execution
+    const computer = await compute.computer(target.environment)
+    if (computer.observed !== 'running') throw new ComputeInterruption(`The Computer for environment "${target.environment}" is ${computer.observed}. The task did not start.`, computer.observed)
+    const pwd = await compute.exec(target.environment, ['pwd'], { repository: target.repository, timeoutMs: 30_000 })
+    const holder: { launcher: LocalLauncher; interruption?: ComputeInterruption } = {
+      launcher: computeLauncher(compute, { environment: target.environment, repository: target.repository, workingDirectory: pwd.stdout.trim() }, session.id, error => { holder.interruption = error })
+    }
+    this.onCompute.set(session.id, holder)
+    return holder.launcher
   }
 
   // ───────────────────────────── the pinned folder ─────────────────────────────
@@ -126,7 +220,7 @@ export class CodingService {
    * runs on, and `settled` resolves with the finished session. Each session gets
    * its own topic, so its conversation stays apart from the agent's other chats.
    */
-  async start(input: { projectId: string; agentId: string; task: string }): Promise<CodingSession> {
+  async start(input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment: string } }): Promise<CodingSession> {
     const task = input.task.trim()
     if (!task) throw new Error('Describe the task for the agent.')
     const { project, directory } = await this.requireProject(input.projectId)
@@ -141,12 +235,20 @@ export class CodingService {
     const topic = await this.repository.createTopic(conversation.id)
     if (!topic) throw new Error('Could not open a topic for this session.')
     await this.repository.renameTopic(conversation.id, topic.id, `Coding: ${task}`.slice(0, 80))
-    const baseline = project.isGit ? await gitStatus(directory, undefined, { fingerprints: true }) : { changes: [] }
+    let execution: ExecutionTarget | undefined
+    let where: GitLocation = directory
+    const notes: string[] = []
+    if (input.execution?.kind === 'compute') {
+      const prepared = await this.prepareCompute(project, directory, input.execution.environment)
+      execution = prepared.target; where = this.remoteGit(prepared.target); notes.push(`runs on Computer "${prepared.target.environment}" in ${prepared.workingDirectory}`, ...prepared.notes)
+    }
+    const baseline = project.isGit || execution ? await gitStatus(where, undefined, { fingerprints: true }) : { changes: [] }
     const session = await this.repository.createCodingSession({
       projectId: project.id, agentId: agent.id, conversationId: conversation.id, topicId: topic.id, workingDirectory: directory,
-      task, status: 'running', startedAt: Date.now(), baseline, events: [{ at: Date.now(), kind: 'started', label: 'Agent started', detail: `${task.slice(0, 200)}${baseline.changes.length ? ` — ${baseline.changes.length} file${baseline.changes.length === 1 ? ' was' : 's were'} already modified` : ''}` }]
+      task, status: 'running', startedAt: Date.now(), baseline, ...(execution ? { execution } : {}),
+      events: [{ at: Date.now(), kind: 'started', label: execution ? 'Agent started on Compute' : 'Agent started', detail: `${task.slice(0, 200)}${baseline.changes.length ? ` — ${baseline.changes.length} file${baseline.changes.length === 1 ? ' was' : 's were'} already modified` : ''}${notes.length ? ` — ${notes.join('; ')}` : ''}` }]
     })
-    this.announce('session.started', session, { task: task.slice(0, 200), agentId: agent.id, alreadyModified: baseline.changes.length })
+    this.announce('session.started', session, { task: task.slice(0, 200), agentId: agent.id, alreadyModified: baseline.changes.length, execution: execution ? 'compute' : 'local' })
     this.turns.set(session.id, this.execute(session, project, directory, task))
     return session
   }
@@ -179,17 +281,21 @@ export class CodingService {
 
   private async execute(session: CodingSession, project: Project, directory: string, prompt: string): Promise<CodingSession> {
     const started = session.startedAt ?? Date.now()
-    this.live.set(session.id, { projectId: session.projectId, sessionId: session.id, agentId: session.agentId, conversationId: session.conversationId, projectName: project.name, workingDirectory: directory, task: session.task, since: started })
+    this.live.set(session.id, { topicId: session.topicId, projectId: session.projectId, sessionId: session.id, agentId: session.agentId, conversationId: session.conversationId, projectName: project.name, workingDirectory: directory, task: session.task, since: started })
     this.onActivityChange()
     let failure: string | undefined
     // Whatever an earlier session was granted or asked is withdrawn: an approval belongs to one running session.
     this.runtime.expirePermissions?.(session.agentId)
+    let launchFailure: ComputeInterruption | undefined
     try {
+      // On a Compute session the agent's process is started on the Computer; the Computer must be there.
+      await this.computeLauncherFor(session).catch(error => { if (error instanceof ComputeInterruption) { launchFailure = error; return undefined }; throw error })
       // The folder is checked, never changed, before the turn: a mismatch stops the session instead of retargeting it.
       const conversation = await this.repository.conversation(session.conversationId)
       if (conversation?.workspacePath !== directory) throw new Error(`The chat's folder (${conversation?.workspacePath ?? 'not set'}) no longer matches this session's (${directory}). Refusing to run in a different folder.`)
       await this.repository.setActiveTopic(session.conversationId, session.topicId)
       // Cancelled before the agent was ever started: there is nothing to stop.
+      if (launchFailure) throw launchFailure
       if (!this.cancelled.has(session.id)) await this.runtime.sendMessage(session.conversationId, prompt)
     } catch (error) { failure = error instanceof Error ? error.message : String(error) }
     // The session is over, so anything still waiting for an answer can no longer be approved.
@@ -198,19 +304,23 @@ export class CodingService {
     const reply = (await this.repository.topicMessages(session.conversationId, session.topicId)).filter(message => message.authorId === session.agentId && message.kind === 'message' && message.createdAt >= started).at(-1)
     let status: CodingSession['status'] = 'succeeded'
     if (this.cancelled.has(session.id) || run?.status === 'cancelled') status = 'cancelled'
+    else if (this.onCompute.get(session.id)?.interruption || launchFailure) status = 'interrupted'
     else if (failure || !run || run.status === 'failed' || run.status === 'interrupted') status = 'failed'
     // Compared with the state at the start of the *first* turn: what was already dirty is never credited to the session.
-    const finalState = project.isGit ? await gitStatus(directory, undefined, { fingerprints: true }).catch(() => undefined) : undefined
+    const whereNow: GitLocation = session.execution?.kind === 'compute' ? this.remoteGit(session.execution) : directory
+    const finalState = project.isGit || session.execution ? await gitStatus(whereNow, undefined, { fingerprints: true }).catch(() => undefined) : undefined
     const { changes, cleaned } = finalState ? accountChanges(session.baseline.changes, finalState.changes) : { changes: session.changes, cleaned: session.cleaned ?? [] }
     this.cancelled.delete(session.id)
-    const error = failure ?? run?.error
+    const interruption = this.onCompute.get(session.id)?.interruption ?? launchFailure
+    this.onCompute.delete(session.id)
+    const error = interruption?.message ?? failure ?? run?.error
     const during = changes.filter(change => change.origin === 'session').length
     const already = changes.length - during
     const headMoved = finalState?.head !== undefined && session.baseline.head !== undefined && finalState.head !== session.baseline.head
     this.announce('files.changed', session, { during, alreadyModified: already, cleaned: cleaned.length, headMoved })
     await this.record(session.id, { kind: 'changes', label: during ? `${during} file${during === 1 ? '' : 's'} changed during this session` : 'No files changed during this session',
       detail: [already ? `${already} already modified before it started` : '', cleaned.length ? `${cleaned.length} modified before, clean now` : '', headMoved ? 'HEAD moved to a new commit' : ''].filter(Boolean).join(' · ') || undefined })
-    await this.record(session.id, { kind: 'finished', label: status === 'succeeded' ? 'Agent finished' : status === 'cancelled' ? 'Cancelled' : 'Failed', ...(error ? { detail: error.slice(0, 300) } : {}) })
+    await this.record(session.id, { kind: status === 'interrupted' ? 'interrupted' : 'finished', label: status === 'succeeded' ? 'Agent finished' : status === 'cancelled' ? 'Cancelled' : status === 'interrupted' ? 'Interrupted: the Computer stopped answering' : 'Failed', ...(error ? { detail: error.slice(0, 300) } : {}) })
     const finished = await this.repository.updateCodingSession(session.id, {
       status, finishedAt: Date.now(), changes, cleaned, ...(finalState?.head ? { finalHead: finalState.head } : {}), ...(run ? { runId: run.id } : {}), ...(reply ? { result: reply.text } : {}), ...(error ? { error } : { error: undefined })
     })
@@ -250,7 +360,9 @@ export class CodingService {
     const set = this.aborts.get(id) ?? new Set<AbortController>()
     set.add(controller); this.aborts.set(id, set)
     try {
-      const result = await runCommand(argv, { cwd: session.workingDirectory, signal: controller.signal, timeoutMs: options.timeoutMs ?? CHECK_TIMEOUT_MS })
+      const result = session.execution?.kind === 'compute'
+        ? await this.requireCompute().exec(session.execution.environment, argv, { repository: session.execution.repository, signal: controller.signal, timeoutMs: options.timeoutMs ?? CHECK_TIMEOUT_MS })
+        : await runCommand(argv, { cwd: session.workingDirectory, signal: controller.signal, timeoutMs: options.timeoutMs ?? CHECK_TIMEOUT_MS })
       // Read again: the session may have changed while the command ran.
       const latest = (await this.repository.codingSession(id)) ?? session
       await this.repository.updateCodingSession(id, { commands: [...latest.commands, result].slice(-MAX_COMMANDS) })
