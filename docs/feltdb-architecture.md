@@ -32,6 +32,22 @@ the code, its Git state and any generated files stay on disk, and the agent and
 its commands are OS processes that are never persisted. See
 [coding-execution-path.md](coding-execution-path.md).
 
+Three companion invariants hold the coding loop together
+([coding-hardening.md](coding-hardening.md)):
+
+> **A CodingSession owns application state; the process executing it is ephemeral
+> and must not survive the session boundary uncontrolled.**
+>
+> **A coding session never grants authority beyond its project working directory
+> and its explicit approval state.**
+>
+> **FeltDB owns application/session state; Git/filesystem owns source state; OS
+> processes are ephemeral.**
+
+`AgentProcess` is the one collection that is a *note about* processes rather than
+state: a pid and its start time, written when Douchat starts an agent or command and
+removed when it exits, so the next start can stop anything a crash left running.
+
 ## The rules
 
 1. **The repository is asynchronous.** Every `DesktopRepository` method returns a

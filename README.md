@@ -35,6 +35,7 @@ or supported command-line tools already installed on your machine.
 - Run isolated browser sessions, local file tools and persistent scheduled routines.
 - Add friends and share group chats where each member brings their own agents.
 - Reach an agent from WeChat, Feishu or Telegram through IM channels.
+- Let a coding agent work in a local Git project, with approvals, changed files, checks and a session history ([how it works](docs/coding-hardening.md)).
 - Keep agent chats, memories and configuration on your computer.
 - Use the interface in English or Simplified Chinese.
 

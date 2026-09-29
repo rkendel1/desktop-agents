@@ -125,13 +125,13 @@ permission prompt; `src/math.js` changed on disk; session `succeeded`; git statu
 | Read source | Yes — any CLI agent; hosted agents via `read_workspace_file` | "reads the project…" (agent lists files, runs tests); live Claude test; `runtimeWorkspace.test` for hosted tools | — |
 | Modify source | Yes — Codex (sandbox), Claude (owner-approved `Edit`), hosted `write_workspace_file` | "…changes a real file…" (bytes on disk); live Claude test | Codex live proof (CLI not available here); Grok/Cursor/omp are read-only by design |
 | Execute shell | Only inside CLIs (Codex, approved Claude `Bash`); Douchat itself now via `runCommand` | `runCommand` tests; live Claude ran `npm test` | Hosted-model agents have no shell tool |
-| Run tests | Yes — by the agent, and by Douchat (`runChecks` with the project's `testCommand`) | "…runs the tests…" (`npm test` exit 0 recorded on the session); failing check recorded | Setting `testCommand` has no UI/IPC yet (owner-only by design: it is command execution) |
+| Run tests | Yes — by the agent, and by Douchat (`runChecks` with the project's `testCommand`) | "…runs the tests…" (`npm test` exit 0 recorded on the session); failing check recorded | Owner-confirmed in the UI (`Set…`), stored as an argument vector |
 | Git status | Yes — `gitStatus`, session baseline and result | "reports a clean repository, then exactly what changed…"; porcelain parser test | — |
 | Git diff | Yes — `gitDiff`, bounded, per path optional | same | Untracked files appear in status, not in the diff |
 | Cancellation | Yes — `CodingService.cancel`, runtime `stopConversation`, `runCommand` signal | "cancels a running session…"; `runCommand` cancel/timeout | Cancelling during agent start-up needed a retry loop (added) |
 | Process-tree cleanup | Yes — process-group `SIGKILL`; `runCommand` also kills leftovers after a clean exit | "kills the whole process tree…" (parent and grandchild not running); shutdown test | See the baseline note below |
 | Session persistence | Yes — `CodingSession` + chat + Run in FeltDB; changed paths, results, commands | "reconstructs the project, session, conversation and changes from FeltDB alone" | Local CLIs' partial output/tool activity is not stored (only the final reply); hosted-model tool events are |
-| Restart / reopen | Durable state yes; **live processes are not reattached** | restart tests; "marks a session… interrupted"; "cancels running sessions during an orderly shutdown" | Reattaching to a live agent process is not supported. Conversation continuity for Codex/Claude comes from native thread resume, not from the process |
+| Restart / reopen | Durable state yes; **live processes are not reattached, and any a crash left behind are stopped at the next start** (process ledger, see [coding-hardening.md](coding-hardening.md)) | restart tests; "marks a session… interrupted"; "cancels running sessions during an orderly shutdown" | Reattaching to a live agent process is not supported. Conversation continuity for Codex/Claude comes from native thread resume, not from the process |
 | Multiple agents | Yes, serialized per folder (one agent at a time in a project) | "serializes two agents working in the same project folder" | Parallel work needs worktrees — out of scope |
 
 ## Limits found
@@ -182,3 +182,5 @@ files are labelled as not in the diff), checks and the event history → Continu
   Codex/Claude resume from their native thread — the old process is never reattached.
 - **The folder is pinned** for the life of a session (see the matrix).
 - Custom local agents now live in FeltDB (`LocalAgentDefinition`), imported once from `local-agents.json`.
+
+See [coding-hardening.md](coding-hardening.md) for what the real-repository hardening pass changed: dirty-tree accounting, session-scoped approvals, the process ledger, honest activity and Continue semantics.
