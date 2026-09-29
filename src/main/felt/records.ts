@@ -23,11 +23,12 @@ export interface GroupRecord { id: string; sessionId: string; name: string; desc
 export interface GroupMemberRecord { id: string; groupId: string; agentId: string; position: number }
 /** A folder on this computer. With a `name` it is a registered project. */
 export interface WorkspaceRecord { id: string; path: string; createdAt: number; name?: string; isGit?: boolean; testCommand?: string[]; updatedAt?: number }
+export interface AgentProcessRow { id: string; pid: number; role: 'agent' | 'connection' | 'command'; identity: string; cwd?: string; startedAt: number }
 export interface LocalAgentDefinitionRecord { id: string; name: string; command: string; args?: string[]; avatar?: string; position: number; updatedAt: number }
 export interface CodingSessionRecord {
   id: string; workspaceId: string; agentId: string; sessionId: string; topicId: string; cwd: string; task: string; status: string
   createdAt: number; startedAt?: number; finishedAt?: number; runId?: string; error?: string; result?: string
-  baseline?: unknown; changes?: unknown; commands?: unknown; events?: unknown
+  baseline?: unknown; changes?: unknown; commands?: unknown; events?: unknown; cleaned?: string[]; finalHead?: string
 }
 export interface MessageRecord {
   id: string; sessionId: string; topicId: string; role: 'user' | 'assistant' | 'system'
@@ -236,7 +237,8 @@ export function codingSessionToRecord(session: CodingSession): CodingSessionReco
     cwd: session.workingDirectory, task: session.task, status: session.status, createdAt: session.createdAt,
     ...(session.startedAt !== undefined ? { startedAt: session.startedAt } : {}), ...(session.finishedAt !== undefined ? { finishedAt: session.finishedAt } : {}),
     ...(session.runId ? { runId: session.runId } : {}), ...(session.error ? { error: session.error } : {}), ...(session.result ? { result: session.result } : {}),
-    baseline: session.baseline, changes: session.changes, commands: session.commands, events: session.events }
+    baseline: session.baseline, changes: session.changes, commands: session.commands, events: session.events,
+    ...(session.cleaned ? { cleaned: session.cleaned } : {}), ...(session.finalHead ? { finalHead: session.finalHead } : {}) }
 }
 
 export function codingSessionFromRecord(record: CodingSessionRecord): CodingSession {
@@ -245,5 +247,6 @@ export function codingSessionFromRecord(record: CodingSessionRecord): CodingSess
     ...(record.startedAt !== undefined ? { startedAt: record.startedAt } : {}), ...(record.finishedAt !== undefined ? { finishedAt: record.finishedAt } : {}),
     ...(record.runId ? { runId: record.runId } : {}), ...(record.error ? { error: record.error } : {}), ...(record.result ? { result: record.result } : {}),
     baseline: (record.baseline as CodingSession['baseline']) ?? { changes: [] }, changes: (record.changes as CodingSession['changes']) ?? [],
-    commands: (record.commands as CodingSession['commands']) ?? [], events: (record.events as CodingSession['events']) ?? [] }
+    commands: (record.commands as CodingSession['commands']) ?? [], events: (record.events as CodingSession['events']) ?? [],
+    ...(record.cleaned ? { cleaned: record.cleaned } : {}), ...(record.finalHead ? { finalHead: record.finalHead } : {}) }
 }

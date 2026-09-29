@@ -14,8 +14,8 @@ CLI/desktop agents do not receive these tools.
 
 ## Architecture and configuration
 
-- Desktop: `src/main/connany.ts` → authenticated Douchat backend proxy.
-- Backend: the Douchat web service (`douchat.ai`), which holds the Connany project keys.
+- Desktop: `src/main/connany.ts` → authenticated Foundry backend proxy.
+- Backend: the Foundry web service (`douchat.ai`), which holds the Connany project keys.
 - Route: `POST /api/desktop-auth/connectors`.
 - Backend validates the existing desktop login token with
   `authenticateDesktopToken`; only its user ID becomes `external_user_id`.
@@ -25,12 +25,12 @@ CLI/desktop agents do not receive these tools.
 - The local backend is at `http://localhost:3004`, as selected by the desktop's
   existing `DOUCHAT_SERVICE_URL`. Connany is `http://localhost:3100`.
 - No `return_url` is sent. Authorization opens in the system browser; return to
-  Douchat manually. Polls are authenticated, scoped by project/user/session and
+  Foundry manually. Polls are authenticated, scoped by project/user/session and
   coalesced for five seconds in each backend process. A multi-instance backend
   needs a shared cache/rate limiter before scaling out.
 - No schema migration is needed. Connany remains the authoritative owner of
   connection/session metadata. Default account selections are persisted in the local
-  account-scoped store, further scoped to the Douchat backend origin.
+  account-scoped store, further scoped to the Foundry backend origin.
 - Pending session identifiers survive closing/reopening Settings in the current
   desktop process. Restarting the desktop requires a new link if authorization
   is still pending; completed connections are rediscovered from Connany.
@@ -145,7 +145,7 @@ use the same selected-account flow: `{provider}_discover` followed by
 repository or Linear team / issue tools. The unused legacy read-test panel and
 its IPC command were removed.
 
-The Douchat backend derives the provider from the authenticated connection,
+The Foundry backend derives the provider from the authenticated connection,
 re-discovers each exact action on execution, requires `read_only === true`, and
 validates the discovered JSON Schema. Internal `__*` actions and old dotted REST
 names are rejected. Default/named account selection remains local and is checked

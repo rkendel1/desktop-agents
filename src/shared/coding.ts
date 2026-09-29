@@ -66,3 +66,47 @@ export function changeLabel(change: Pick<GitChange, 'code'>): string {
 }
 
 export const projectOf = (projects: Project[] | undefined, session: Pick<CodingSession, 'projectId'>): Project | undefined => projects?.find(project => project.id === session.projectId)
+
+/**
+ * Compare the repository now with how it was when a session started.
+ * A file dirty in the same way, with the same content, is `before`; anything else
+ * that is dirty now is `session`, which means "changed while the session ran" —
+ * Git cannot tell the agent from the person or a tool. Files that were dirty and
+ * are clean now are reported separately.
+ */
+export function accountChanges(baseline: GitChange[], after: GitChange[]): { changes: GitChange[]; cleaned: string[] } {
+  const previous = new Map(baseline.map(change => [change.path, change]))
+  const changes = after.map((change): GitChange => {
+    const was = previous.get(change.path)
+    const same = was && was.code === change.code && was.fingerprint === change.fingerprint
+    return { ...change, origin: same ? 'before' : 'session' }
+  })
+  const now = new Set(after.map(change => change.path))
+  return { changes, cleaned: baseline.filter(change => !now.has(change.path)).map(change => change.path) }
+}
+
+/** CLIs whose own conversation Foundry can pick up again after a restart (their thread id is kept). */
+const nativeResume = new Set(['claude', 'codex'])
+
+/**
+ * What "Continue" really does for an agent. It never reattaches to the old process:
+ * a new one is started. Whether the agent's own conversation carries over depends on the CLI.
+ */
+export function continueSemantics(localAgentId?: string): { resumesConversation: boolean; lines: string[] } {
+  const resumesConversation = localAgentId !== undefined && nativeResume.has(localAgentId)
+  return {
+    resumesConversation,
+    lines: [
+      'A new agent process will be started in this project. The previous process will not be resumed.',
+      resumesConversation
+        ? 'The agent’s own conversation is picked up again where its CLI supports it; the project and session context are provided too.'
+        : 'Continue will start a new conversation with the existing project/session context.'
+    ]
+  }
+}
+
+/** What a session's changed files look like: what changed while it ran, what was already modified, and what is clean now. */
+export function groupChanges(changes: GitChange[], baseline: GitChange[]): { during: GitChange[]; already: GitChange[] } {
+  const accounted = changes.some(change => change.origin) ? changes : accountChanges(baseline, changes).changes
+  return { during: accounted.filter(change => change.origin === 'session'), already: accounted.filter(change => change.origin === 'before') }
+}

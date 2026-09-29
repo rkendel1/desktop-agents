@@ -209,23 +209,23 @@ jobs:
           case "$TARGET_PLATFORM" in
             macos)
               for arch in x64 arm64; do
-                require_file "$release_dir/Douchat-$version-mac-$arch.dmg"
-                require_file "$release_dir/Douchat-$version-mac-$arch.dmg.blockmap"
-                require_file "$release_dir/Douchat-$version-mac-$arch.zip"
-                require_file "$release_dir/Douchat-$version-mac-$arch.zip.blockmap"
+                require_file "$release_dir/Foundry-$version-mac-$arch.dmg"
+                require_file "$release_dir/Foundry-$version-mac-$arch.dmg.blockmap"
+                require_file "$release_dir/Foundry-$version-mac-$arch.zip"
+                require_file "$release_dir/Foundry-$version-mac-$arch.zip.blockmap"
               done
               verify_manifest "$release_dir/latest-mac.yml"
               ;;
             windows-x64)
-              installer="$release_dir/Douchat-$version-win-x64.exe"
+              installer="$release_dir/Foundry-$version-win-x64.exe"
               require_file "$installer"
               require_file "$installer.blockmap"
               verify_manifest "$release_dir/latest.yml"
               7z t "$installer" >/dev/null
               ;;
             linux-x64)
-              appimage="$release_dir/Douchat-$version-linux-x86_64.AppImage"
-              deb="$release_dir/Douchat-$version-linux-amd64.deb"
+              appimage="$release_dir/Foundry-$version-linux-x86_64.AppImage"
+              deb="$release_dir/Foundry-$version-linux-amd64.deb"
               require_file "$appimage"
               require_file "$deb"
               verify_manifest "$release_dir/latest-linux.yml"
@@ -302,7 +302,7 @@ jobs:
             gh release create "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
-              --title "Douchat v$version" \
+              --title "Foundry v$version" \
               --notes "Signed and notarized macOS packages, an unsigned Windows x64 NSIS installer, and Linux x64 AppImage and Debian packages. Publish this draft only after smoke testing all platforms."
           fi
 

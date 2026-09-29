@@ -1,6 +1,6 @@
 # Account and contact Markdown files
 
-Douchat keeps shared user information and contact configuration in one account
+Foundry keeps shared user information and contact configuration in one account
 file hierarchy under the application's user-data directory:
 
 ```
@@ -85,7 +85,7 @@ evidence, and memory controls apply. Group, delegated, scheduled, and completed
 turns cannot use self-editing tools.
 
 Local CLI contacts use a private `douchat_update_agent_files` directive validated
-by the same code. Douchat removes the directive from visible output and appends
+by the same code. Foundry removes the directive from visible output and appends
 a result receipt. Hosted contacts receive a tool receipt. Files apply on
 subsequent turns and can be reviewed in contact customization settings.
 
@@ -110,7 +110,7 @@ The daily files record actual saved changes, not full chat transcripts or an
 empty file for every day. They are not loaded wholesale into model context.
 Hosted contacts have scoped `search_user_memory` and paginated
 `read_user_memory` tools. Local CLI contacts receive keyword-matched historical
-excerpts retrieved by Douchat for the current message. Search supports segmented
+excerpts retrieved by Foundry for the current message. Search supports segmented
 Chinese/Unicode keywords; it is lexical search, not vector/semantic search.
 Results are bounded (8 excerpts; at most the most recent 5,000 dated files per
 scope) and report truncation. Each historical result is marked as potentially

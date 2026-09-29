@@ -12,8 +12,8 @@ function host() {
 }
 it('creates a complete HTML deliverable without executing scripts or requesting shell access', async () => {
   const h = host()
-  const result = await h.call('create_file', { name: 'deck.html', content: '<html><h1>Douchat</h1></html>' })
-  expect(h.save).toHaveBeenCalledWith('deck.html', Buffer.from('<html><h1>Douchat</h1></html>'), undefined)
+  const result = await h.call('create_file', { name: 'deck.html', content: '<html><h1>Foundry</h1></html>' })
+  expect(h.save).toHaveBeenCalledWith('deck.html', Buffer.from('<html><h1>Foundry</h1></html>'), undefined)
   expect(result.content[0]).toMatchObject({ text: expect.stringContaining('douchat-file:') })
   expect(h.authorize).not.toHaveBeenCalled()
   await expect(h.call('create_file', { name: '../outside.html', content: 'x' })).rejects.toThrow()

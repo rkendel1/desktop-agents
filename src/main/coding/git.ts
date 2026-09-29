@@ -1,8 +1,13 @@
-import type { GitChange, GitState } from '../../shared/types'
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { lstat } from 'node:fs/promises'
+import { join } from 'node:path'
+import type { GitState } from '../../shared/types'
+export { accountChanges } from '../../shared/coding'
 import { runCommand } from './commands'
 
 const GIT_ENVIRONMENT: NodeJS.ProcessEnv = { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C', GIT_PAGER: 'cat' }
-// A repository's own configuration must not be able to run programs when Douchat only looks at it.
+// A repository's own configuration must not be able to run programs when Foundry only looks at it.
 const SAFE = ['-c', 'core.fsmonitor=false', '-c', 'core.pager=cat']
 const MAX_DIFF = 2 * 1024 * 1024
 
@@ -38,8 +43,23 @@ export function parseGitStatus(output: string): GitState {
   return state
 }
 
+const HASH_LIMIT = 8 * 1024 * 1024
+
+/** Content hash of a file (size and modification time for a very large one); undefined when it cannot be read. */
+async function fingerprint(path: string): Promise<string | undefined> {
+  try {
+    const info = await lstat(path)
+    if (info.isSymbolicLink()) return `link:${info.size}`
+    if (!info.isFile()) return `other:${info.mtimeMs}`
+    if (info.size > HASH_LIMIT) return `big:${info.size}:${Math.floor(info.mtimeMs)}`
+    const hash = createHash('sha1')
+    for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer)
+    return `sha1:${hash.digest('hex')}`
+  } catch { return undefined }
+}
+
 /** Changed files and the commit they are relative to. Reads only; never touches the index or the tree. */
-export async function gitStatus(cwd: string, signal?: AbortSignal): Promise<GitState> {
+export async function gitStatus(cwd: string, signal?: AbortSignal, options: { fingerprints?: boolean } = {}): Promise<GitState> {
   const [status, head] = await Promise.all([
     git(cwd, ['status', '--porcelain=v1', '-z', '--branch', '--untracked-files=all'], signal, 4 * 1024 * 1024),
     git(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD'], signal)
@@ -47,6 +67,16 @@ export async function gitStatus(cwd: string, signal?: AbortSignal): Promise<GitS
   if (status.exitCode !== 0) throw new Error(`git status failed: ${status.stderr.trim() || `exit ${status.exitCode}`}`)
   const state = parseGitStatus(status.stdout)
   if (head.exitCode === 0 && head.stdout.trim()) state.head = head.stdout.trim()
+  if (options.fingerprints) {
+    // In small batches: a dirty tree can have thousands of files.
+    for (let i = 0; i < state.changes.length; i += 32) {
+      await Promise.all(state.changes.slice(i, i + 32).map(async change => {
+        if (change.code.includes('D') && !change.code.includes('R')) return
+        const value = await fingerprint(join(cwd, change.path))
+        if (value) change.fingerprint = value
+      }))
+    }
+  }
   return state
 }
 
@@ -63,8 +93,10 @@ export async function gitDiff(cwd: string, options: { path?: string; signal?: Ab
   return { diff: result.stdout, truncated: result.stdout.startsWith('…') }
 }
 
-/** Paths that differ between two states, ignoring what was already changed before. */
-export function newChanges(before: GitChange[], after: GitChange[]): GitChange[] {
-  const previous = new Map(before.map(change => [change.path, change.code]))
-  return after.filter(change => previous.get(change.path) !== change.code)
+/** The URL of `origin` as Git reports it, or undefined when the folder has none. Reads only. */
+export async function gitRemoteUrl(cwd: string): Promise<string | undefined> {
+  try {
+    const result = await git(cwd, ['config', '--get', 'remote.origin.url'])
+    return result.exitCode === 0 ? result.stdout.trim() || undefined : undefined
+  } catch { return undefined }
 }

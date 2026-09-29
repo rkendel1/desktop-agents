@@ -228,7 +228,7 @@ describe('settings panel', () => {
     await act(async () => logs.click())
     expect(window.douchat.openDiagnosticLogs).toHaveBeenCalledOnce()
     expect(container.querySelector('.about-note')).toBeNull()
-    expect(container.textContent).not.toContain('Updates are downloaded from signed Douchat releases')
+    expect(container.textContent).not.toContain('Updates are downloaded from signed Foundry releases')
   })
 
 })

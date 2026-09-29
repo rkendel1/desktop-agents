@@ -1,6 +1,6 @@
 # Friends and shared groups
 
-The Friends group in the desktop Contacts section uses the existing Douchat desktop login token to talk to
+The Friends group in the desktop Contacts section uses the existing Foundry desktop login token to talk to
 `/api/desktop-auth/social` in the sibling `douchat-tanstack` service. Tokens and task
 claims stay in Electron's main process.
 

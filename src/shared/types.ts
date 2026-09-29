@@ -15,7 +15,7 @@ export interface LocalAgent {
   id: string
   name: string
   command: string
-  /** A launchable CLI with a Douchat conversation adapter is available. */
+  /** A launchable CLI with a Foundry conversation adapter is available. */
   installed: boolean
   /** Something belonging to this agent was found, even if it was only a desktop app. */
   discovered: boolean
@@ -144,7 +144,7 @@ export interface MessageDelivery {
   replies?: MessageDeliveryReply[]
 }
 
-/** A binary asset owned by Douchat. The renderer receives the bytes lazily
+/** A binary asset owned by Foundry. The renderer receives the bytes lazily
  * through IPC instead of exposing arbitrary local file paths. */
 export interface MessageAttachment {
   quoted?: boolean
@@ -160,7 +160,7 @@ export interface MessageFileInput {
   data: Uint8Array
 }
 
-/** An image crossing the isolated renderer/main boundary before Douchat owns it. */
+/** An image crossing the isolated renderer/main boundary before Foundry owns it. */
 export interface MessageImageInput {
   quoted?: boolean
   name: string
@@ -237,7 +237,7 @@ export interface ChatMessage {
   source?: MessageSource
   /** Private or agent-to-agent envelopes this message sent out. */
   deliveries?: MessageDelivery[]
-  /** Files produced by this model turn and copied into Douchat storage. */
+  /** Files produced by this model turn and copied into Foundry storage. */
   attachments?: MessageAttachment[]
   /** Human-readable receipts for tools that performed this reply's work. */
   actions?: MessageAction[]
@@ -631,7 +631,7 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
 
 /**
  * A folder on this computer that agents may work in. The repository at `path` is
- * the authority for source code; Douchat stores only that the project exists.
+ * the authority for source code; Foundry stores only that the project exists.
  */
 export interface Project {
   /** Stable for a path: the same folder is the same project. */
@@ -653,6 +653,14 @@ export interface GitChange {
   code: string
   /** Original path for a rename or copy. */
   from?: string
+  /** Identifies the file's content when the state was read (content hash, or size and time for a large file). Absent for deleted files. */
+  fingerprint?: string
+  /**
+   * Set on a session's final changes. `before`: dirty in the same way when the session started.
+   * `session`: not dirty at the start, or dirty in a different way, so something changed it while the
+   * session was running. Git cannot say *who* — the agent, a person, or a tool — only when.
+   */
+  origin?: 'before' | 'session'
 }
 
 export interface GitState {
@@ -703,13 +711,17 @@ export interface CodingSession {
   /** Repository state when the session began, and what changed by the end. */
   baseline: GitState
   changes: GitChange[]
-  /** Checks Douchat ran in the project for this session. */
+  /** Paths that were dirty when the session started and are clean now. */
+  cleaned?: string[]
+  /** HEAD when the session last ended, to show whether commits were made meanwhile. */
+  finalHead?: string
+  /** Checks Foundry ran in the project for this session. */
   commands: CommandResult[]
   /** What happened, in order: meaningful outcomes only (never every progress tick). Bounded. */
   events: CodingEvent[]
 }
 
-export type CodingEventKind = 'started' | 'continued' | 'approval-requested' | 'approval-allowed' | 'approval-denied' | 'command' | 'checks' | 'changes' | 'finished'
+export type CodingEventKind = 'started' | 'continued' | 'approval-requested' | 'approval-allowed' | 'approval-denied' | 'command' | 'checks' | 'changes' | 'finished' | 'interrupted'
 
 export interface CodingEvent {
   at: number
@@ -727,6 +739,12 @@ export interface CodingActivity {
   state: 'running' | 'awaiting-approval'
   /** What the agent is doing, in words. */
   label: string
+  /**
+   * Where `label` comes from, so a screen never shows more than is known: `agent` — the CLI reported it itself
+   * (a tool it is running, a step it is on); `douchat` — Foundry knows it (an approval, a check it is running);
+   * `none` — the agent has reported nothing, and the label is only that it is running.
+   */
+  source: 'agent' | 'douchat' | 'none'
   since: number
   /** Present while the session waits for the owner to decide. */
   approval?: PermissionRequest

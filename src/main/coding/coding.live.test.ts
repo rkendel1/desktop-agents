@@ -25,7 +25,7 @@ afterEach(() => { for (const directory of directories.splice(0)) rmSync(director
 const READ_ONLY_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'Edit', 'MultiEdit', 'Write'])
 const SAFE_COMMAND = /^(npm test( 2>&1)?( \| (head|tail)( -n? ?\d+)?)?|git (status|diff)( .*)?|ls( .*)?|cat [\w./-]+)$/
 
-it.skipIf(!cli)('a real agent CLI fixes a bug in a real repository through Douchat', async () => {
+it.skipIf(!cli)('a real agent CLI fixes a bug in a real repository through Foundry', async () => {
   const path = realpathSync(mkdtempSync(join(tmpdir(), 'coding-live-repo-'))); directories.push(path)
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'coding-live-desktop-'))); directories.push(root)
   const git = (...args: string[]) => execFileSync('git', args, { cwd: path, encoding: 'utf8' })

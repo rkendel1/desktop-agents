@@ -36,7 +36,7 @@ it('loads saved customization into hosted and local prompts and picks up later e
     runtime.disposeAgent(agent.id)
     await runtime.sendMessage(`direct-${agent.id}`, 'Hello again')
     const nextPrompt = vi.mocked(runLocalAgent).mock.calls.at(-1)![1]
-    expect(nextPrompt).toContain('built on the Douchat system')
+    expect(nextPrompt).toContain('built on the Foundry system')
     expect(nextPrompt).toContain('\"localRuntime\":\"codex\"')
     expect(nextPrompt).toContain('UPDATED_PERSONALITY'); expect(nextPrompt).not.toContain('SKILL_SENTINEL')
   } finally { for (const agent of (await store.agents())) runtime.disposeAgent(agent.id); await store.close(); rmSync(directory, { recursive: true, force: true }); vi.clearAllMocks() }

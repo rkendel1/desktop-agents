@@ -28,7 +28,7 @@ export function authorizeTokenDance(openExternal: (url: string) => Promise<unkno
       }
       const headers = { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }
       if (url.searchParams.has('error')) {
-        res.writeHead(200, headers).end('Authorization declined. Return to Douchat.')
+        res.writeHead(200, headers).end('Authorization declined. Return to Foundry.')
         finish(new Error('TokenDance authorization declined.')); return
       }
       const code = url.searchParams.get('code')
@@ -43,10 +43,10 @@ export function authorizeTokenDance(openExternal: (url: string) => Promise<unkno
         if (!response.ok) throw new Error('exchange failed')
         const data = await response.json() as { key?: unknown }
         if (typeof data.key !== 'string' || !data.key.trim()) throw new Error('invalid key')
-        res.writeHead(200, headers).end('TokenDance authorized. Return to Douchat and save the provider. / 授权成功，请返回 Douchat 保存服务商。')
+        res.writeHead(200, headers).end('TokenDance authorized. Return to Foundry and save the provider. / 授权成功，请返回 Foundry 保存服务商。')
         finish(undefined, data.key)
       } catch {
-        res.writeHead(502, headers).end('Authorization failed. Return to Douchat and try again.')
+        res.writeHead(502, headers).end('Authorization failed. Return to Foundry and try again.')
         finish(new Error('TokenDance authorization failed. Please try again.'))
       }
     })
@@ -63,7 +63,7 @@ export function authorizeTokenDance(openExternal: (url: string) => Promise<unkno
       url.search = new URLSearchParams({
         callback_url: `http://127.0.0.1:${address.port}/callback?state=${state}`,
         code_challenge: createHash('sha256').update(verifier).digest('base64url'),
-        code_challenge_method: 'S256', app_url: 'https://douchat.ai', key_name: 'Douchat'
+        code_challenge_method: 'S256', app_url: 'https://douchat.ai', key_name: 'Foundry'
       }).toString()
       void openExternal(url.toString()).catch(() => finish(new Error('Could not open the authorization page.')))
     })

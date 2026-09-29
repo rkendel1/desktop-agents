@@ -7012,3 +7012,22 @@ html.native-dialog-window,
 .coding-continue { display: flex; gap: 8px; align-items: flex-end; }
 .permission-coding { margin: 8px 0; padding: 8px 10px; border-left: 3px solid var(--accent-500); background: var(--accent-150); border-radius: 4px; }
 .permission-coding p { margin: 2px 0; overflow-wrap: anywhere; }
+
+/* Hardening: dirty-repository accounting, buttons and titles found while driving the real app. */
+.coding-workspace .secondary-button { border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); color: var(--ink); padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.coding-workspace .secondary-button:hover:not(:disabled) { border-color: var(--accent-300); background: var(--accent-050); }
+.coding-workspace .secondary-button:disabled { opacity: .5; cursor: default; }
+.coding-workspace .secondary-button.danger { color: #b3261e; }
+.coding-workspace .primary-button { align-self: flex-start; }
+.coding-task { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.coding-task-full { font-size: 13px; }
+.coding-subheading { margin: 10px 0 4px; font-size: 13px; }
+.coding-note { margin: 4px 0; font-size: 12px; }
+.coding-change-path { flex: 1; overflow-wrap: anywhere; }
+.coding-change-kind { font-size: 11px; color: var(--muted); }
+.coding-change-kind.untracked { font-style: italic; }
+.coding-sidebar .sidebar-titlebar { justify-content: space-between; }
+.coding-sidebar .sidebar-title { margin-right: auto; text-align: left; }
+.coding-continue { flex-wrap: wrap; }
+.coding-continue textarea { flex: 1; min-width: 240px; }
+.coding-continue p { flex-basis: 100%; margin: 0; font-size: 12px; }

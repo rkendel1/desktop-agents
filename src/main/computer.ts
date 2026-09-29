@@ -67,8 +67,8 @@ function localFileError(error: unknown, target: string): Error {
     : ''
   if (code === 'EACCES' || code === 'EPERM') {
     return new Error(
-      `Douchat needs permission to access ${basename(target) || target}. `
-      + 'Allow Douchat in System Settings → Privacy & Security → Files and Folders, then try again. '
+      `Foundry needs permission to access ${basename(target) || target}. `
+      + 'Allow Foundry in System Settings → Privacy & Security → Files and Folders, then try again. '
       + `(${code})`
     )
   }
@@ -117,7 +117,7 @@ export class LocalComputerProvider implements ComputerProvider {
       minWidth: 720,
       minHeight: 520,
       show: false,
-      title: 'Douchat computer',
+      title: 'Foundry computer',
       backgroundColor: '#F7F7F5',
       autoHideMenuBar: true,
       webPreferences: {

@@ -1,25 +1,18 @@
-# Douchat icons
+# Foundry icons
 
-The app uses the Douchat `icon-v3` artwork: a white speech bubble shaped like
-the letter D, with two pill-shaped eyes that give it an agent face, on the
-product's blue theme-color plate. The source artwork keeps a roughly 9.8% transparent
-margin on each side of the 1024px canvas, with an approximately 824px plate.
-This matches the visible plate proportions measured from the installed Chrome
-icon (206px on a 256px canvas). The white D-bubble mark is sized
-within that plate so it remains legible at Dock and taskbar sizes.
-The development variant uses the same plate and D-bubble mark size as the release
-icon, with a red `DEV` badge at the lower right. Keep the shared artwork at the
-same scale so both variants have the same perceived Dock size. PNG and ICNS files are generated from
-the SVG sources in this directory.
+The app icon is the Foundry logo, used exactly as supplied (`foundry-source.jpg`): an orange-to-red gradient
+"F" on a dark rounded plate. Nothing is redrawn, recoloured or decorated.
 
-- `douchat.svg` / `douchat.png` / `douchat.icns` / `douchat.ico`: release icon.
-- `douchat-dev.svg` / `douchat-dev.png` / `douchat-dev.icns`: development icon.
+The supplied file is a JPEG, so it has no transparency of its own: its plate sits on pure black. The generator cuts the
+plate out of that black (the corners become transparent, with an anti-aliased edge) and places it on the 1024px
+canvas with the transparent margin platform icons use (an ~824px plate). If a transparent original is supplied, drop it
+in as `foundry-source.png` and change the one `Image.open` line in the script.
 
-Electron selects the development PNG when `ELECTRON_RENDERER_URL` is present
-and the release PNG otherwise. The Dock, BrowserWindow, and renderer empty
-state all use these resources.
+- `foundry.png` / `foundry.icns` / `foundry.ico`: release icon (PNG for the Dock, window and in-app marks; ICNS for macOS; ICO for Windows).
+- `foundry-dev.png` / `foundry-dev.icns`: development icon — the same artwork with a small red `DEV` badge.
 
-Regenerate the PNG, ICNS, and ICO assets after changing the SVG artwork; changing
-only ICNS is insufficient because Electron sets the running Dock icon from PNG.
-On macOS, run `bash scripts/generate-icons.sh` with `rsvg-convert` and ImageMagick
-installed. Rebuild and install the app to see the change in the release version.
+Electron selects the development PNG when the app is unpackaged and the release PNG otherwise. The Dock, BrowserWindow,
+Settings → About and the empty-state mark all use these resources.
+
+Regenerate every derived file with `python3 scripts/generate-icons.py` (needs Pillow and NumPy). Changing only the ICNS is
+insufficient because Electron sets the running Dock icon from the PNG.

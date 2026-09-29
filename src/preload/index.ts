@@ -34,7 +34,7 @@ const api: DouchatApi = {
   copyText: (text) => ipcRenderer.invoke('douchat:copy-text', text),
   copyAttachment: (id) => ipcRenderer.invoke('douchat:copy-attachment', id),
   platform: process.platform,
-  microphonePermissionOwner: 'Douchat',
+  microphonePermissionOwner: 'Foundry',
   windowAction: (action) => ipcRenderer.send('douchat:window-action', action),
   requestMicrophoneAccess: () => ipcRenderer.invoke('douchat:request-microphone-access'),
   openMicrophoneSettings: () => ipcRenderer.invoke('douchat:open-microphone-settings'),

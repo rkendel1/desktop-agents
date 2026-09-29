@@ -1,5 +1,5 @@
 /** Per-agent reasoning depth. `undefined` means "use the default":
- * Douchat's own agents think at `low`; local CLIs keep their own configuration. */
+ * Foundry's own agents think at `low`; local CLIs keep their own configuration. */
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 export type ThinkingLevel = typeof THINKING_LEVELS[number]
 export const DEFAULT_CLOUD_THINKING_LEVEL: ThinkingLevel = 'low'

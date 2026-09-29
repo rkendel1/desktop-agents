@@ -11,7 +11,7 @@ import type { ComputerProvider } from '../src/main/computer'
 
 if (process.env.DOUCHAT_LIVE_SCENARIOS !== '1') throw new Error('Set DOUCHAT_LIVE_SCENARIOS=1 to authorize paid calls.')
 const dev = join(homedir(), 'Library', 'Application Support', 'douchat-dev')
-app.setName('Douchat Dev'); app.setPath('userData', dev)
+app.setName('Foundry Dev'); app.setPath('userData', dev)
 const output = join(process.cwd(), 'out', 'group-scenarios', `policy-${new Date().toISOString().replace(/[:.]/g, '-')}`)
 mkdirSync(output, { recursive: true })
 async function main() {

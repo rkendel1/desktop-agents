@@ -35,9 +35,10 @@ describe('FeltDB authority', () => {
 
   it('has no app-level change bus: persistence is announced by FeltDB, not by callers', () => {
     // Allowed in the main process: the permission broker announcing a pending prompt (memory-only, never stored).
+    // And the AppPort host forwarding live coding notices to AppPort's event bus (at-most-once, keeps nothing, announces no persistence).
     // The renderer's own `changed`/`emit` helpers (resize observers, markdown lines) never touch persistence.
     const bus = /\b(?:this\.)?(?:emit|notifyChanged|changed|refreshSnapshot)\(/
-    expect(offenders(bus, ['main/agentPermissions.ts']).filter(path => !path.startsWith('renderer/'))).toEqual([])
+    expect(offenders(bus, ['main/agentPermissions.ts', 'main/appport/host.ts']).filter(path => !path.startsWith('renderer/'))).toEqual([])
     expect(offenders(/snapshot\(\): AppSnapshot|douchat:snapshot/)).toEqual([])
   })
 

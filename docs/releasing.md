@@ -1,4 +1,4 @@
-# Releasing Douchat
+# Releasing Foundry
 
 This guide is for maintainers who publish signed builds.
 
@@ -16,7 +16,7 @@ and catch up after waking from sleep if the last check was over an hour ago.
 Once an update is found, the settings icon keeps its notification dot until the
 user chooses to upgrade. Users can also open
 **Settings → About** to check manually. One click downloads the verified update,
-installs it and restarts Douchat. If an agent task is active, the completed
+installs it and restarts Foundry. If an agent task is active, the completed
 download waits until the task has finished before restarting.
 
 ## Preparing a release
@@ -33,7 +33,7 @@ download waits until the task has finished before restarting.
 ```bash
 npm version 0.2.0 --no-git-tag-version
 git add package.json package-lock.json
-git commit -m "release: Douchat 0.2.0"
+git commit -m "release: Foundry 0.2.0"
 git tag v0.2.0
 git push origin dev v0.2.0
 ```

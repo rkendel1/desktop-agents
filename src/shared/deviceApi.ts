@@ -8,7 +8,7 @@ export interface DesktopDeviceApi {
   copyText: (text: string) => Promise<void>
   copyAttachment: (attachmentId: string) => Promise<void>
   platform: string
-  microphonePermissionOwner: 'Douchat' | 'Electron'
+  microphonePermissionOwner: 'Foundry' | 'Electron'
   windowAction: (action: 'close' | 'minimize' | 'fullscreen') => void
   requestMicrophoneAccess: () => Promise<'granted' | 'denied' | 'unsupported'>
   openMicrophoneSettings: () => Promise<void>

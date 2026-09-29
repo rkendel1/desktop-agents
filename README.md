@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="resources/icons/douchat.png" width="128" alt="Douchat logo">
+  <img src="resources/icons/foundry.png" width="128" alt="Foundry logo">
 </p>
 
-<h1 align="center">Douchat</h1>
+<h1 align="center">Foundry</h1>
 
 <p align="center">
-  A desktop workspace where AI agents work and talk together.
+  The developer workbench where agents build software.
 </p>
 
 <p align="center">
@@ -16,25 +16,32 @@
   <a href="LICENSE">License</a>
 </p>
 
-Douchat is an Electron desktop workspace where independent AI agents can work
-alone or collaborate in a shared conversation. There is no account: everything
-lives on your computer. Agents use models you configure with your own API keys,
-or supported command-line tools already installed on your machine.
+Foundry is an Electron desktop workbench for software work done by agents. Add a project (a Git
+repository on your computer), give an agent a task, and watch what it does: the approvals it asks for,
+the files it changes, the checks it runs and the history of the session. You decide what it may do; the
+repository stays the source of truth. There is no account: everything lives on your computer. Agents use
+models you configure with your own API keys, or supported command-line coding tools already installed on
+your machine.
+
+Foundry is one part of a larger set of pieces, and it is the control surface, not all of them —
+see [docs/foundry.md](docs/foundry.md).
 
 <p align="center">
-  <img src="docs/screenshots/chat.png" alt="Chatting with Dr. Dou, who creates an English tutor agent and a study group" width="880">
+  <img src="docs/screenshots/foundry-projects.png" alt="A Foundry coding session: the task, the files the agent changed (and those already modified), checks and the session history" width="880">
 </p>
 
 ## Highlights
 
+- Run coding sessions: an agent works in one of your Git projects, and you approve what it asks to do, see exactly which files changed (and which were already modified before it started), run the project's checks and read the session history ([how it works](docs/coding-hardening.md)).
 - Create agents with their own identity, role, instructions and labels.
 - Use direct chats, group chats, topics, `@` mentions and lead-agent dispatch.
 - Hand work between agents with private and agent-to-agent messages.
-- Connect supported local agent CLIs without copying their credentials into Douchat.
+- Connect supported local agent CLIs without copying their credentials into Foundry.
 - Bring your own models through any OpenAI- or Anthropic-compatible provider.
 - Run isolated browser sessions, local file tools and persistent scheduled routines.
 - Add friends and share group chats where each member brings their own agents.
 - Reach an agent from WeChat, Feishu or Telegram through IM channels.
+- Let a coding agent work in a local Git project, with approvals, changed files, checks and a session history ([how it works](docs/coding-hardening.md)).
 - Keep agent chats, memories and configuration on your computer.
 - Use the interface in English or Simplified Chinese.
 
@@ -82,7 +89,7 @@ own workspace folder.
 
 ### Local agents
 
-Douchat detects the agent CLIs already installed on your computer — Claude Code,
+Foundry detects the agent CLIs already installed on your computer — Claude Code,
 Codex, Gemini, Grok Build, OpenClaw, Hermes, OpenCode and more — and shows their
 versions. Create new agents on top of any of them, or update a CLI in one click.
 
@@ -103,7 +110,7 @@ the conversation.
 ### Deep research
 
 Hand an open-ended question to an agent and let it search and read on its own.
-Here a Claude Code–based agent researches Douchat and its author and returns a
+Here a Claude Code–based agent researches Foundry and its author and returns a
 sourced summary with links.
 
 <p align="center">
@@ -114,7 +121,7 @@ sourced summary with links.
 
 Ask in chat — "remind me to drink water in 10 minutes" or "remind me to exercise
 every day at 8 AM" — and the agent creates a scheduled task that runs on its own.
-Run, pause or delete tasks from **Settings → Automation**. If Douchat is closed
+Run, pause or delete tasks from **Settings → Automation**. If Foundry is closed
 when a task is due, it runs once after the next launch.
 
 <p align="center">
@@ -175,7 +182,7 @@ then issue a replacement.
 
 ## Data and safety
 
-Douchat keeps one durable store: an embedded [FeltDB](https://www.npmjs.com/package/@feltdb/core)
+Foundry keeps one durable store: an embedded [FeltDB](https://www.npmjs.com/package/@feltdb/core)
 database. **FeltDB is the single durable authority for Desktop state;
 `DesktopRepository` is the asynchronous boundary over it; the renderer is a
 projection of FeltDB state, not a store.** See
@@ -265,7 +272,7 @@ resources/entitlements.mac.plist  hardened-runtime permissions for signed macOS 
 docs/              design notes for agents, groups, permissions and releases
 ```
 
-Development builds keep their data separate from an installed Douchat, show a
+Development builds keep their data separate from an installed Foundry, show a
 `DEV` badge on the app icon and hot-reload the renderer. To start from a clean
 profile, quit the dev app and delete `~/Library/Application Support/douchat-dev`.
 
@@ -283,7 +290,7 @@ rather than opening a public issue.
 
 ## License
 
-Douchat is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+Foundry is licensed under the [GNU Affero General Public License v3.0](LICENSE).
 A separate commercial license without the AGPL's copyleft obligations is
 available from ThinkAny, LLC — contact support@thinkany.ai.
 

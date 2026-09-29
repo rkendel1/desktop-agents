@@ -12,7 +12,7 @@ import type { ComputerProvider } from '../src/main/computer'
 
 if (process.env.DOUCHAT_LIVE_SCENARIOS !== '1') throw new Error('Set DOUCHAT_LIVE_SCENARIOS=1 for paid model calls and local agent probes.')
 const dev = join(homedir(), 'Library', 'Application Support', 'douchat-dev')
-app.setName('Douchat Dev'); app.setPath('userData', dev)
+app.setName('Foundry Dev'); app.setPath('userData', dev)
 const output = join(process.cwd(), 'out', 'group-scenarios', `health-${new Date().toISOString().replace(/[:.]/g, '-')}`)
 mkdirSync(output, { recursive: true })
 

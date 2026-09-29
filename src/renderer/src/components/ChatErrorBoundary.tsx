@@ -12,7 +12,7 @@ export class ChatErrorBoundary extends Component<{ children: ReactNode; root?: b
   static getDerivedStateFromError(error: Error) { return { error } }
   componentDidCatch(error: Error, info: ErrorInfo) {
     reportError(this.props.root ? 'app.render-error' : 'chat.render-error', error, info.componentStack || '')
-    console.error('[douchat] Chat rendering failed', error, info.componentStack)
+    console.error('[foundry] Chat rendering failed', error, info.componentStack)
   }
   render() {
     if (!this.state.error) return this.props.children

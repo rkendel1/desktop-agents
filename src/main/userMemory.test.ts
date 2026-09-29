@@ -200,7 +200,7 @@ it('lets hosted group tools write only group memory and rechecks cancellation an
   vi.spyOn(internals, 'session').mockReturnValue({ state, abort: vi.fn(), prompt })
   await internals.performReply({ config: { ...first, localAgentId: undefined }, sessionKey: key, context: 'group', conversationId: group.id, topicId: 'topic', prompt: 'I am Alex', groupMemoryRequest: { groupId: group.id, speaker: { id: 'owner', name: 'Owner' }, text: 'I am Alex' } })
   expect(prompt).toHaveBeenCalledOnce()
-  expect(state.systemPrompt).toContain('Douchat supports persistent group memory')
+  expect(state.systemPrompt).toContain('Foundry supports persistent group memory')
   expect((await store.groupMemories.read(group.id)).facts).toHaveLength(1)
   expect((await store.userMemories.read()).facts).toEqual([])
   await expect(tool.execute('outside-turn', edit)).rejects.toThrow('active human turn')
@@ -213,7 +213,7 @@ it('retrieves dated history across the owner’s contacts', async () => {
   vi.mocked(runLocalAgent).mockResolvedValue({ text: 'Answer', images: [] })
   await runtime.sendMessage(`direct-${first.id}`, 'What was the Orion SQLite decision?')
   let prompt = vi.mocked(runLocalAgent).mock.calls.at(-1)![1]
-  expect(prompt).toContain('Relevant memory retrieved by Douchat')
+  expect(prompt).toContain('Relevant memory retrieved by Foundry')
   expect(prompt).toContain('Orion originally used SQLite')
   expect(prompt).toContain('"historical":true')
   await runtime.sendMessage(`direct-${second.id}`, 'What was the Orion SQLite decision?')

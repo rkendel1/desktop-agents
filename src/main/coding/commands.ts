@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import type { CommandResult } from '../../shared/types'
 import { executableCommand } from '../windowsCommand'
 import { killLocalProcess } from '../localAgentConnection'
+import { trackProcess } from '../processLedger'
 import { spawnEnvironment } from '../shellPath'
 
 export interface RunCommandOptions {
@@ -38,6 +39,7 @@ export async function runCommand(argv: string[], options: RunCommandOptions): Pr
     const child = spawn(command.file, [...command.prefix, ...argv.slice(1)], {
       cwd: options.cwd, env: environment, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe']
     })
+    trackProcess(child, { role: 'command', cwd: options.cwd })
     let stdout = '', stderr = '', cancelled = false, timedOut = false, settled = false
     const stop = (): void => killLocalProcess(child as never)
     const abort = (): void => { cancelled = true; stop() }

@@ -10,7 +10,7 @@ export async function executableCommand(file: string, platform = process.platfor
   if (!script) throw new Error('This Windows .cmd launcher is not a supported npm shim. Configure the agent’s executable (.exe) instead.')
   await access(script)
   const node = await resolveExecutable('node.exe')
-  if (!node) throw new Error('Node.js is required to run this Windows local agent. Install Node.js and restart Douchat.')
+  if (!node) throw new Error('Node.js is required to run this Windows local agent. Install Node.js and restart Foundry.')
   return { file: node, prefix: [script] }
 }
 

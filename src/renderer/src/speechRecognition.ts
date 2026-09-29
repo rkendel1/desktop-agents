@@ -60,10 +60,10 @@ export function speechRecognitionErrorMessage(error: string, microphoneConfirmed
     error === 'service-not-allowed'
     || (microphoneConfirmed && (error === 'not-allowed' || error === 'network'))
   ) {
-    return 'Voice recognition service is unavailable in this version of Douchat.'
+    return 'Voice recognition service is unavailable in this version of Foundry.'
   }
   if (error === 'not-allowed') {
-    return 'Microphone access is off. Allow Douchat in System Settings, then restart the app.'
+    return 'Microphone access is off. Allow Foundry in System Settings, then restart the app.'
   }
   if (error === 'audio-capture') return 'No microphone was found.'
   if (error === 'no-speech') return 'No speech was detected. Try again.'

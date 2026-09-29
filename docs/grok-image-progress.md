@@ -5,7 +5,7 @@ format. Its protocol is documented in the [Grok Build headless guide](https://gi
 
 ## Failure reproduced on 2026-09-23
 
-With the previous Douchat arguments, Grok read the Imagine instructions and
+With the previous Foundry arguments, Grok read the Imagine instructions and
 announced that it would draw. Its `image_gen` call then failed with
 `User cancelled the execution for tool image_gen`, followed by
 `end.stopReason = cancelled`. `dontAsk` denied this tool because only read/search

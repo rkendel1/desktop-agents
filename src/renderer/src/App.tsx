@@ -310,7 +310,7 @@ function WorkspaceApp(): ReactElement {
     return (
       <div className="loading-screen">
         <span className="brand-mark"><i /><i /></span>
-        <span>{t('Opening Douchat…')}</span>
+        <span>{t('Opening Foundry…')}</span>
       </div>
     )
   }

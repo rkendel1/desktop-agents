@@ -30,7 +30,7 @@ const SYSTEM_ROOTS = process.platform === 'win32'
   : ['/System', '/Library', '/Applications', '/usr', '/bin', '/sbin', '/etc', '/var', '/private', '/dev', '/opt/homebrew', '/boot', '/proc', '/sys', '/lib', '/lib64', '/snap']
 
 /** Resolve and check a user-chosen folder. Refuses the filesystem root, the
- * home folder itself, system locations and Douchat's own data directory. */
+ * home folder itself, system locations and Foundry's own data directory. */
 export function validateWorkspaceFolder(path: unknown, { home = homedir(), systemRoots = SYSTEM_ROOTS }: { home?: string; systemRoots?: string[] } = {}): string {
   if (typeof path !== 'string' || !path.trim() || !isAbsolute(path)) throw new Error('Choose an absolute folder path.')
   let resolved: string
@@ -48,9 +48,9 @@ export function validateWorkspaceFolder(path: unknown, { home = homedir(), syste
   if (dataRoot) {
     let data = dataRoot
     try { data = realpathSync(dataRoot) } catch { /* Not created yet. */ }
-    if (inside(resolved, data) || inside(data, resolved)) throw new Error("Douchat's data folder cannot be used as a workspace.")
+    if (inside(resolved, data) || inside(data, resolved)) throw new Error("Foundry's data folder cannot be used as a workspace.")
   }
-  try { accessSync(resolved, constants.R_OK | constants.W_OK) } catch { throw new Error(`Douchat cannot read and write this folder: ${resolved}`) }
+  try { accessSync(resolved, constants.R_OK | constants.W_OK) } catch { throw new Error(`Foundry cannot read and write this folder: ${resolved}`) }
   return resolved
 }
 

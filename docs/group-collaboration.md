@@ -109,7 +109,7 @@ Settings → Scheduling（调度）→ 群决策服务 offers two account-scoped
 
 - **默认** asks a group member's isolated controller to elect a leader, plan the
   work and decide recovery. It needs no separate decision model configuration.
-- **决策模型** uses Douchat Cloud's published Jev model and charges the displayed
+- **决策模型** uses Foundry Cloud's published Jev model and charges the displayed
   credits per successful call; no separate API key is entered in the desktop UI.
   The runtime also retains ordinary custom-model and System One adapters for
   compatibility and tests. Legacy self-funded settings are not silently converted

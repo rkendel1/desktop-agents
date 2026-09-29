@@ -13,7 +13,7 @@
     "url": "https://github.com/thinkany-ai/douchat.git"
   },
   "description": "A desktop workspace where AI agents work and talk together.",
-  "desktopName": "Douchat.desktop",
+  "desktopName": "Foundry.desktop",
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
@@ -31,6 +31,13 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@appport/authorization": "1.0.2",
+    "@appport/core": "1.0.3",
+    "@appport/github": "1.0.2",
+    "@appport/protocol": "1.0.2",
+    "@appport/schema": "1.0.2",
+    "@appport/server": "1.0.2",
+    "@appport/services": "0.4.6",
     "@earendil-works/pi-agent-core": "^0.84.2",
     "@earendil-works/pi-ai": "^0.84.2",
     "@feltdb/core": "0.11.9",
@@ -52,6 +59,9 @@
     "yauzl": "3.4.0"
   },
   "devDependencies": {
+    "@appport/client": "1.0.2",
+    "@appport/transport-http": "1.0.2",
+    "@appport/transport-inprocess": "1.0.2",
     "@eslint/js": "^9.39.5",
     "@streamdown/cjk": "^1.0.3",
     "@streamdown/mermaid": "^1.0.2",
@@ -80,7 +90,7 @@
   },
   "build": {
     "appId": "ai.thinkany.douchat",
-    "productName": "Douchat",
+    "productName": "Foundry",
     "asar": true,
     "directories": {
       "output": "release/${version}"
@@ -112,13 +122,13 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
-      "icon": "resources/icons/douchat.icns",
+      "icon": "resources/icons/foundry.icns",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Douchat uses the microphone only for voice typing. / Douchat 仅在语音输入时使用麦克风。",
-        "NSSpeechRecognitionUsageDescription": "Douchat converts your speech into message text only while voice input is active. / Douchat 仅在语音输入期间将你的语音转换为消息文字。",
-        "NSDownloadsFolderUsageDescription": "Douchat accesses Downloads only when you ask an agent to find or open a local file. / Douchat 仅在你要求智能体查找或打开本地文件时访问下载文件夹。",
-        "NSDesktopFolderUsageDescription": "Douchat accesses Desktop only when you ask an agent to find or open a local file. / Douchat 仅在你要求智能体查找或打开本地文件时访问桌面文件夹。",
-        "NSDocumentsFolderUsageDescription": "Douchat accesses Documents only when you ask an agent to find or open a local file. / Douchat 仅在你要求智能体查找或打开本地文件时访问文稿文件夹。"
+        "NSMicrophoneUsageDescription": "Foundry uses the microphone only for voice typing. / Foundry 仅在语音输入时使用麦克风。",
+        "NSSpeechRecognitionUsageDescription": "Foundry converts your speech into message text only while voice input is active. / Foundry 仅在语音输入期间将你的语音转换为消息文字。",
+        "NSDownloadsFolderUsageDescription": "Foundry accesses Downloads only when you ask an agent to find or open a local file. / Foundry 仅在你要求智能体查找或打开本地文件时访问下载文件夹。",
+        "NSDesktopFolderUsageDescription": "Foundry accesses Desktop only when you ask an agent to find or open a local file. / Foundry 仅在你要求智能体查找或打开本地文件时访问桌面文件夹。",
+        "NSDocumentsFolderUsageDescription": "Foundry accesses Documents only when you ask an agent to find or open a local file. / Foundry 仅在你要求智能体查找或打开本地文件时访问文稿文件夹。"
       },
       "hardenedRuntime": true,
       "entitlements": "resources/entitlements.mac.plist",
@@ -142,10 +152,10 @@
       ]
     },
     "dmg": {
-      "title": "Douchat ${version}"
+      "title": "Foundry ${version}"
     },
     "win": {
-      "icon": "resources/icons/douchat.ico",
+      "icon": "resources/icons/foundry.ico",
       "target": [
         {
           "target": "nsis",
@@ -161,7 +171,7 @@
       "allowElevation": true
     },
     "linux": {
-      "icon": "resources/icons/douchat.png",
+      "icon": "resources/icons/foundry.png",
       "category": "Utility",
       "maintainer": "ThinkAny, LLC <support@thinkany.ai>",
       "syncDesktopName": true,
