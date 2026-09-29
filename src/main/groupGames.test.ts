@@ -1,15 +1,16 @@
+import { openAtFile } from './testSupport'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 import { GroupGames } from './groupGames'
 import { nextGameTurn, type GameState, type GameTurn } from '../shared/groupGame'
 
-const resources: { directory: string; store: DouchatStore }[] = []
+const resources: { directory: string; store: DesktopRepository }[] = []
 function setup(count = 6) {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-games-'))
-  const store = new DouchatStore(join(directory, 'state.db'), { seedDemo: true })
+  const store = openAtFile(join(directory, 'state.db'), { seedDemo: true })
   resources.push({ directory, store })
   const agents = Array.from({ length: count }, (_, index) => store.createAgent({ name: `测试员${index}`, role: '', instructions: '', color: '', provider: 'test', model: 'fixture' }))
   const conversation = store.createGroup({ name: '游戏测试', agentIds: agents.map(agent => agent.id) })
@@ -58,7 +59,7 @@ describe('persisted group games', () => {
     const before = store.groupGames()[0]
     const messageIds = store.topicMessages(conversation.id, conversation.activeTopicId).map(message => message.id)
     store.close()
-    const reopened = new DouchatStore(join(directory, 'state.db'))
+    const reopened = openAtFile(join(directory, 'state.db'))
     resources.at(-1)!.store = reopened
     const restored = new GroupGames(reopened, callbacks)
     const turn = nextGameTurn(reopened.groupGames()[0])!
@@ -68,15 +69,12 @@ describe('persisted group games', () => {
     for (const id of messageIds) expect(messages.filter(message => message.id === id)).toHaveLength(1)
   })
 
-  it('rejects stale commits and cross-account reads/writes', async () => {
+  it('rejects stale commits and unknown slots', async () => {
     const { store, games, conversation } = setup(5)
     await games.start(conversation.id, { kind: 'undercover', includeHuman: true, agentIds: conversation.agentIds })
     const state = store.groupGames()[0]
     expect(() => store.commitGame({ ...state, revision: state.revision + 1 }, state.revision - 1)).toThrow('更新')
-    store.setCurrentAccountId('other')
-    expect(store.groupGames()).toEqual([])
-    expect(() => store.commitGame(state)).toThrow('当前账号')
-    await expect(games.act(state.id, { slotId: 'fake', actorId: 'human' })).rejects.toThrow('不存在')
+    await expect(games.act(state.id, { slotId: 'fake', actorId: 'human' })).rejects.toThrow()
   })
 
   it('pauses on repeated model failure and resumes from the same pending player', async () => {
@@ -133,7 +131,7 @@ describe('persisted group games', () => {
     games.stopAll(); release('{"text":"UNCOMMITTED_OUTPUT"}'); await running
     expect(store.groupGames()[0].revision).toBe(before.revision)
     store.close()
-    const reopened = new DouchatStore(join(directory, 'state.db'))
+    const reopened = openAtFile(join(directory, 'state.db'))
     resources.at(-1)!.store = reopened
     const restored = new GroupGames(reopened, callbacks)
     await restored.pump(before.id)

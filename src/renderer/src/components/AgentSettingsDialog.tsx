@@ -14,10 +14,10 @@ import { AgentFilesPanel, AgentSkillsPanel } from './AgentCustomization'
 import './AgentSettingsDialog.css'
 
 export type AgentSettingsTab = 'memory' | 'profile' | 'customize' | 'models' | 'skills' | 'permissions' | 'channels' | 'advanced'
-export function AgentSettingsDialog({ agent, localAgents, cloudModels, initialTab = 'profile', onClose, onUpdate, onDelete, onModelSettings, onCreditsSettings }: {
-  agent: AgentConfig; localAgents: LocalAgent[]; cloudModels: ModelOption[]; initialTab?: AgentSettingsTab
+export function AgentSettingsDialog({ agent, localAgents, initialTab = 'profile', onClose, onUpdate, onDelete, onModelSettings }: {
+  agent: AgentConfig; localAgents: LocalAgent[]; initialTab?: AgentSettingsTab
   onClose: () => void; onUpdate: (id: string, input: UpdateAgentInput) => Promise<void>; onDelete: (agent: AgentConfig) => void
-  onModelSettings: () => void; onCreditsSettings: () => void
+  onModelSettings: () => void
 }) {
   const preferences = usePreferences()
   const tr = (en: string, zh: string) => resolveInterfaceLanguage(preferences.language) === 'zh-CN' ? zh : en
@@ -70,18 +70,18 @@ export function AgentSettingsDialog({ agent, localAgents, cloudModels, initialTa
         <EmbeddedAgentSettings.Provider value={true}>
           {visited.map(section => <fieldset disabled={saving} hidden={tab !== section} key={section} className="agent-settings-panel" onChangeCapture={() => { if (['profile', 'models', 'permissions'].includes(section)) markDirty(section) }}>
             {!['customize', 'skills', 'memory'].includes(section) && <header className="settings-heading agent-settings-heading"><div><h1>{tabs.find(item => item.id === section)!.label}</h1></div></header>}
-            {section === 'profile' && <div onClickCapture={event => { if ((event.target as HTMLElement).closest('.edit-contact-avatar-field button')) markDirty('profile') }}><BotModal agent={agent} localAgents={localAgents} cloudModels={cloudModels} onSettings={() => leave(onModelSettings)} onClose={noClose} onCreate={async () => {}} onUpdate={(_id, input) => save('profile', input)} /></div>}
+            {section === 'profile' && <div onClickCapture={event => { if ((event.target as HTMLElement).closest('.edit-contact-avatar-field button')) markDirty('profile') }}><BotModal agent={agent} localAgents={localAgents} onSettings={() => leave(onModelSettings)} onClose={noClose} onCreate={async () => {}} onUpdate={(_id, input) => save('profile', input)} /></div>}
             {section === 'advanced' && <><AgentArchivePanel agent={agent} onBusyChange={value => { busy.current = value; setSaving(value) }} onImport={async input => {
               await save('advanced', input)
               setVisited(current => current.filter(section => section !== 'customize' && section !== 'skills'))
               setDirty(current => { const next = new Set(current); next.delete('customize'); next.delete('skills'); return next })
-            }} />{(agent.systemRole !== 'admin' ? <div className="agent-settings-delete">
+            }} /><div className="agent-settings-delete">
               <div><h2>{t('Delete agent')}</h2><p>{tr('Remove this agent from your contacts.', '将此智能体从联系人中删除。')}</p></div>
               <button className="secondary-button danger" onClick={() => leave(() => onDelete(agent))}>{t('Delete agent')}</button>
-            </div> : <p className="agent-settings-advanced-note">{tr('The built-in system agent cannot be deleted.', '内置系统智能体不可删除。')}</p>)}</>}
+            </div></>}
             {section === 'customize' && <AgentFilesPanel agent={agent} onSave={input => save('customize', input)} onDirty={() => markDirty('customize')} />}
             {section === 'memory' && <UserMemoryPanel agentId={agent.id} onDirty={() => markDirty('memory')} onSaved={() => setDirty(current => { const next = new Set(current); next.delete('memory'); return next })} onBusyChange={value => { busy.current = value; setSaving(value) }} />}
-            {section === 'models' && <LocalModelDialog agent={agent} cloudModels={cloudModels} onClose={noClose} onModelSettings={() => leave(onModelSettings)} onCreditsSettings={() => leave(onCreditsSettings)} onSave={(model, provider, thinkingLevel) => save('models', { ...(provider === 'cloud' ? { cloudModel: { model } } : provider?.startsWith('custom:') ? { customModel: { providerId: provider.slice(7), model } } : { model }), thinkingLevel })} />}
+            {section === 'models' && <LocalModelDialog agent={agent} onClose={noClose} onModelSettings={() => leave(onModelSettings)} onSave={(model, provider, thinkingLevel) => save('models', { ...(provider?.startsWith('custom:') ? { customModel: { providerId: provider.slice(7), model } } : { model }), thinkingLevel })} />}
             {section === 'skills' && <AgentSkillsPanel agent={agent} onSave={input => save('skills', input)} onDirty={() => markDirty('skills')} />}
             {section === 'permissions' && <AgentPermissionsDialog agent={agent} onClose={noClose} onSave={permissions => save('permissions', { permissions })} />}
             {section === 'channels' && <IMChannelsDialog agent={agent} onClose={noClose} />}

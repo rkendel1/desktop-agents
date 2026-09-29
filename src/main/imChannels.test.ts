@@ -3,6 +3,9 @@ import { createCipheriv, createDecipheriv } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CredentialVault } from './credentialVault'
+import { FeltIMChannelStorage } from './imChannelStorage'
+import { createTestDesktop } from './testSupport'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 const sdk = vi.hoisted(() => ({ callbacks: {} as any, handler: undefined as any, send: vi.fn(), addReaction: vi.fn(), deleteReaction: vi.fn(), close: vi.fn() }))
 vi.mock('@larksuiteoapi/node-sdk', () => ({
@@ -14,8 +17,8 @@ import { IMChannelManager, splitIMText, wechatBaseURL } from './imChannels'
 const cleanup: (() => void)[] = []
 afterEach(() => { cleanup.splice(0).forEach(fn => fn()); vi.clearAllMocks() })
 function setup() {
+  const desktop = createTestDesktop()
   const directory = mkdtempSync(join(tmpdir(), 'douchat-im-'))
-  let owner = 'alice'
   const updates: any[] = []; const wechatUpdates: any[] = []; const sent: any[] = []
   const reply = vi.fn(async (_agent: string, _thread: string, text: string): Promise<IMReplyPart[]> => ['Reply: ' + text])
   const fetcher = vi.fn(async (url: any, options: any) => {
@@ -38,10 +41,12 @@ function setup() {
   }) as unknown as typeof fetch
   const codec = { encrypt: (value: string) => Buffer.from(value).toString('base64'), decrypt: (value: string) => Buffer.from(value, 'base64').toString() }
   const received = vi.fn((_agent: string, _thread: string, _text: string, _provider: string, id: string) => `receipt:${id}`)
-  const manager = new IMChannelManager(directory, codec, () => owner, id => ['agent-a', 'agent-b'].includes(id), reply, fetcher, received)
+  const vault = new CredentialVault(directory, { available: () => true, ...codec })
+  const storage = new FeltIMChannelStorage(desktop.repository, vault)
+  const manager = new IMChannelManager(storage, () => 'local', id => ['agent-a', 'agent-b'].includes(id), reply, fetcher, received)
   manager.activate()
-  cleanup.push(() => { manager.stop(); rmSync(directory, { recursive: true, force: true }) })
-  return { manager, reply, received, fetcher, sent, updates, wechatUpdates, directory, owner: (value: string) => { owner = value } }
+  cleanup.push(() => { manager.stop(); desktop.dispose(); rmSync(directory, { recursive: true, force: true }) })
+  return { manager, reply, received, fetcher, sent, updates, wechatUpdates, directory, desktop, vault }
 }
 const tg = (id: number, text: string, peer = 12) => ({ update_id: id, message: { text, from: { is_bot: false }, chat: { id: peer, type: 'private' } } })
 const wx = (id: number, text: string) => ({ message_id: id, from_user_id: 'wx-owner', message_type: 1, message_state: 2, context_token: 'reply-context', item_list: [{ type: 1, text_item: { text } }] })
@@ -307,28 +312,20 @@ describe('IM channels', () => {
     }
     expect(await reply.mock.results[0].value).toEqual([source])
   })
-  it('persists encrypted credentials, pairing, cursor and deduplication across restart', async () => {
-    const { manager, updates, directory, reply } = setup()
+  it('keeps the token in the credential vault, not FeltDB, and persists pairing, cursor and deduplication across restart', async () => {
+    const { manager, updates, directory, desktop, reply } = setup()
     await manager.connect('agent-a', { provider: 'telegram', token: '123:secret' })
     updates.push(tg(1, `/pair ${manager.list('agent-a')[0].pairingCode}`), tg(2, 'first'))
     await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(1))
-    expect(readFileSync(join(directory, readdirSync(directory)[0]), 'utf8')).not.toContain('123:secret')
+    const feltFiles = readdirSync(join(desktop.root, 'felt'), { withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name).map(name => readFileSync(join(desktop.root, 'felt', name), 'utf8')).join('')
+    expect(feltFiles).not.toContain('123:secret')
+    expect(readFileSync(join(directory, 'vault.json'), 'utf8')).not.toContain('123:secret')
     manager.activate()
     expect(manager.list('agent-a')[0].paired).toBe(true)
     updates.push(tg(2, 'first'), tg(3, 'second'))
     await vi.waitFor(() => expect(reply).toHaveBeenCalledTimes(2))
     expect(reply.mock.calls[1][2]).toBe('second')
     expect(reply.mock.calls[0][1]).toBe(reply.mock.calls[1][1])
-  })
-  it('isolates accounts and rejects a connection completed after account switching', async () => {
-    const { manager, owner, fetcher } = setup()
-    let complete!: (value: Response) => void
-    vi.mocked(fetcher).mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
-    const connecting = manager.connect('agent-a', { provider: 'telegram', token: '123:secret' })
-    owner('bob'); manager.activate()
-    complete({ ok: true, json: async () => ({ ok: true, result: { id: 123, username: 'test_bot' } }) } as Response)
-    await expect(connecting).rejects.toThrow('账号已切换')
-    expect(manager.list('agent-a')).toEqual([])
   })
   it('does not attach the same bot to two contacts or replace active webhooks', async () => {
     const { manager, fetcher } = setup()
@@ -470,7 +467,7 @@ describe('IM channels', () => {
   })
 
   it('persists pending receipts and advances polling before execution finishes, then restores queued work without repeating started work', async () => {
-    const { manager, reply, received, updates, directory, sent } = setup()
+    const { manager, reply, received, updates, desktop, sent } = setup()
     await manager.connect('agent-a', { provider: 'telegram', token: '123:secret' })
     updates.push(tg(1, `/pair ${manager.list('agent-a')[0].pairingCode}`))
     await vi.waitFor(() => expect(manager.list('agent-a')[0].paired).toBe(true))
@@ -478,7 +475,7 @@ describe('IM channels', () => {
     updates.push(...Array.from({ length: 6 }, (_, index) => tg(index + 2, `task-${index}`)))
     await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(6))
     expect(reply).toHaveBeenCalledTimes(4)
-    const records = JSON.parse(Buffer.from(readFileSync(join(directory, readdirSync(directory)[0]), 'utf8'), 'base64').toString())
+    const records = desktop.repository.setting<any[]>('imChannels')!
     expect(records[0].cursor).toBe('8')
     expect(records[0].inbox.filter((entry: any) => entry.state === 'queued')).toHaveLength(2)
     expect(records[0].inbox.every((entry: any) => entry.receiptId)).toBe(true)

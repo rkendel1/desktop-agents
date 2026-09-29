@@ -1,3 +1,4 @@
+import { openAtFile } from './testSupport'
 import { replyToIM } from './imReply'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerProvider } from './computer'
 import { DouchatRuntime } from './runtime'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 
 const directories: string[] = []
 
@@ -100,10 +101,10 @@ function stubModel(runtime: DouchatRuntime): void {
   }
 }
 
-function createRuntime(): { store: DouchatStore; runtime: DouchatRuntime } {
+function createRuntime(): { store: DesktopRepository; runtime: DouchatRuntime } {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-runtime-'))
   directories.push(directory)
-  const store = new DouchatStore(join(directory, 'state.json'), { seedDemo: true })
+  const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
   const runtime = new DouchatRuntime(store, idleComputer, () => undefined)
   stubModel(runtime)
   return { store, runtime }
@@ -150,14 +151,13 @@ describe('DouchatRuntime', () => {
     expect(telegram.id).toBe('direct-dobi')
     expect(store.messages.find(m => m.text === 'TG_PRIVATE_SENTINEL')?.sourceChannel).toBe('telegram')
     expect(store.messages.find(m => m.text === 'WX_PRIVATE_SENTINEL')?.sourceChannel).toBe('wechat')
-    expect(store.accountConversations.filter(c => c.type === 'direct' && c.agentIds[0] === agent.id)).toHaveLength(1)
+    expect(store.conversations.filter(c => c.type === 'direct' && c.agentIds[0] === agent.id)).toHaveLength(1)
     model.mockClear()
     await replyToIM(store, runtime, agent.id, 'telegram-binding', 'Continue', signal)
     expect(model.mock.calls.some(([options]) => (options as ReplyOptions).prompt.includes('TG_PRIVATE_SENTINEL'))).toBe(true)
     const aborted = new AbortController(); aborted.abort()
     await expect(replyToIM(store, runtime, agent.id, 'telegram-binding', 'cancelled', aborted.signal)).rejects.toThrow('disconnected')
-    store.setCurrentAccountId('another-owner')
-    await expect(replyToIM(store, runtime, agent.id, 'telegram-binding', 'wrong owner', signal)).rejects.toThrow('Contact not found')
+    await expect(replyToIM(store, runtime, 'missing-agent', 'telegram-binding', 'unknown contact', signal)).rejects.toThrow('Agent not found')
     store.close()
   })
 
@@ -251,163 +251,11 @@ describe('DouchatRuntime', () => {
     expect(other.agent.abort).not.toHaveBeenCalled()
   })
 
-  it('rejects shared tasks for a different owner or a cancelled session before model execution', async () => {
-    const { store, runtime } = createRuntime()
-    const agent = store.agents[0]
-    await expect(runtime.executeSocialTask('bob', agent.id, 'task', 'Do work', new AbortController().signal)).rejects.toThrow('does not belong')
-    const abort = new AbortController()
-    abort.abort()
-    await expect(runtime.executeSocialTask('local-demo-account', agent.id, 'task', 'Do work', abort.signal)).rejects.toThrow('cancelled')
-  })
-
-  it('passes shared task images to the agent as multimodal input', async () => {
-    const { store, runtime } = createRuntime()
-    const admin = store.ensureDefaultCloudContact('alice', { provider: 'gateway', model: 'default' }).agent!
-    const internal = runtime as unknown as { canRunLive: () => Promise<boolean>; runReply: (options: unknown) => Promise<object> }
-    vi.spyOn(internal, 'canRunLive').mockResolvedValue(true)
-    const reply = vi.spyOn(internal, 'runReply').mockResolvedValue({ text: 'A picture' })
-    await runtime.executeSocialTask('alice', admin.id, 'image-input', 'Describe this', new AbortController().signal, '', undefined,
-      [{ name: 'photo.png', mimeType: 'image/png', base64: 'iVBORw0KGgo=' }])
-    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
-      images: [{ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgo=' }]
-    }))
-  })
-
-  it('lets shared agents read received files and returns generated files without local paths', async () => {
-    const { store, runtime } = createRuntime()
-    const admin = store.ensureDefaultCloudContact('alice', { provider: 'gateway', model: 'default' }).agent!
-    const internals = runtime as any
-    vi.spyOn(internals, 'canRunLive').mockResolvedValue(true)
-    vi.spyOn(internals, 'runReply').mockImplementation(async (...params: unknown[]) => {
-      const options = params[0] as ReplyOptions
-      const url = /\]\(<(douchat-file:[^>]+)>\)/.exec(options.prompt)![1]
-      internals.replyCancels.set(options.sessionKey, { conversationId: 'social:file-task', abort: new AbortController() })
-      const tool = internals.artifactTools(admin.id, options.sessionKey).find((tool: any) => tool.name === 'read_message_file')
-      const result = await tool.execute('read', { url })
-      expect(JSON.parse(result.content[0].text).content).toBe('shared file contents')
-      const link = await store.saveIMFile({ name: 'result.txt', data: Buffer.from('processed') }, 'alice')
-      return { text: `Done\n\n${link}` }
-    })
-    const result = await runtime.executeSocialTask('alice', admin.id, 'file-task', 'Read this', new AbortController().signal, '', undefined, [], [{ name: 'input.txt', base64: Buffer.from('shared file contents').toString('base64') }])
-    expect(result).toEqual({ text: 'Done', files: [{ name: 'result.txt', base64: Buffer.from('processed').toString('base64') }] })
-    expect(internals.sharedFileUrls.size).toBe(0)
-  })
-
-  it('reads an earlier shared file on a later mention while excluding history outside the task context', async () => {
-    const { store, runtime } = createRuntime()
-    const admin = store.ensureDefaultCloudContact('alice', { provider: 'gateway', model: 'default' }).agent!
-    const file = await store.saveIMFile({ name: 'sidepanel.html', data: Buffer.from('<html>side panel</html>') }, 'alice')
-    const hidden = await store.saveIMFile({ name: 'old.txt', data: Buffer.from('excluded') }, 'alice')
-    store.syncFriendConversation('alice', { id: 'room-files', name: 'Team', kind: 'group', members: [{ id: 'alice', name: 'Alice', email: '' }], agents: [], createdAt: new Date().toISOString() }, [
-      { id: 'upload', roomId: 'room-files', authorId: 'alice', authorName: 'Alice', content: file, status: 'sent', createdAt: new Date().toISOString() },
-      { id: 'excluded', roomId: 'room-files', authorId: 'alice', authorName: 'Alice', content: hidden, status: 'sent', createdAt: new Date().toISOString() }
-    ])
-    const internals = runtime as any
-    vi.spyOn(internals, 'canRunLive').mockResolvedValue(true)
-    vi.spyOn(internals, 'runReply').mockImplementation(async (...params: unknown[]) => {
-      const options = params[0] as ReplyOptions
-      expect(options.prompt).toContain('fileLinks')
-      expect(options.prompt).toContain(file)
-      expect(options.prompt).not.toContain(hidden)
-      internals.replyCancels.set(options.sessionKey, { conversationId: 'social:followup', abort: new AbortController() })
-      const tool = internals.artifactTools(admin.id, options.sessionKey).find((tool: any) => tool.name === 'read_message_file')
-      const url = /\]\(<([^>]+)>\)/.exec(file)![1]
-      const read = await tool.execute('read', { url })
-      expect(JSON.parse(read.content[0].text).content).toBe('<html>side panel</html>')
-      await expect(tool.execute('hidden', { url: /\]\(<([^>]+)>\)/.exec(hidden)![1] })).rejects.toThrow('not available')
-      return { text: 'This is an HTML side panel.' }
-    })
-    const context = JSON.stringify({ history: [{ id: 'upload', content: 'What is this?', fileNames: ['sidepanel.html'] }] })
-    const result = await runtime.executeSocialTask('alice', admin.id, 'followup', '@Dr. Dou ?', new AbortController().signal, context, { roomId: 'room-files', requesterId: 'alice', requester: 'Alice', roomName: 'Team', delegate: async () => {} })
-    expect(result.text).toBe('This is an HTML side panel.')
-  })
-
-  it('returns generated image bytes with a shared task reply', async () => {
-    const { store, runtime } = createRuntime()
-    const admin = store.ensureDefaultCloudContact('alice', { provider: 'gateway', model: 'default' }).agent!
-    const image = await store.saveImageAttachment({ name: 'car.png', mimeType: 'image/png', data: Buffer.from('iVBORw0KGgo=', 'base64') }, 'alice')
-    const internal = runtime as unknown as { canRunLive: () => Promise<boolean>; runReply: (options: unknown) => Promise<object> }
-    vi.spyOn(internal, 'canRunLive').mockResolvedValue(true)
-    vi.spyOn(internal, 'runReply').mockResolvedValue({ text: '', attachments: [image] })
-    await expect(runtime.executeSocialTask('alice', admin.id, 'image-task', 'Draw', new AbortController().signal)).resolves.toEqual({
-      text: '', images: [{ name: 'car.png', mimeType: 'image/png', base64: 'iVBORw0KGgo=' }]
-    })
-  })
-
-  it('executes the owner’s built-in agent in shared group context', async () => {
-    const { store, runtime } = createRuntime()
-    const admin = store.ensureDefaultCloudContact('alice', { provider: 'gateway', model: 'default' }).agent!
-    const internal = runtime as unknown as { canRunLive: () => Promise<boolean>; runReply: (options: unknown) => Promise<{ text: string }> }
-    const reply = vi.spyOn(internal, 'runReply').mockResolvedValue({ text: 'Done' })
-    vi.spyOn(internal, 'canRunLive').mockResolvedValue(true)
-    expect(await runtime.executeSocialTask('alice', admin.id, 'shared-task', 'Help the group', new AbortController().signal)).toEqual({ text: 'Done' })
-    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ config: expect.objectContaining({ id: admin.id }), context: 'group' }))
-    await expect(runtime.executeSocialTask('bob', admin.id, 'foreign-task', 'Run', new AbortController().signal)).rejects.toThrow('does not belong')
-    expect(reply).toHaveBeenCalledTimes(1)
-  })
-
-  it('reads the current requester and cancellation signal when reusing shared tools', async () => {
-    const { store } = createRuntime()
-    const operation = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'Done' }], details: {} }))
-    const runtime = new DouchatRuntime(store, { ...idleComputer, createTools: () => [{
-      name: 'computer_list_files', label: 'Read', description: 'Read', parameters: { type: 'object', properties: {} } as any, execute: operation
-    }] }, () => {})
-    const internal = runtime as any
-    const agent = store.accountAgents[0]
-    vi.spyOn(internal, 'resolveModel').mockReturnValue({ id: 'mock', provider: 'mock', api: 'openai-completions' })
-    const authorize = vi.spyOn(internal.permissions, 'authorize').mockResolvedValue(undefined)
-    const old = new AbortController()
-    internal.sharedCallers.set('shared', { requesterId: 'first', requester: 'First', roomName: 'Room', signal: old.signal, delegate: vi.fn() })
-    const session = internal.session(agent, 'shared', 'group')
-    const tool = session.state.tools.find((item: any) => item.name === 'computer_list_files')
-    await tool.execute('first', {})
-    old.abort()
-    internal.sharedCallers.set('shared', { requesterId: 'second', requester: 'Second', roomName: 'Room', signal: new AbortController().signal, delegate: vi.fn() })
-    expect(internal.session(agent, 'shared', 'group')).toBe(session)
-    await tool.execute('second', {})
-    expect(authorize.mock.calls.map(call => (call[1] as any).requesterId)).toEqual(['first', 'second'])
-    internal.sharedCallers.delete('shared')
-    await expect(tool.execute('late', {})).rejects.toThrow('No active shared task')
-    expect(operation).toHaveBeenCalledTimes(2)
-    internal.disposeSession('shared')
-  })
-
-  it('guards the actual shared cloud tool invocation and leaves private owner tools separate', async () => {
-    const { store } = createRuntime()
-    const operation = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'secret' }], details: {} }))
-    const runtime = new DouchatRuntime(store, { ...idleComputer, createTools: () => [{
-      name: 'computer_list_files', label: 'Read files', description: 'Read files',
-      parameters: { type: 'object', properties: {} } as any, execute: operation
-    }] }, () => {})
-    const agent = store.accountAgents[0]
-    const internal = runtime as any
-    vi.spyOn(internal, 'resolveModel').mockReturnValue({ id: 'mock', provider: 'mock', api: 'openai-completions' })
-    internal.sharedCallers.set('social:task', { requesterId: 'other', requester: 'Other', roomName: 'Group', delegate: vi.fn() })
-    const session = internal.session(agent, 'social:task', 'group')
-    const guarded = session.state.tools.find((tool: any) => tool.name === 'computer_list_files')
-    const work = guarded.execute('tool-id', { directory: 'Documents' })
-    expect(operation).not.toHaveBeenCalled()
-    runtime.resolveAgentPermission(runtime.snapshot().permissionRequests![0].id, true)
-    await work
-    expect(operation).toHaveBeenCalledOnce()
-    const privateSession = internal.session(agent, 'direct:owner:topic', 'direct')
-    await privateSession.state.tools.find((tool: any) => tool.name === 'computer_list_files').execute('private', {})
-    expect(operation).toHaveBeenCalledTimes(2)
-    expect(runtime.snapshot().permissionRequests).toHaveLength(0)
-    const abort = new AbortController()
-    const pending = guarded.execute('cancelled-tool', {}, abort.signal)
-    const stopped = expect(pending).rejects.toThrow(/abort/i)
-    abort.abort()
-    await stopped
-    expect(operation).toHaveBeenCalledTimes(2)
-    expect(runtime.snapshot().permissionRequests).toHaveLength(0)
-  })
-
   it('does not expire a cloud reply while the owner is reviewing a permission request', async () => {
     vi.useFakeTimers()
     const { store } = createRuntime()
     const runtime = new DouchatRuntime(store, idleComputer, () => {})
-    const agent = store.accountAgents[0]
+    const agent = store.agents[0]
     const internal = runtime as any
     const abort = vi.fn()
     vi.spyOn(internal, 'session').mockReturnValue({
@@ -430,7 +278,7 @@ describe('DouchatRuntime', () => {
     vi.useFakeTimers()
     const { store } = createRuntime()
     const runtime = new DouchatRuntime(store, idleComputer, () => {})
-    const internal = runtime as any, config = store.accountAgents[0]
+    const internal = runtime as any, config = store.agents[0]
     let emit: (event: any) => void = () => {}
     let finish!: () => void
     const unsubscribe = vi.fn()
@@ -465,7 +313,7 @@ describe('DouchatRuntime', () => {
     vi.useFakeTimers()
     const { store } = createRuntime()
     const runtime = new DouchatRuntime(store, idleComputer, () => {})
-    const internal = runtime as any, config = store.accountAgents[0]
+    const internal = runtime as any, config = store.agents[0]
     let emit: (event: any) => void = () => {}
     const unsubscribe = vi.fn()
     const session = { state: { messages: [] }, abort: vi.fn(),
@@ -495,24 +343,6 @@ describe('DouchatRuntime', () => {
     } finally { runtime.disposeAgent(config.id); vi.useRealTimers() }
   })
 
-  it('requires an explicit execution grant before starting an externally requested local agent', async () => {
-    const { store, runtime } = createRuntime()
-    const agent = store.createAgent({ name: 'Local', role: '', instructions: '', color: '', provider: 'local', model: 'default', localAgentId: 'codex' })
-    const internal = runtime as any
-    const reply = vi.spyOn(internal, 'runReply').mockResolvedValue({ text: 'Done' })
-    vi.spyOn(internal, 'canRunLive').mockResolvedValue(true)
-    const result = runtime.executeSocialTask(store.currentAccountId!, agent.id, 'external-local', 'Read a file', new AbortController().signal, '', {
-      requesterId: 'other', requester: 'Other', roomName: 'Group', delegate: vi.fn()
-    })
-    const rejected = expect(result).rejects.toThrow('declined')
-    await vi.waitFor(() => expect(runtime.snapshot().permissionRequests).toHaveLength(1))
-    expect(runtime.snapshot().permissionRequests![0].capability).toBe('localExecution')
-    expect(reply).not.toHaveBeenCalled()
-    runtime.resolveAgentPermission(runtime.snapshot().permissionRequests![0].id, false)
-    await rejected
-    expect(reply).not.toHaveBeenCalled()
-  })
-
   it('creates a persistent routine from a top-level chat tool and prevents duplicates', async () => {
     const { store, runtime } = createRuntime()
     const agent = store.agents[0]
@@ -530,9 +360,9 @@ describe('DouchatRuntime', () => {
     })
     const internals = runtime as unknown as {
       activeConversation: Map<string, string>
-      routineTool: (config: NonNullable<ReturnType<DouchatStore['agent']>>) => RoutineToolLike
+      routineTool: (config: NonNullable<ReturnType<DesktopRepository['agent']>>) => RoutineToolLike
       systemPrompt: (
-        config: NonNullable<ReturnType<DouchatStore['agent']>>,
+        config: NonNullable<ReturnType<DesktopRepository['agent']>>,
         context: 'direct' | 'group' | 'controller',
         routineCreationAllowed: boolean
       ) => string
@@ -612,162 +442,16 @@ describe('DouchatRuntime', () => {
     expect(store.runs[0]).toMatchObject({ routineId: routine.id, status: 'failed' })
     expect(store.runs[0].error).toContain('finished without a text response')
     expect(store.messages.at(-1)).toMatchObject({
-      authorName: 'Douchat',
+      authorName: 'Desktop',
       kind: 'system',
       text: '自动任务“一分钟后发笑话”执行失败：智能体没有返回任何内容。'
     })
   })
 
-  it('lets only the current account system administrator create and edit agents', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'douchat-runtime-management-'))
-    directories.push(directory)
-    const store = new DouchatStore(join(directory, 'state.json'))
-    const defaultAgent = store.ensureDefaultCloudContact('account-1', {
-      provider: 'gateway',
-      model: 'default'
-    }).agent!
-    const avatar = 'data:image/png;base64,aGVsbG8='
-    const runtime = new DouchatRuntime(store, idleComputer, () => undefined, {
-      baseUrl: 'http://localhost:3004/v1',
-      resolveAccessToken: () => 'dch_current',
-      avatarFromImage: () => avatar
-    })
-    const internals = runtime as unknown as {
-      activeInputImages: Map<string, Array<{ type: 'image'; data: string; mimeType: string }>>
-      agentManagementTools: (config: NonNullable<ReturnType<DouchatStore['agent']>>) => AgentManagementToolLike[]
-    }
-    internals.activeInputImages.set(defaultAgent.id, [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }])
-
-    const tools = internals.agentManagementTools(defaultAgent)
-    expect(tools.map((tool) => tool.name)).toEqual(['read_agent_configuration', 'update_group', 'create_group', 'create_agent', 'update_agent'])
-    const originalGroup = store.createGroup({ name: '闲聊小群', agentIds: [defaultAgent.id] })
-    store.addMessage({ conversationId: originalGroup.id, topicId: originalGroup.activeTopicId, authorId: defaultAgent.id, authorName: defaultAgent.name, text: 'History stays', kind: 'message' })
-    const groupCount = store.accountConversations.filter((item) => item.type === 'group').length
-    const updateGroup = tools.find((tool) => tool.name === 'update_group')!
-    await updateGroup.execute('rename', { group: originalGroup.id, name: '三国英雄', emoji: '⚔️' })
-    expect(store.conversation(originalGroup.id)).toMatchObject({ name: '三国英雄', avatarEmoji: '⚔️', agentIds: [defaultAgent.id] })
-    expect(store.topicMessages(originalGroup.id, originalGroup.activeTopicId)[0].text).toBe('History stays')
-    expect(store.accountConversations.filter((item) => item.type === 'group')).toHaveLength(groupCount)
-    await updateGroup.execute('image', { group: '三国英雄', avatar: 'attached' })
-    expect(store.conversation(originalGroup.id)?.avatar).toBe(avatar)
-    expect(store.conversation(originalGroup.id)?.avatarEmoji).toBeUndefined()
-    await updateGroup.execute('remove', { group: originalGroup.id, avatar: 'remove' })
-    expect(store.conversation(originalGroup.id)?.avatar).toBeUndefined()
-    await expect(updateGroup.execute('invalid', { group: originalGroup.id, name: 'wrong', emoji: 'not emoji' })).rejects.toThrow()
-    expect(store.conversation(originalGroup.id)?.name).toBe('三国英雄')
-    store.createGroup({ name: '三国英雄', agentIds: [defaultAgent.id] })
-    await expect(updateGroup.execute('ambiguous', { group: '三国英雄', name: 'oops' })).rejects.toThrow()
-    const create = tools.find((tool) => tool.name === 'create_agent')!
-    const createdResult = await create.execute('create-1', { name: 'Researcher', avatar: 'attached', systemFiles: { 'SOUL.md': 'Be precise.', 'IDENTITY.md': 'I am Researcher.' } })
-    const createdId = createdResult.details.agentId as string
-    await updateGroup.execute('add-member', { group: originalGroup.id, addAgents: ['Researcher', createdId] })
-    expect(store.conversation(originalGroup.id)?.agentIds).toEqual([defaultAgent.id, createdId])
-    await expect(updateGroup.execute('atomic', { group: originalGroup.id, name: 'must not change', addAgents: ['missing'] })).rejects.toThrow()
-    expect(store.conversation(originalGroup.id)?.name).toBe('三国英雄')
-    await updateGroup.execute('remove-leader', { group: originalGroup.id, removeAgents: [defaultAgent.id] })
-    expect(store.conversation(originalGroup.id)).toMatchObject({ agentIds: [createdId], leadAgentId: createdId })
-    expect(store.agent(defaultAgent.id)).toBeDefined()
-    expect(store.topicMessages(originalGroup.id, originalGroup.activeTopicId)[0].text).toBe('History stays')
-    await expect(updateGroup.execute('empty', { group: originalGroup.id, removeAgents: [createdId] })).rejects.toThrow('at least one')
-
-    const groupResult = await tools.find((tool) => tool.name === 'create_group')!.execute('group-1', { name: '我们三', agents: ['Researcher'] })
-    const group = store.conversation(groupResult.details.conversationId as string)!
-    expect(group).toMatchObject({ name: '我们三', type: 'group', ownerId: 'account-1' })
-    expect(group.agentIds).toEqual([defaultAgent.id, createdId])
-    await expect(tools.find((tool) => tool.name === 'create_group')!.execute('group-bad', { name: 'Bad', agents: ['Missing'] })).rejects.toThrow('No agent')
-
-    expect(createdResult.details.created).toBe(true)
-    expect(store.agent(createdId)?.systemFiles).toEqual({ 'SOUL.md': 'Be precise.', 'IDENTITY.md': 'I am Researcher.' })
-    expect(createdResult.content[0].text).toContain('SOUL.md')
-    const read = tools.find(tool => tool.name === 'read_agent_configuration')!
-    expect((await read.execute('read', { agent: createdId })).content[0].text).toContain('I am Researcher.')
-    await expect(create.execute('bad-files', { name: 'Invalid', systemFiles: { 'USER.md': 'private' } })).rejects.toThrow('Personal user files')
-    expect(store.accountAgents.some(agent => agent.name === 'Invalid')).toBe(false)
-    expect(store.agent(createdId)).toMatchObject({
-      name: 'Researcher',
-      role: 'Assistant',
-      instructions: '',
-      avatar
-    })
-    expect(store.conversation(`direct-${createdId}`)?.agentIds).toEqual([createdId])
-
-    const update = tools.find((tool) => tool.name === 'update_agent')!
-    const updatedResult = await update.execute('update-1', {
-      agent: 'Researcher',
-      name: 'Release Scout',
-      description: 'Track release notes.',
-      systemFiles: { 'IDENTITY.md': 'I am Release Scout.' },
-      emoji: '🦊'
-    })
-    expect(store.agent(createdId)?.systemFiles).toEqual({ 'SOUL.md': 'Be precise.', 'IDENTITY.md': 'I am Release Scout.' })
-    expect(updatedResult.details.updated).toBe(true)
-    expect(store.agent(createdId)).toMatchObject({
-      name: 'Release Scout',
-      instructions: 'Track release notes.',
-      avatar: '',
-      avatarEmoji: '🦊'
-    })
-    expect(store.conversation(`direct-${createdId}`)?.name).toBe('Release Scout')
-
-    await update.execute('update-2', { agent: 'Release Scout', avatar: 'remove' })
-    expect(store.agent(createdId)).toMatchObject({ avatar: '', avatarEmoji: '' })
-    expect(internals.agentManagementTools(store.agent(createdId)!)).toEqual([])
-
-    store.deleteConversation(`direct-${defaultAgent.id}`)
-    expect(store.defaultConversationId).toBeUndefined()
-    expect(store.systemAdminAgentId).toBe(defaultAgent.id)
-    expect(internals.agentManagementTools(defaultAgent).map((tool) => tool.name)).toEqual(['read_agent_configuration', 'update_group', 'create_group', 'create_agent', 'update_agent'])
-    const withoutCapability = { ...defaultAgent, capabilities: [] }
-    expect(internals.agentManagementTools(withoutCapability)).toEqual([])
-  })
-
-  it('tells the system administrator to use management tools for contact requests', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'douchat-runtime-management-prompt-'))
-    directories.push(directory)
-    const store = new DouchatStore(join(directory, 'state.json'))
-    const defaultAgent = store.ensureDefaultCloudContact('account-1', {
-      provider: 'gateway',
-      model: 'default'
-    }).agent!
-    const runtime = new DouchatRuntime(store, idleComputer, () => undefined)
-    const prompt = (runtime as unknown as {
-      systemPrompt: (agent: NonNullable<ReturnType<DouchatStore['agent']>>, context: 'direct') => string
-    }).systemPrompt(defaultAgent, 'direct')
-
-    expect(prompt).toContain('Treat 联系人、智能体、agent, and bot as equivalent')
-    expect(prompt).toContain('call create_agent')
-    expect(prompt).toContain('call update_agent')
-    expect(prompt).toContain('choose one suitable for the agent')
-    expect(prompt).toContain('should remain empty unless the human supplies one')
-  })
-
-  it('does not grant an earlier account administrator access after switching accounts', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'douchat-runtime-account-admin-'))
-    directories.push(directory)
-    const store = new DouchatStore(join(directory, 'state.json'))
-    const earlier = store.ensureDefaultCloudContact('account-1', {
-      provider: 'gateway',
-      model: 'default'
-    }).agent!
-    const current = store.ensureDefaultCloudContact('account-2', {
-      provider: 'gateway',
-      model: 'default'
-    }).agent!
-    const runtime = new DouchatRuntime(store, idleComputer, () => undefined)
-    const internals = runtime as unknown as {
-      agentManagementTools: (config: NonNullable<ReturnType<DouchatStore['agent']>>) => AgentManagementToolLike[]
-    }
-
-    expect(earlier.systemRole).toBe('admin')
-    expect(current.systemRole).toBe('admin')
-    expect(internals.agentManagementTools(earlier)).toEqual([])
-    expect(internals.agentManagementTools(current).map((tool) => tool.name)).toEqual(['read_agent_configuration', 'update_group', 'create_group', 'create_agent', 'update_agent'])
-  })
-
   it('asks agents to preserve verified local files as reopenable history links', () => {
     const { store, runtime } = createRuntime()
     const prompt = (runtime as unknown as {
-      systemPrompt: (agent: NonNullable<ReturnType<DouchatStore['agent']>>, context: 'direct') => string
+      systemPrompt: (agent: NonNullable<ReturnType<DesktopRepository['agent']>>, context: 'direct') => string
     }).systemPrompt(store.agent('dobi')!, 'direct')
 
     expect(prompt).toContain('[filename](<douchat-file:///absolute/path>)')
@@ -798,72 +482,12 @@ describe('DouchatRuntime', () => {
     expect(runtime.snapshot().activity[0]?.action).toBeUndefined()
   })
 
-  it('loads Cloud models with the desktop token and removes them on sign-out', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'douchat-runtime-cloud-'))
-    directories.push(directory)
-    const store = new DouchatStore(join(directory, 'state.json'), { seedDemo: true })
-    let token: string | undefined = 'dch_current'
-    const request = vi.fn(async () => Response.json({
-      object: 'list',
-      data: [{
-        id: 'douchat-default',
-        display_name: 'Douchat Cloud',
-        model_type: 'chat',
-        capabilities: ['chat.completions', 'streaming', 'tools']
-      }]
-    }))
-    vi.stubGlobal('fetch', request)
-    const runtime = new DouchatRuntime(store, idleComputer, () => undefined, {
-      baseUrl: 'http://localhost:3004/v1',
-      resolveAccessToken: () => token
-    })
-
-    expect(runtime.defaultCloudAgentModel()).toEqual({ provider: 'gateway', model: 'default' })
-    await runtime.connect()
-    expect(runtime.snapshot().models).toEqual([
-      { provider: 'gateway', model: 'douchat-default', label: 'Douchat Cloud' }
-    ])
-    expect(runtime.defaultCloudAgentModel()).toEqual({ provider: 'gateway', model: 'douchat-default' })
-    expect(runtime.snapshot().endpoint).toMatchObject({ source: 'account', hasApiKey: true })
-
-    token = undefined
-    await runtime.connect()
-    expect(runtime.snapshot().models).toEqual([])
-    expect(runtime.defaultCloudAgentModel()).toEqual({ provider: 'gateway', model: 'default' })
-    expect(runtime.snapshot().endpoint).toMatchObject({ source: 'account', hasApiKey: false })
-    expect(request).toHaveBeenCalledOnce()
-  })
-
-  it('retries Cloud model discovery when a signed-in chat is still offline', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'douchat-runtime-retry-'))
-    directories.push(directory)
-    const store = new DouchatStore(join(directory, 'state.json'), { seedDemo: true })
-    const request = vi.fn()
-      .mockResolvedValueOnce(Response.json({ object: 'list', data: [] }))
-      .mockResolvedValueOnce(Response.json({ object: 'list', data: [{ id: 'cloud-default', object: 'model' }] }))
-    vi.stubGlobal('fetch', request)
-    const runtime = new DouchatRuntime(store, idleComputer, () => undefined, {
-      baseUrl: 'http://localhost:3004/v1',
-      resolveAccessToken: () => 'dch_current'
-    })
-
-    await runtime.connect()
-    expect(runtime.snapshot().runtime.mode).toBe('offline')
-
-    const reconnectable = runtime as unknown as {
-      canRunLive: (agent: NonNullable<ReturnType<DouchatStore['agent']>>) => Promise<boolean>
-    }
-    expect(await reconnectable.canRunLive(store.agent('dobi')!)).toBe(true)
-    expect(runtime.snapshot().runtime.mode).toBe('live')
-    expect(request).toHaveBeenCalledTimes(2)
-  })
-
   it.each([['Request was aborted', false], ['Request aborted', false], ['Request aborted', true]] as const)('resumes an interrupted tool turn without replaying tools: %s, thrown=%s', async (errorMessage, thrown) => {
     vi.useFakeTimers()
     try {
       const directory = mkdtempSync(join(tmpdir(), 'douchat-runtime-stream-retry-'))
       directories.push(directory)
-      const store = new DouchatStore(join(directory, 'state.json'), { seedDemo: true })
+      const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
       const runtime = new DouchatRuntime(store, idleComputer, () => undefined)
       const config = store.agent('dobi')!
       const state = { messages: [] as Array<Record<string, unknown>> }
@@ -921,7 +545,7 @@ describe('DouchatRuntime', () => {
     try {
       const directory = mkdtempSync(join(tmpdir(), 'douchat-runtime-500-'))
       directories.push(directory)
-      const store = new DouchatStore(join(directory, 'state.json'), { seedDemo: true })
+      const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
       const runtime = new DouchatRuntime(store, idleComputer, () => undefined)
       const config = store.agent('dobi')!
       const failed = () => ({ role: 'assistant', content: [], errorMessage: '500 status code (no body)' })
@@ -956,7 +580,7 @@ describe('DouchatRuntime', () => {
   it('defers a background agent refresh until the active reply completes', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'douchat-refresh-'))
     directories.push(directory)
-    const store = new DouchatStore(join(directory, 'state.json'), { seedDemo: true })
+    const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
     const runtime = new DouchatRuntime(store, idleComputer, () => undefined)
     const config = store.agent('dobi')!
     let finish!: () => void
@@ -1002,7 +626,7 @@ describe('DouchatRuntime', () => {
   it.each(['signal', 'conversation'])('cancels a stalled model through %s even when the provider ignores abort', async (method) => {
     const directory = mkdtempSync(join(tmpdir(), 'douchat-cancel-'))
     directories.push(directory)
-    const store = new DouchatStore(join(directory, 'state.json'), { seedDemo: true })
+    const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
     const runtime = new DouchatRuntime(store, idleComputer, () => undefined)
     const config = store.agent('dobi')!
     const session = {
@@ -1033,7 +657,7 @@ describe('DouchatRuntime', () => {
     try {
       const directory = mkdtempSync(join(tmpdir(), 'douchat-runtime-controller-timeout-'))
       directories.push(directory)
-      const store = new DouchatStore(join(directory, 'state.json'), { seedDemo: true })
+      const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
       const runtime = new DouchatRuntime(store, idleComputer, () => undefined)
       const config = store.agent('dobi')!
       const state = { messages: [] as Array<Record<string, unknown>> }
@@ -1390,14 +1014,7 @@ describe('DouchatRuntime', () => {
   it('hands a newly configured contact a task immediately without a human greeting', async () => {
     const { store, runtime } = createRuntime()
     const internal = runtime as any
-    const admin = store.accountAgents.find(agent => agent.systemRole === 'admin')
-    // The demo fixture permits management through its configured coordinator.
-    const manager = admin ?? store.agent('dobi')!
-    const tools = internal.agentManagementTools(manager) as AgentManagementToolLike[]
-    const create = tools.find(tool => tool.name === 'create_agent')
-    const fresh = create
-      ? store.agent((await create.execute('create', { name: 'PPT Master', systemFiles: { 'IDENTITY.md': 'I make PPTs.' } })).details.agentId as string)!
-      : store.createAgent({ name: 'PPT Master', role: 'Assistant', instructions: '', color: '#123456', provider: 'gateway', model: 'douchat-default', systemFiles: { 'IDENTITY.md': 'I make PPTs.' } })
+    const fresh = store.createAgent({ name: 'PPT Master', role: 'Assistant', instructions: '', color: '#123456', provider: 'anthropic', model: 'claude-sonnet-4-5', systemFiles: { 'IDENTITY.md': 'I make PPTs.' } })
     internal.activeConversation.set('dobi', 'direct-dobi')
     internal.activeTopic.set('dobi', store.activeTopicId('direct-dobi'))
     internal.runReply = vi.fn(async ({ config }: any) => {
@@ -1538,28 +1155,6 @@ describe('DouchatRuntime', () => {
     // A topic that already has a transcript is never greeted again.
     await runtime.greet('direct-dobi')
     expect(store.topicMessages('direct-dobi', store.activeTopicId('direct-dobi'))).toHaveLength(1)
-  })
-
-  it.each(['zh-CN', 'en'] as const)('welcomes a new account offline in %s without repeating or using a model', async (language) => {
-    const { store, runtime } = createRuntime()
-    store.setCurrentAccountId('new-user')
-    const { agent, conversation } = store.ensureDefaultCloudContact('new-user', { provider: 'gateway', model: 'default' })
-    runtime.setInterfaceLanguage(language)
-    const internal = runtime as unknown as { canRunLive: () => Promise<boolean>; runReply: (options: ReplyOptions) => Promise<{ text: string }> }
-    const live = vi.spyOn(internal, 'canRunLive').mockResolvedValue(false)
-    const reply = vi.spyOn(internal, 'runReply')
-    await Promise.all([runtime.greet(conversation!.id), runtime.greet(conversation!.id)])
-    const messages = store.messages.filter(message => message.conversationId === conversation!.id)
-    expect(messages).toHaveLength(1)
-    expect(messages[0]).toMatchObject({ authorId: agent!.id, kind: 'message' })
-    for (const text of language === 'zh-CN' ? ['创建联系人', '拉群协作', '解释代码', '设置提醒'] : ['Create a contact', 'Start a group', 'explain code', 'Set a reminder']) {
-      expect(messages[0].text).toContain(text)
-    }
-    store.createTopic(conversation!.id)
-    await runtime.greet(conversation!.id)
-    expect(store.messages.filter(message => message.conversationId === conversation!.id)).toHaveLength(2)
-    expect(store.contextMessages(conversation!.id, store.activeTopicId(conversation!.id))[0].text).toContain(agent!.name)
-    expect(reply).not.toHaveBeenCalled()
   })
 
   it('bounds greetings, suppresses duplicates and discards late model output', async () => {
@@ -1790,7 +1385,7 @@ it('uses the new default model after resetting context while preserving the agen
   const records = [{ id: 'mine', name: 'Mine', kind: 'openai' as const, apiBase: 'https://custom.example/v1', apiKey: 'test-key', models: ['mimo-model', 'deepseek-flash'] }]
   runtime.configureCustomModels(records, 'mine/mimo-model')
   const bot = store.createAgent({ name: 'Mimo2', role: 'Assistant', instructions: '', color: '#fff', ...runtime.customAgentModel('@default', 'default') })
-  const conversation = store.accountConversations.find(conversation => conversation.type === 'direct' && conversation.agentIds.includes(bot.id))!
+  const conversation = store.conversations.find(conversation => conversation.type === 'direct' && conversation.agentIds.includes(bot.id))!
   const topicId = store.activeTopicId(conversation.id)
   const key = `direct:${conversation.id}:${topicId}`
   const internals = runtime as unknown as { session: (config: typeof bot, key: string, context: 'direct') => { state: { model: { id: string }; systemPrompt: string } } }
@@ -1810,46 +1405,20 @@ it('uses the new default model after resetting context while preserving the agen
 
 it('updates only default followers, including the built-in agent, and keeps model IDs with slashes', () => {
   const { store, runtime } = createRuntime()
-  store.setCurrentAccountId('default-owner')
   const records = [{ id: 'mine', name: 'Mine', kind: 'openai' as const, apiBase: 'https://custom.example/v1', apiKey: 'test-key', models: ['org/one', 'org/two'] }]
   runtime.configureCustomModels(records, 'mine/org/one')
   const binding = runtime.customAgentModel('@default', 'default')
   const follower = store.createAgent({ name: 'Follower', role: 'Assistant', instructions: '', color: '#fff', ...binding })
   const fixed = store.createAgent({ name: 'Fixed', role: 'Assistant', instructions: '', color: '#fff', ...runtime.customAgentModel('mine', 'org/one') })
-  const admin = store.ensureDefaultCloudContact('default-owner', { provider: 'gateway', model: 'default' }).agent!
-  store.updateAgent(admin.id, binding, { binding, followDefault: false })
   runtime.configureCustomModels(records, 'mine/org/two')
-  for (const id of [follower.id, admin.id]) expect(store.agent(id)).toMatchObject({ followDefaultModel: true, provider: 'custom:mine', model: 'org/two' })
+  for (const id of [follower.id]) expect(store.agent(id)).toMatchObject({ followDefaultModel: true, provider: 'custom:mine', model: 'org/two' })
   expect(store.agent(fixed.id)?.model).toBe('org/one')
-  store.ensureDefaultCloudContact('default-owner', { provider: 'gateway', model: 'default' })
-  expect(store.agent(admin.id)).toMatchObject({ followDefaultModel: true, model: 'org/two' })
   const explicit = runtime.customAgentModel('mine', 'org/two')
   store.updateAgent(follower.id, explicit)
   runtime.configureCustomModels(records, 'mine/org/one')
   expect(store.agent(follower.id)).toMatchObject({ followDefaultModel: false, model: 'org/two' })
   runtime.configureCustomModels([])
   expect(() => runtime.customAgentModel('@default', 'default')).toThrow('Set a default model')
-  expect(store.agent(admin.id)?.provider).toBe('custom:@unavailable')
-})
-
-it.each([false, true])('keeps custom model routing when cloud reconnects and never falls back after removal (built-in: %s)', async (builtIn) => {
-  const { store, runtime } = createRuntime()
-  store.setCurrentAccountId('custom-model-owner')
-  runtime.configureCustomModels([{ id: 'mine', name: 'Mine', kind: 'openai', apiBase: 'https://custom.example/v1', apiKey: 'test-key', models: ['private-model'] }])
-  const binding = runtime.customAgentModel('mine', 'private-model')
-  let agent = builtIn
-    ? store.ensureDefaultCloudContact('custom-model-owner', { provider: 'gateway', model: 'default' }).agent!
-    : store.createAgent({ name: 'Private', role: 'Assistant', instructions: '', color: '#fff', ...binding })
-  if (builtIn) agent = store.updateAgent(agent.id, {}, { binding, followDefault: false })!
-  const internals = runtime as unknown as { resolveModel: (agent: typeof store.agents[number]) => { provider: string; id: string }; canRunLive: (agent: typeof store.agents[number]) => Promise<boolean> }
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'cloud-default' }] }), { status: 200 })))
-  await runtime.setEndpoint({ baseUrl: 'https://cloud.example/v1', apiKey: 'cloud-key' })
-  expect(store.agent(agent.id)?.provider).toBe('custom:mine')
-  expect(internals.resolveModel(agent)).toMatchObject({ provider: 'custom:mine', id: 'private-model' })
-  expect(await internals.canRunLive(agent)).toBe(true)
-  runtime.configureCustomModels([])
-  expect(() => runtime.customAgentModel('mine', 'private-model')).toThrow('unavailable')
-  await expect(internals.canRunLive(agent)).rejects.toThrow('unavailable')
 })
 
 it('starts isolated IM model turns concurrently, preserves receipt order and returns only their own out-of-order answers', async () => {
@@ -1928,7 +1497,7 @@ it('updates an attachment receipt in its original topic without duplicating it a
 it('exposes live skill resources to private and group agents, but not scheduling controllers', async () => {
   const { store, runtime } = createRuntime()
   const internal = runtime as any
-  const agent = store.accountAgents[0]
+  const agent = store.agents[0]
   vi.spyOn(internal, 'resolveModel').mockReturnValue({ id: 'mock', provider: 'mock', api: 'openai-completions' })
   store.updateAgent(agent.id, { skills: [{ id: 'growth', name: 'Growth', content: 'Read references/value.md before analysis', enabled: true, files: [{ path: 'references/value.md', data: Buffer.from('Reference evidence').toString('base64') }] }] })
   const current = store.agent(agent.id)!
@@ -1946,15 +1515,13 @@ it('exposes live skill resources to private and group agents, but not scheduling
   const read = internal.session(current, 'direct:skills', 'direct').state.tools.find((tool: any) => tool.name === 'read_skill_file')
   store.updateAgent(agent.id, { skills: [] })
   await expect(read.execute('read', { skillId: 'growth', path: 'references/value.md' })).rejects.toThrow('not found')
-  store.setCurrentAccountId('different-owner')
-  await expect(read.execute('read', { skillId: 'growth', path: 'SKILL.md' })).rejects.toThrow('account changed')
 })
 
 it('feeds a real skill tool result back into the agent loop and records the successful read', async () => {
   const { createAssistantMessageEventStream } = await import('@earendil-works/pi-ai')
   const { store, runtime } = createRuntime()
   const internal = runtime as any
-  const agent = store.accountAgents[0]
+  const agent = store.agents[0]
   vi.spyOn(internal, 'resolveModel').mockReturnValue({ id: 'mock', provider: 'mock', api: 'openai-completions' })
   store.updateAgent(agent.id, { skills: [{ id: 'growth', name: 'Growth', content: 'Read references/value.md', enabled: true, files: [{ path: 'references/value.md', data: Buffer.from('REFERENCE_EVIDENCE').toString('base64') }] }] })
   const sessionKey = 'direct:skill-loop'

@@ -1,26 +1,21 @@
 import { FolderOpen, ExternalLink } from 'lucide-react'
 import { useState, type ReactElement } from 'react'
 import { canAssignConversationWorkspace } from '../../../shared/conversationWorkspace'
-import type { AgentConfig, AppSnapshot, Conversation } from '../../../shared/types'
+import type { Conversation } from '../../../shared/types'
 import { t } from '../preferences'
 
 /** Shown only for chats with just the owner's agents, or when a saved
  * folder needs to be cleared after the members changed. */
-export function ConversationWorkspaceSetting({ conversation, agents, onSnapshot }: {
+export function ConversationWorkspaceSetting({ conversation }: {
   conversation: Conversation
-  agents: AgentConfig[]
-  onSnapshot?: (snapshot: AppSnapshot) => void
 }): ReactElement | null {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const eligible = canAssignConversationWorkspace(conversation, agents)
+  const eligible = canAssignConversationWorkspace(conversation)
   if (!eligible && !conversation.workspacePath && !conversation.allowedFolders?.length) return null
-  const run = async (action: () => Promise<AppSnapshot | void>): Promise<void> => {
+  const run = async (action: () => Promise<void>): Promise<void> => {
     setBusy(true); setError('')
-    try {
-      const snapshot = await action()
-      if (snapshot) onSnapshot?.(snapshot)
-    }
+    try { await action() }
     catch (cause) { setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : t('Could not save changes')) }
     finally { setBusy(false) }
   }

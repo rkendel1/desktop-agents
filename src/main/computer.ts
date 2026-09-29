@@ -38,7 +38,7 @@ export interface ComputerProvider {
   start(agentId: string): Promise<ComputerSession>
   stop(agentId: string): Promise<void>
   show(agentId: string): Promise<void>
-  createTools(agentId: string, extraRoots?: () => string[], requestAccess?: RequestFolderAccess): AgentTool[]
+  createTools(agentId: string, extraRoots?: () => string[] | Promise<string[]>, requestAccess?: RequestFolderAccess): AgentTool[]
   dispose(): void
 }
 
@@ -199,9 +199,9 @@ export class LocalComputerProvider implements ComputerProvider {
 
   /** Open a renderer-selected history reference after applying the same path
    *  and symlink checks as the agent tool. */
-  async openLocalFile(input: string, extraRoots: () => string[] = () => []): Promise<{ path: string; size: number }> {
-    const { target, size } = await this.existingAllowedFile(input, extraRoots())
-    this.resolveAllowedPath(target, extraRoots())
+  async openLocalFile(input: string, extraRoots: () => string[] | Promise<string[]> = () => []): Promise<{ path: string; size: number }> {
+    const { target, size } = await this.existingAllowedFile(input, await extraRoots())
+    this.resolveAllowedPath(target, await extraRoots())
     const error = await this.openPath(target)
     if (error) throw new Error(`Could not open ${basename(target)}: ${error}`)
     return { path: target, size }
@@ -302,10 +302,10 @@ export class LocalComputerProvider implements ComputerProvider {
     })
   }
 
-  createTools(agentId: string, extraRoots: () => string[] = () => [], requestAccess?: RequestFolderAccess): AgentTool[] {
-    const allowedPath = (path: string) => this.resolveAllowedPath(path, extraRoots())
+  createTools(agentId: string, extraRoots: () => string[] | Promise<string[]> = () => [], requestAccess?: RequestFolderAccess): AgentTool[] {
+    const allowedPath = async (path: string) => this.resolveAllowedPath(path, await extraRoots())
     const preparePath = async (path: string, operation: string, signal?: AbortSignal): Promise<string> => {
-      try { return allowedPath(path) } catch (error) {
+      try { return await allowedPath(path) } catch (error) {
         if (!(error instanceof FolderAccessRequired) || !requestAccess) throw error
         await requestAccess(path, operation, signal)
         signal?.throwIfAborted()
@@ -417,10 +417,10 @@ export class LocalComputerProvider implements ComputerProvider {
               modifiedAt: metadata.mtime.toISOString()
             }
           }))
-          allowedPath(target)
+          await allowedPath(target)
           this.setFileActivity(agentId, `Listed ${details.length} items`, false)
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ path: target, allowedFolders: [...this.allowedRoots, ...extraRoots()], entries: details }, null, 2) }],
+            content: [{ type: 'text' as const, text: JSON.stringify({ path: target, allowedFolders: [...this.allowedRoots, ...await extraRoots()], entries: details }, null, 2) }],
             details: { path: target, count: details.length, truncated: entries.length > details.length }
           }
         } catch (error) {
@@ -483,7 +483,7 @@ export class LocalComputerProvider implements ComputerProvider {
         const destination = destinationMetadata?.isDirectory()
           ? join(requestedDestination, basename(source))
           : requestedDestination
-        allowedPath(destination)
+        await allowedPath(destination)
         try {
           await access(destination)
           throw new Error(`Destination already exists: ${destination}`)
@@ -491,7 +491,7 @@ export class LocalComputerProvider implements ComputerProvider {
           if (!isMissingFile(error)) throw error
         }
         this.setFileActivity(agentId, `Moving ${basename(source)}`, true)
-        allowedPath(source); allowedPath(destination)
+        await allowedPath(source); await allowedPath(destination)
         await rename(source, destination)
         this.setFileActivity(agentId, `Moved ${basename(source)}`, false)
         return {

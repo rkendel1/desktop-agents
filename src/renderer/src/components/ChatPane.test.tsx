@@ -145,21 +145,6 @@ describe('private delivery disclosure', () => {
     container.remove()
   })
 
-  it('shows offline and approval waits and clears them after completion', async () => {
-    const task = { id: 'task', agentId: 'peer', agentName: 'Peer', status: 'pending' }
-    const peer = { id: 'peer', localId: 'local', ownerId: 'bob', name: 'Peer', onlineUntil: 0, approvalTaskId: 'task' }
-    const render = async () => act(async () => root.render(<MessageRow messages={[{ ...incomingReply, authorId: 'user', socialTasks: [task] }]} socialAgents={[peer]} agents={[]} relatedMessages={[]} userName="You" userAvatar="" showAuthor={false} />))
-    await render()
-    expect(container.textContent).toContain('等待主人设备上线')
-    peer.onlineUntil = Date.now() + 45000
-    task.status = 'running'
-    await render()
-    expect(container.textContent).toContain('等待主人确认')
-    task.status = 'succeeded'
-    await render()
-    expect(container.querySelector('.social-task-status')).toBeNull()
-  })
-
   it('renders received IM file links through the file-chip renderer', async () => {
     const message: ChatMessage = { ...outbound, authorId: 'user', sourceChannel: 'telegram', text: '[report.txt](<douchat-file:///tmp/report.txt>)' }
     await act(async () => { root.render(<MessageRow messages={[message]} agents={[]} relatedMessages={[]} userName="You" userAvatar="" showAuthor={false} />) })
@@ -177,46 +162,6 @@ describe('private delivery disclosure', () => {
       expect(badge?.querySelector('img')?.getAttribute('src')).toContain(sourceChannel)
     } else expect(badge).toBeNull()
     expect(container.querySelector('.user-bubble')?.textContent).toBe('hello')
-  })
-
-  it('folds external group invitations into the sender reply without hiding public replies', async () => {
-    const conversation: Conversation = { ...directConversation, id: 'friend-room', type: 'group',
-      socialRoom: { id: 'room', name: 'Group', kind: 'group', members: [], agents: [], createdAt: '' } }
-    const sender: ChatMessage = { ...outbound, id: 'friend-room:root:task:grok:reply', conversationId: conversation.id,
-      authorId: 'grok', authorName: 'Grok', text: 'Grok reported in.', deliveries: undefined }
-    const request: ChatMessage = { ...sender, id: 'friend-room:root:task:grok:delegate', text: 'Hermes, please report number 3.',
-      socialTasks: [{ id: 'root:task:grok:delegate', agentId: 'hermes', agentName: 'Hermes', status: 'succeeded' }] }
-    const reply: ChatMessage = { ...sender, id: `${request.id}:reply`, authorId: 'hermes', authorName: 'Hermes', text: '3. Hermes here.' }
-    const raw = [request, sender, reply]
-    const visible = visibleConversationMessages(conversation, raw)
-    expect(visible.map((message) => message.id)).toEqual([sender.id, reply.id])
-    expect(sender.deliveries).toBeUndefined()
-    expect(request.text).toBe('Hermes, please report number 3.')
-    await act(async () => root.render(<MessageRow messages={[visible[0]]} agents={[]} relatedMessages={raw} userName="You" userAvatar="" showAuthor />))
-    expect(container.textContent).toContain('Grok reported in.')
-    expect(container.textContent).toContain('Invited Hermes to participate')
-    expect(container.textContent).not.toContain(request.text)
-    expect(container.textContent).not.toContain('private message')
-    await act(async () => container.querySelector<HTMLButtonElement>('.bubble-deliveries')?.click())
-    expect(container.textContent).toContain(request.text)
-    expect(container.textContent).toContain('Hermes replied')
-    expect(container.textContent).toContain(reply.text)
-    expect(container.textContent).toContain('Invitation completed')
-
-    // Pending invitations and pages lacking the sender's reply retain a card.
-    const pending = { ...request, socialTasks: [{ ...request.socialTasks![0], status: 'running' }] }
-    const page = visibleConversationMessages(conversation, [pending])
-    expect(page[0].text).toBe('')
-    expect(page[0].deliveries?.[0].content).toBe(request.text)
-    expect(page[0].deliveries?.[0].status).toBe('running')
-    expect(page[0].deliveries?.[0].replies).toBeUndefined()
-
-    // Chained invitations belong to the next agent's own public reply.
-    const next = { ...pending, id: `${request.id}:delegate`, authorId: 'hermes', authorName: 'Hermes', text: 'Dobi, join us.',
-      socialTasks: [{ id: 'root:task:grok:delegate:delegate', agentId: 'dobi', agentName: 'Dobi', status: 'pending' }] }
-    const chain = visibleConversationMessages(conversation, [...raw, next])
-    expect(chain.map((message) => message.id)).toEqual([sender.id, reply.id])
-    expect(chain[1].deliveries?.[0].recipientName).toBe('Dobi')
   })
 
   it('shows a status while a sent message is waiting for the task snapshot', async () => {
@@ -396,26 +341,6 @@ describe('private delivery disclosure', () => {
     expect(container.querySelector('.message-bubble')).toBeNull()
   })
 
-  it('shows the follow-up recipient and hides it when explicitly addressing a human', async () => {
-    const conversation: Conversation = { ...directConversation, id: 'friend-follow-up', ownerId: 'alice', type: 'group',
-      socialRoom: { id: 'follow-up', name: 'Group', kind: 'group', createdAt: '',
-        members: [{ id: 'bob', name: 'Bob', email: '' }],
-        agents: [{ id: 'agent-1', localId: 'local', ownerId: 'alice', name: '拽姐' }] } }
-    const request: ChatMessage = { ...incomingReply, id: `${conversation.id}:request`, conversationId: conversation.id,
-      authorId: 'user', text: '@拽姐 hello', createdAt: Date.now(), source: undefined,
-      socialTasks: [{ id: 'request', agentId: 'agent-1', agentName: '拽姐', status: 'succeeded' }] }
-    const reply: ChatMessage = { ...request, id: `${request.id}:reply`, authorId: 'agent-1', text: 'Hello', socialTasks: undefined }
-    const messages = [request, reply]
-    await act(async () => root.render(<ChatPane userName="You" userAvatar="" conversation={conversation} messages={messages} allMessages={messages} agents={agents} members={agents} offline={false} onConnect={() => {}} inspectorOpen={false} onToggleInspector={() => {}} onOpenAgentProfile={() => {}} onOpenUserProfile={() => {}} onSend={async () => {}} onStop={() => {}} />))
-    const textarea = container.querySelector('textarea')!
-    expect(textarea.placeholder).toBe('Continue chatting with 拽姐')
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '@Bob hello')
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    expect(textarea.placeholder).not.toContain('Continue chatting')
-  })
-
   it('shows group delivery receipts without a disclosure control', async () => {
     await act(async () => root.render(<MessageDeliveries deliveries={[
       { id: 'secret', recipientId: 'agent-1', recipientName: '拽姐', content: '' }
@@ -423,20 +348,6 @@ describe('private delivery disclosure', () => {
     expect(container.textContent).toContain('Sent private message to 拽姐')
     expect(container.querySelector('button')).toBeNull()
     expect(container.querySelector('.bubble-delivery-details')).toBeNull()
-  })
-
-  it.each(['alice', 'bob'])('shows the all mention only to the shared group owner (%s)', async (ownerId) => {
-    const conversation: Conversation = { ...directConversation, id: 'friend-group', ownerId, type: 'group',
-      socialRoom: { id: 'group', name: 'Group', kind: 'group', createdAt: '', agents: [],
-        members: [{ id: 'alice', name: 'Alice', email: '' }, { id: 'bob', name: 'Bob', email: '' }] } }
-    await act(async () => root.render(<ChatPane userName="You" userAvatar="" conversation={conversation} messages={[]} allMessages={[]} agents={agents} members={agents} offline={false} onConnect={() => {}} inspectorOpen={false} onToggleInspector={() => {}} onOpenAgentProfile={() => {}} onOpenUserProfile={() => {}} onSend={async () => {}} onStop={() => {}} />))
-    const textarea = container.querySelector('textarea')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, '@')
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    const options = [...container.querySelectorAll('[role="option"]')].map(option => option.textContent)
-    expect(options.some(label => label?.includes('Everyone'))).toBe(ownerId === 'alice')
   })
 
   it('renders a failed reply once when its body repeats the error', async () => {
@@ -699,22 +610,6 @@ describe('private delivery disclosure', () => {
     expect(openProfile.mock.calls[0][1]).toMatchObject({ left: 0, right: 0, top: 0 })
   })
 
-  it('renders a human friend with the shared incoming bubble and their own profile', async () => {
-    const openProfile = vi.fn()
-    const message: ChatMessage = {
-      id: 'friend-message', conversationId: 'dm', topicId: 'dm',
-      authorId: 'bob', authorName: 'Bob', text: 'Hello', kind: 'message', createdAt: 20
-    }
-    await act(async () => root.render(<MessageRow messages={[message]} agents={[]} relatedMessages={[message]}
-      person={{ id: 'bob', name: 'Bob', email: 'bob@example.com', image: 'bob.png' }}
-      onOpenPersonProfile={openProfile} userName="Alice" userAvatar="" showAuthor={false} />))
-    expect(container.querySelector('.agent-bubble')?.textContent).toContain('Hello')
-    expect(container.querySelector('[data-user-name="Bob"]')).not.toBeNull()
-    expect(container.querySelector('[data-testid="empty-avatar"]')).toBeNull()
-    await act(async () => container.querySelector<HTMLButtonElement>('.message-avatar-button')!.click())
-    expect(openProfile).toHaveBeenCalledOnce()
-  })
-
   it('opens profile editing from the user message avatar', async () => {
     const openUserProfile = vi.fn()
     const userMessage: ChatMessage = {
@@ -874,40 +769,6 @@ describe('private delivery disclosure', () => {
     expect(container.textContent).toContain('Attaching generated images')
     expect(container.textContent).not.toContain('Generating an image;')
   })
-  it('shows the specific problem immediately while keeping raw detail folded', async () => {
-    const onOpenCredits = vi.fn()
-    const detail = '429: {"message":"Douchat credit balance is insufficient"}'
-    const message: ChatMessage = {
-      id: 'error-1',
-      conversationId: directConversation.id,
-      topicId: 'topic-2',
-      authorId: 'system',
-      authorName: 'Douchat',
-      text: 'The provider is rate limiting this key · HTTP 429',
-      detail,
-      kind: 'system',
-      createdAt: 30
-    }
-
-    await act(async () => root.render(<SystemMessage message={message} onOpenCredits={onOpenCredits} />))
-
-    const toggle = container.querySelector<HTMLButtonElement>('.system-toggle')
-    expect(container.textContent).toContain('Douchat does not have enough credits')
-    expect(container.textContent).toContain('Top up credits to continue.')
-    expect(container.textContent).not.toContain('credit balance')
-
-    const topUp = container.querySelector<HTMLButtonElement>('.system-inline-action')
-    expect(topUp?.parentElement?.classList.contains('system-guidance')).toBe(true)
-    expect(topUp?.querySelector('svg')).toBeNull()
-    await act(async () => topUp?.click())
-    expect(onOpenCredits).toHaveBeenCalledOnce()
-
-    await act(async () => toggle?.click())
-
-    expect(toggle?.getAttribute('aria-expanded')).toBe('true')
-    expect(container.textContent).toContain(detail)
-  })
-
   it('renders scheduling notice metadata instead of its previously stored language', async () => {
     const message: ChatMessage = {
       id: 'schedule-translation', conversationId: directConversation.id, topicId: 'topic-2',

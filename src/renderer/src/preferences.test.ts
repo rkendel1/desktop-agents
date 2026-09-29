@@ -42,10 +42,10 @@ describe('interface language preference', () => {
     const { CustomModelSelection } = await import('./components/CustomModelSelection')
     const { CustomModelSettings } = await import('./components/CustomModelSettings')
     const render = () => renderToStaticMarkup(createElement(CustomModelSelection, {
-      config: { providers: [], defaultModel: '' }, cloudModels: [], providerId: 'missing', model: 'my-model', onChange: () => {}
+      config: { providers: [], defaultModel: '' }, providerId: 'missing', model: 'my-model', onChange: () => {}
     })) + renderToStaticMarkup(createElement(CustomModelSettings))
     setPreferences({ language: 'en' })
-    expect(render()).toContain('Model source')
+    expect(render()).toContain('Model')
     expect(render()).toContain('Add provider')
     expect(render()).toContain('my-model (unavailable)')
     expect(render()).not.toMatch(/[\u4e00-\u9fff]/)

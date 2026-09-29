@@ -1,5 +1,3 @@
-import { ConnanyPanel } from './ConnanyPanel'
-import { CONNECTORS_ENABLED } from '../../../shared/connany'
 import { UserMemoryPanel } from './UserMemoryPanel'
 import { LocalAgentEditor } from './LocalAgentEditor'
 import { CustomModelSettings } from './CustomModelSettings'
@@ -10,17 +8,18 @@ import { reportDiagnostic } from '../diagnostics'
 import { agentIcons } from '../agentIcons'
 import douchatLogo from '../../../../resources/icons/douchat.png'
 import { setPreferences, usePreferences, t, tr, type LanguagePreference } from '../preferences'
-import { SlidersHorizontal, Bot, CalendarClock, Camera, CircleUserRound, Coins, Cpu, ExternalLink, FolderOpen, Info, LogOut, Pause, Play, Plug, Plus, RefreshCw, ScanSearch, SquareArrowOutUpRight, Trash2, TriangleAlert, Workflow, X } from 'lucide-react'
+import { SlidersHorizontal, Bot, CalendarClock, Camera, CircleUserRound, Cpu, ExternalLink, FolderOpen, Info, Pause, Play, Plus, RefreshCw, ScanSearch, SquareArrowOutUpRight, Trash2, Workflow, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ReactElement } from 'react'
-import type { AgentConfig, Conversation, DesktopAuthUser, LocalAgent, Routine, RoutineSchedule, TaskRun, UpdateDesktopProfileInput, UpdateState, UsageSummary } from '../../../shared/types'
+import type { AgentConfig, Conversation, LocalAgent, Routine, RoutineSchedule, TaskRun, UpdateProfileInput, UpdateState } from '../../../shared/types'
 import { readAvatarFile } from '../avatarFile'
 import { AgentAvatar, ConversationAvatar, EmptyAvatar, UserAvatar, agentDisplayName, conversationDisplayName } from './common'
 
-export type SettingsTab = 'memory' | 'profile' | 'general' | 'usage' | 'automation' | 'agents' | 'models' | 'scheduling' | 'about' | 'connectors'
+export type SettingsTab = 'memory' | 'profile' | 'general' | 'automation' | 'agents' | 'models' | 'scheduling' | 'about'
 
-export function SettingsPanel({ user, agents, routines = [], runs = [], workspaceAgents = [], conversations = [], scanning, error, tab, creditsRefreshToken, creditsAttention = false, onCreditsAvailable, onTab, onClose, onSignOut, onUpdateProfile, onDetect, onLocalAgentsChange, onRemoveCustom, onDeleteRoutine, onSetRoutineEnabled, onRunRoutineNow }: {
-  user: DesktopAuthUser
+export function SettingsPanel({ user, agents, routines = [], runs = [], workspaceAgents = [], conversations = [], scanning, error, tab, onTab, onClose, onUpdateProfile, onDetect, onLocalAgentsChange, onRemoveCustom, onDeleteRoutine, onSetRoutineEnabled, onRunRoutineNow }: {
+  /** The person this desktop belongs to — a local profile, not an account. */
+  user: { name: string; image: string }
   agents: LocalAgent[]
   routines?: Routine[]
   runs?: TaskRun[]
@@ -29,13 +28,9 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
   scanning: boolean
   error: string
   tab: SettingsTab
-  creditsRefreshToken: number
-  creditsAttention?: boolean
-  onCreditsAvailable?: () => void
   onTab: (tab: SettingsTab) => void
   onClose: () => void
-  onSignOut: () => Promise<void>
-  onUpdateProfile: (input: UpdateDesktopProfileInput) => Promise<void>
+  onUpdateProfile: (input: UpdateProfileInput) => Promise<void>
   onDetect: () => void
   onLocalAgentsChange?: (agents: LocalAgent[]) => void
   onRemoveCustom?: (id: string) => Promise<void>
@@ -69,8 +64,6 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
     return () => window.clearTimeout(timer)
   }, [tab])
   const preferences = usePreferences()
-  const [signingOut, setSigningOut] = useState(false)
-  const [signOutError, setSignOutError] = useState('')
   const [customError, setCustomError] = useState('')
   const [editingLocalAgent, setEditingLocalAgent] = useState<LocalAgent | 'new'>()
   const installed = agents.filter((agent) => agent.installed)
@@ -78,15 +71,6 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
   const missing = agents.filter((agent) => agent.status === 'not-found')
 
 
-  const signOut = async (): Promise<void> => {
-    setSigningOut(true)
-    setSignOutError('')
-    try { await onSignOut() }
-    catch (cause) {
-      setSignOutError(cause instanceof Error ? cause.message : 'Could not sign out. Try again.')
-      setSigningOut(false)
-    }
-  }
   const removeCustom = async (agent: LocalAgent): Promise<void> => {
     if (!onRemoveCustom || !window.confirm(t('Delete this custom local agent?'))) return
     setCustomError('')
@@ -128,12 +112,10 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
     <aside className="settings-sidebar">
       <div className="settings-modal-title"><div id="settings-title" className="wordmark">{t('Settings')}</div></div>
       <div className="settings-tabs" role="tablist" aria-label={t('Settings')}>
-        <button id="profile-tab" role="tab" aria-selected={tab === 'profile'} aria-controls="settings-content" className={tab === 'profile' ? 'active' : ''} onClick={() => onTab('profile')}><CircleUserRound size={18} /><span>{t('Account')}</span></button>
+        <button id="profile-tab" role="tab" aria-selected={tab === 'profile'} aria-controls="settings-content" className={tab === 'profile' ? 'active' : ''} onClick={() => onTab('profile')}><CircleUserRound size={18} /><span>{t('Profile')}</span></button>
         <button id="general-tab" role="tab" aria-selected={tab === 'general'} aria-controls="settings-content" className={tab === 'general' ? 'active' : ''} onClick={() => onTab('general')}><SlidersHorizontal size={18} /><span>{t('General')}</span></button>
-        <button id="usage-tab" role="tab" aria-selected={tab === 'usage'} aria-controls="settings-content" className={tab === 'usage' ? 'active' : ''} onClick={() => onTab('usage')}><Coins size={18} /><span>{t('Credits')}</span></button>
         <button id="automation-tab" role="tab" aria-selected={tab === 'automation'} aria-controls="settings-content" className={tab === 'automation' ? 'active' : ''} onClick={() => onTab('automation')}><CalendarClock size={18} /><span>{t('Automation')}</span></button>
         <button id="models-tab" role="tab" aria-selected={tab === 'models'} aria-controls="settings-content" className={tab === 'models' ? 'active' : ''} onClick={() => onTab('models')}><Cpu size={18} /><span>{t("Models")}</span></button>
-        {CONNECTORS_ENABLED && <button id="connectors-tab" role="tab" aria-selected={tab === 'connectors'} aria-controls="settings-content" className={tab === 'connectors' ? 'active' : ''} onClick={() => onTab('connectors')}><Plug size={18} /><span>{t('Connectors')}</span></button>}
         <button id="agents-tab" role="tab" aria-selected={tab === 'agents'} aria-controls="settings-content" className={tab === 'agents' ? 'active' : ''} onClick={() => onTab('agents')}><Bot size={18} /><span>{t('Local agents')}</span></button>
         <button id="scheduling-tab" role="tab" aria-selected={tab === 'scheduling'} aria-controls="settings-content" className={tab === 'scheduling' ? 'active' : ''} onClick={() => onTab('scheduling')}><Workflow size={18} /><span>{t('Scheduling')}</span></button>
         <button id="about-tab" role="tab" aria-selected={tab === 'about'} aria-controls="settings-content" className={tab === 'about' ? 'active' : ''} onClick={() => onTab('about')}><Info size={18} /><span>{t('About')}</span></button>
@@ -142,8 +124,8 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
     <main id="settings-content" role="tabpanel" aria-labelledby={`${tab}-tab`} className="settings-content">
       <button ref={closeRef} className="settings-close" onClick={onClose} aria-label={t('Close')} title={t('Close')}><X size={18} /></button>
       {tab === 'profile' ? (
-        <ProfileTab user={user} signingOut={signingOut} signOutError={signOutError} onSignOut={() => void signOut()} onUpdateProfile={onUpdateProfile} />
-      ) : tab === 'memory' ? <UserMemoryPanel key={user.id} /> : tab === 'general' ? <>
+        <ProfileTab user={user} onUpdateProfile={onUpdateProfile} />
+      ) : tab === 'memory' ? <UserMemoryPanel /> : tab === 'general' ? <>
         <header className="settings-heading"><div><h1>{t('General')}</h1><p>{t('Choose your language and appearance.')}</p></div></header>
         <div className="general-settings">
           <label><span>{t('Language')}</span><select value={preferences.language} onChange={(event) => setPreferences({ language: event.target.value as LanguagePreference })}><option value="system">{t('Follow system')}</option><option value="en">English</option><option value="zh-CN">简体中文</option></select></label>
@@ -154,13 +136,13 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
           </div></label>
           <div className="font-size-preview" aria-label={t('Font preview')}>{t('Messages and interface text update immediately.')}</div>
         </div>
-      </> : tab === 'usage' ? <UsageTab refreshToken={creditsRefreshToken} attention={creditsAttention} onCreditsAvailable={onCreditsAvailable} /> : tab === 'automation' ? <AutomationTab
+      </> : tab === 'automation' ? <AutomationTab
         routines={routines}
         runs={runs}
         agents={workspaceAgents}
         conversations={conversations}
         userName={user.name}
-        userAvatar={user.image || ''}
+        userAvatar={user.image}
         onDelete={onDeleteRoutine}
         onSetEnabled={onSetRoutineEnabled}
         onRunNow={onRunRoutineNow}
@@ -178,7 +160,7 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
         </section>
         {desktopOnly.length > 0 && <section aria-label={t('Desktop apps needing a CLI')}><h2>{t('Desktop app only')} <span>{desktopOnly.length}</span></h2>{desktopOnly.map(row)}</section>}
         {missing.length > 0 && <section aria-label={t('Other supported agents')}><h2>{t('Not detected')} <span>{missing.length}</span></h2>{missing.map(row)}</section>}
-      </> : CONNECTORS_ENABLED && tab === 'connectors' ? <ConnanyPanel key={user.id} /> : tab === 'models' ? <CustomModelSettings /> : tab === 'scheduling' ? <SchedulingSettings /> : <AboutTab />}
+      </> : tab === 'models' ? <CustomModelSettings /> : tab === 'scheduling' ? <SchedulingSettings /> : <AboutTab />}
     </main>
     </section>
   </NativeDialog>
@@ -299,73 +281,7 @@ function AutomationTab({ routines, runs, agents, conversations, userName, userAv
         </article>
       })}
     </section>}
-    <p className="automation-footnote">{t('If Douchat is not running when a task is due, it runs once after the next launch.')}</p>
-  </>
-}
-
-export function UsageTab({ refreshToken = 0, attention = false, onCreditsAvailable }: { refreshToken?: number; attention?: boolean; onCreditsAvailable?: () => void }): ReactElement {
-  const [summary, setSummary] = useState<UsageSummary | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [opening, setOpening] = useState(false)
-
-  const load = async (): Promise<void> => {
-    setLoading(true)
-    setError('')
-    try {
-      const next = await window.douchat.getUsageSummary()
-      setSummary(next)
-      if (next.credits > 0) onCreditsAvailable?.()
-    }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
-    finally { setLoading(false) }
-  }
-
-  useEffect(() => { void load() }, [refreshToken])
-
-  const openTopUp = async (): Promise<void> => {
-    setOpening(true)
-    setError('')
-    try { await window.douchat.openSubscriptionPlans() }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
-    finally { setOpening(false) }
-  }
-
-  const credits = summary ? new Intl.NumberFormat(document.documentElement.lang || undefined).format(summary.credits) : '—'
-  const showAttention = attention && (!summary || summary.credits <= 0)
-  return <>
-    <header className="settings-heading usage-heading">
-      <div><h1>{t('Credits')}</h1><p>{t('Manage your Douchat credit balance.')}</p></div>
-      <button className="secondary-button usage-refresh" type="button" disabled={loading} onClick={() => void load()}>
-        <RefreshCw className={loading ? 'spin' : ''} size={15} />{t('Refresh')}
-      </button>
-    </header>
-    {showAttention && <div className="usage-credit-alert" role="alert">
-      <TriangleAlert size={18} aria-hidden="true" />
-      <div><strong>{t('Not enough Douchat credits')}</strong><span>{t('Top up credits to continue.')}</span></div>
-    </div>}
-    <section className="usage-card" aria-label={t('Credits')} aria-busy={loading}>
-      <div className="usage-credit-row">
-        <span className="usage-credit-icon" aria-hidden="true"><Coins size={23} /></span>
-        <div className="usage-credit-copy">
-          <span>{t('Credit balance')}</span>
-          <strong aria-live="polite">{loading && !summary ? '—' : credits}</strong>
-        </div>
-        <button
-          className="primary-button usage-top-up-button"
-          type="button"
-          disabled={opening}
-          onClick={() => void openTopUp()}
-        >
-          <Plus size={16} />{t(opening ? 'Opening…' : 'Top up')}
-        </button>
-      </div>
-      <div className="usage-credit-note">
-        <span>{t('Cloud agent replies use Douchat credits. Local agents do not.')}</span>
-        <span>{t('Top up securely in your browser.')}</span>
-      </div>
-      {error && <div className="usage-error" role="alert"><span>{t(error)}</span><button type="button" onClick={() => void load()}>{t('Try again')}</button></div>}
-    </section>
+    <p className="automation-footnote">{t('If the app is not running when a task is due, it runs once after the next launch.')}</p>
   </>
 }
 
@@ -465,26 +381,23 @@ function AboutTab(): ReactElement {
 
 /** One account, one identity: edits are saved to the service and the returned
  * user record becomes the desktop-wide source of truth. */
-function ProfileTab({ user, signingOut, signOutError, onSignOut, onUpdateProfile }: {
-  user: DesktopAuthUser
-  signingOut: boolean
-  signOutError: string
-  onSignOut: () => void
-  onUpdateProfile: (input: UpdateDesktopProfileInput) => Promise<void>
+function ProfileTab({ user, onUpdateProfile }: {
+  user: { name: string; image: string }
+  onUpdateProfile: (input: UpdateProfileInput) => Promise<void>
 }): ReactElement {
   const fileRef = useRef<HTMLInputElement>(null)
   const [name, setName] = useState(user.name)
-  const [image, setImage] = useState(user.image || '')
+  const [image, setImage] = useState(user.image)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
   const [failure, setFailure] = useState('')
 
   useEffect(() => {
     setName(user.name)
-    setImage(user.image || '')
+    setImage(user.image)
   }, [user.name, user.image])
 
-  const dirty = name.trim() !== user.name || image !== (user.image || '')
+  const dirty = name.trim() !== user.name || image !== user.image
 
   const choose = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0]
@@ -510,20 +423,20 @@ function ProfileTab({ user, signingOut, signOutError, onSignOut, onUpdateProfile
     setFailure('')
     setNotice('')
     try {
-      const changes: UpdateDesktopProfileInput = {}
+      const changes: UpdateProfileInput = {}
       if (nextName !== user.name) changes.name = nextName
-      if (image !== (user.image || '')) changes.image = image
+      if (image !== user.image) changes.image = image
       await onUpdateProfile(changes)
-      setNotice(t('Saved to your Douchat account'))
+      setNotice(t('Saved on this computer'))
     } catch (cause) {
-      setFailure(cause instanceof Error ? cause.message : 'Could not save account changes.')
+      setFailure(cause instanceof Error ? cause.message : 'Could not save your profile.')
     } finally {
       setSaving(false)
     }
   }
 
   return <>
-    <header className="settings-heading"><div><h1>{t('Account')}</h1><p>{t('Your account identity is used everywhere in Douchat.')}</p></div></header>
+    <header className="settings-heading"><div><h1>{t('Profile')}</h1><p>{t('Your name and picture are stored on this computer and shown in your chats.')}</p></div></header>
     <form className="account-profile" onSubmit={(event) => { event.preventDefault(); void save() }}>
       <section className="profile-identity" aria-label={t('Profile picture')}>
         <button type="button" className="profile-avatar" onClick={() => fileRef.current?.click()} aria-label={t('Change your picture')}>
@@ -532,7 +445,7 @@ function ProfileTab({ user, signingOut, signOutError, onSignOut, onUpdateProfile
         </button>
         <div className="profile-identity-copy">
           <strong>{name.trim() || user.name}</strong>
-          <small>{t('PNG or JPG. Your picture is synced to your Douchat account.')}</small>
+          <small>{t('PNG or JPG. Your picture stays on this computer.')}</small>
           <div className="profile-avatar-actions">
             <button type="button" className="secondary-button" onClick={() => fileRef.current?.click()}>{t('Choose picture')}</button>
             {image && <button type="button" className="secondary-button" onClick={() => { setImage(''); setNotice('') }}>{t('Remove')}</button>}
@@ -550,20 +463,11 @@ function ProfileTab({ user, signingOut, signOutError, onSignOut, onUpdateProfile
             aria-label={t('Display name')}
           />
         </label>
-        <label className="profile-field">
-          <span>{t('Email')}</span>
-          <input value={user.email} disabled aria-label={t('Email')} />
-        </label>
       </section>
       <div className="account-save-row">
-        <div aria-live="polite">{failure ? <span className="settings-error">{t(failure)}</span> : notice ? <span className="settings-success">{notice}</span> : <span>{t('Changes sync to every signed-in Douchat app.')}</span>}</div>
+        <div aria-live="polite">{failure ? <span className="settings-error">{t(failure)}</span> : notice ? <span className="settings-success">{notice}</span> : <span>{t('This desktop has no account. Your data stays on this computer.')}</span>}</div>
         <button className="primary-button" type="submit" disabled={!dirty || saving || !name.trim()}>{t(saving ? 'Saving…' : 'Save changes')}</button>
       </div>
     </form>
-    <section className="account-session" aria-label={t('Signed-in account')}>
-      <div><strong>{t('Signed in to Douchat')}</strong><span>{user.email}</span></div>
-      <button className="sign-out-button" disabled={signingOut} onClick={onSignOut}><LogOut size={15} />{t(signingOut ? 'Signing out…' : 'Sign out')}</button>
-    </section>
-    {signOutError && <p className="settings-error" role="alert">{t(signOutError)}</p>}
   </>
 }

@@ -1,9 +1,10 @@
+import { openAtFile } from './testSupport'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DouchatRuntime } from './runtime'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 import { runLocalAgent } from './localAgentRuntime'
 
 vi.mock('./localAgentRuntime', async (original) => ({ ...await original<object>(), runLocalAgent: vi.fn() }))
@@ -13,10 +14,10 @@ afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); directories.splice(0).
 function setup(local: boolean, executor?: import('../shared/agentExecutor').AgentExecutor) {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-concurrency-'))
   directories.push(directory)
-  const store = new DouchatStore(join(directory, 'state.json'), { seedDemo: true })
+  const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
   const runtime = new DouchatRuntime(store, {
     snapshots: () => [], start: vi.fn(), stop: vi.fn(), show: vi.fn(), createTools: () => [], dispose: vi.fn()
-  }, () => undefined, undefined, undefined, executor)
+  }, () => undefined, undefined, executor)
   const config = { ...store.agent('dobi')!, ...(local ? { localAgentId: 'codex' } : {}) }
   const internal = runtime as any
   const calls: string[] = []
@@ -102,30 +103,6 @@ it('bounds idle model sessions and expires them without retaining timers', async
 })
 
 
-it('reuses a shared room session across tasks while keeping other rooms parallel', async () => {
-  const { store, runtime, internal } = setup(false)
-  const agent = store.ensureDefaultCloudContact('alice', { provider: 'gateway', model: 'default' }).agent!
-  vi.spyOn(internal, 'canRunLive').mockResolvedValue(true)
-  const release = new Map<string, () => void>()
-  const replies = vi.spyOn(internal, 'runReply').mockImplementation(async (options: any) => {
-    await new Promise<void>(resolve => release.set(options.conversationId, resolve))
-    return { text: 'Done' }
-  })
-  const run = (task: string, roomId: string) => runtime.executeSocialTask('alice', agent.id, task, 'Hello', new AbortController().signal, '', {
-    roomId, requesterId: 'alice', requester: 'Alice', roomName: roomId, delegate: async () => {}
-  })
-  const a = run('one', 'room-a'), b = run('two', 'room-a'), c = run('three', 'room-b')
-  await vi.waitFor(() => expect(replies).toHaveBeenCalledTimes(2))
-  expect(release.has('social:two')).toBe(false)
-  release.get('social:three')!(); await c
-  release.get('social:one')!(); await a
-  await vi.waitFor(() => expect(replies).toHaveBeenCalledTimes(3))
-  expect((replies.mock.calls[0][0] as any).sessionKey).toBe((replies.mock.calls[2][0] as any).sessionKey)
-  expect((replies.mock.calls[0][0] as any).sessionKey).not.toBe((replies.mock.calls[1][0] as any).sessionKey)
-  release.get('social:two')!(); await b
-  expect(internal.sharedCallers.size).toBe(0)
-})
-
 
 it('uses an injected executor for replies and session lifecycle', async () => {
   const executor = {
@@ -137,22 +114,8 @@ it('uses an injected executor for replies and session lifecycle', async () => {
   expect(executor.run).toHaveBeenCalledOnce()
   expect(runLocalAgent).not.toHaveBeenCalled()
   runtime.resetConversation('crew', 'main')
-  expect(executor.resetConversation).toHaveBeenCalledWith('crew', 'main', [], store.currentAccountId)
+  expect(executor.resetConversation).toHaveBeenCalledWith('crew', 'main', [])
   runtime.disposeAgent(config.id)
   expect(executor.disposeAgent).toHaveBeenCalledWith(config.id)
-  store.close()
-})
-
-it('rejects queued turns and stale results after switching away and back to the same account', async () => {
-  const { run, store, calls, finish } = setup(true)
-  const owner = store.currentAccountId
-  const first = run('crew', 'one', 'first'), queued = run('crew', 'one', 'queued')
-  await vi.waitFor(() => expect(calls).toEqual(['first']))
-  store.setCurrentAccountId('other')
-  store.setCurrentAccountId(owner)
-  finish.get('first')!()
-  expect((await first).error).toContain('Account changed')
-  expect((await queued).error).toContain('Account changed')
-  expect(calls).toEqual(['first'])
   store.close()
 })

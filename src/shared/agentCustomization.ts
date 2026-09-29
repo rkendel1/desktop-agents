@@ -60,17 +60,8 @@ export function agentCustomizationPrompt(agent: { systemFiles?: AgentFiles; skil
   return [...files, ...skills].join('\n\n')
 }
 
-/** Once the built-in persona is customized, only user-owned persona fields apply.
- * Keep service authority/model routing separate from presentation defaults. */
 export function agentPersona(agent: AgentConfig): { role: string; instructions: string; labels: string } {
-  const overrides = agent.userOverrides
-  const customized = agent.systemRole === 'admin' && (
-    ['name', 'role', 'instructions', 'labels'].some(key => Object.prototype.hasOwnProperty.call(overrides ?? {}, key))
-    || ['SOUL.md', 'IDENTITY.md', 'BOOTSTRAP.md', 'AGENTS.md'].some(key => Object.prototype.hasOwnProperty.call(agent.systemFiles ?? {}, key))
-  )
-  return customized
-    ? { role: overrides?.role ?? '', instructions: overrides?.instructions ?? '', labels: overrides?.labels ?? '' }
-    : { role: agent.role, instructions: agent.instructions, labels: agent.labels ?? '' }
+  return { role: agent.role, instructions: agent.instructions, labels: agent.labels ?? '' }
 }
 
 export function agentIdentityPrompt(agent: AgentConfig): string {

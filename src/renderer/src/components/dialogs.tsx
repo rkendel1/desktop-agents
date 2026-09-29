@@ -1,8 +1,7 @@
-import type { CustomModelConfig } from '../../../shared/customModels'
+import { CUSTOM_MODEL_PRESETS, type CustomModelConfig } from '../../../shared/customModels'
 import { CustomModelSelection } from './CustomModelSelection'
 import { EmbeddedAgentSettings, AgentDialogSurface as NativeDialog } from './AgentDialogSurface'
 import { conversationMembers } from './common'
-import type { SocialSnapshot } from '../../../shared/social'
 import { LocalAgentSelect } from './LocalAgentSelect'
 import { t, tr } from '../preferences'
 import { readAvatarFile } from '../avatarFile'
@@ -13,9 +12,6 @@ import type {
   AgentConfig,
   LocalAgent,
   AppSnapshot,
-  EndpointInput,
-  EndpointSettings,
-  EndpointTestResult,
   Conversation,
   CreateAgentInput,
   CreateGroupInput,
@@ -23,7 +19,6 @@ import type {
   RoutineSchedule,
   UpdateAgentInput
 } from '../../../shared/types'
-import type { ModelOption } from '../../../shared/types'
 import { AgentAvatar, UserAvatar, ConversationAvatar, agentDisplayName, colors, conversationDisplayName } from './common'
 
 const avatarEmojis = [
@@ -36,22 +31,18 @@ const avatarEmojis = [
 export function BotModal({
   agent,
   localAgents,
-  cloudModels = [],
   initialLocalAgentId,
   onSettings,
   onModelSettings,
-  onCreditsSettings,
   onClose,
   onCreate,
   onUpdate
 }: {
   agent?: AgentConfig
   localAgents: LocalAgent[]
-  cloudModels?: ModelOption[]
   initialLocalAgentId?: string
   onSettings: () => void
   onModelSettings?: () => void
-  onCreditsSettings?: () => void
   onClose: () => void
   onCreate: (input: CreateAgentInput) => Promise<void>
   onUpdate: (agentId: string, input: UpdateAgentInput) => Promise<void>
@@ -60,10 +51,17 @@ export function BotModal({
   const [localAgentId, setLocalAgentId] = useState(agent?.localAgentId ?? initialLocalAgentId ?? (!agent ? localAgents.find((item) => item.installed)?.id : '') ?? '')
   const [agentSource, setAgentSource] = useState<'custom' | 'local'>(agent?.localAgentId || initialLocalAgentId ? 'local' : 'custom')
   const [customModels, setCustomModels] = useState<CustomModelConfig>({ providers: [], defaultModel: '' })
-  const [customProviderId, setCustomProviderId] = useState('cloud')
-  const [customModel, setCustomModel] = useState('douchat-default')
-  const [cloudModel, setCloudModel] = useState('douchat-default')
+  const [customProviderId, setCustomProviderId] = useState('@default')
+  const [customModel, setCustomModel] = useState('default')
   const [modelLoadError, setModelLoadError] = useState('')
+  // Claude is the primary path: the local Claude Code CLI, or the Anthropic API with a key kept in the system credential store.
+  const [claudeChoice, setClaudeChoice] = useState<'code' | 'api' | undefined>()
+  const [anthropicKey, setAnthropicKey] = useState('')
+  const [savingKey, setSavingKey] = useState(false)
+  const anthropicPreset = CUSTOM_MODEL_PRESETS.find((preset) => preset.id === 'anthropic')!
+  const anthropicProvider = customModels.providers.find((provider) => provider.id === 'anthropic')
+  const anthropicReady = Boolean(anthropicProvider?.hasKey)
+  const claudeCode = localAgents.find((item) => item.id === 'claude')
   useEffect(() => {
     if (agent || !window.douchat?.getCustomModels) return
     let active = true
@@ -77,9 +75,36 @@ export function BotModal({
   const selectedProvider = customModels.providers.find(provider => provider.id === customProviderId)
   const selectedCustomModel = customProviderId === '@default' && customModels.defaultModel
     ? { providerId: '@default', model: 'default' }
-    : customProviderId === 'cloud'
-    ? { providerId: 'cloud', model: 'douchat-default' }
     : selectedProvider?.models.includes(customModel) ? { providerId: customProviderId, model: customModel } : undefined
+  function chooseClaudeCode(): void {
+    setClaudeChoice('code')
+    setAgentSource('local')
+    if (claudeCode) setLocalAgentId(claudeCode.id)
+    if (!name.trim()) setName('Claude')
+  }
+  function chooseAnthropicApi(): void {
+    setClaudeChoice('api')
+    setAgentSource('custom')
+    if (anthropicReady) { setCustomProviderId('anthropic'); setCustomModel(anthropicProvider!.models[0] ?? anthropicPreset.models[0]) }
+    if (!name.trim()) setName('Claude')
+  }
+  /** The key goes to the main process, which keeps it in the OS credential store. It never comes back. */
+  async function saveAnthropicKey(): Promise<void> {
+    if (!anthropicKey.trim() || savingKey) return
+    setSavingKey(true)
+    setError('')
+    try {
+      const others = customModels.providers.filter((provider) => provider.id !== 'anthropic').map(({ hasKey: _hasKey, ...provider }) => provider)
+      const defaultModel = customModels.defaultModel || `anthropic/${anthropicPreset.models[0]}`
+      const saved = await window.douchat.saveCustomModels([...others, { id: 'anthropic', name: anthropicPreset.name, kind: 'anthropic', apiBase: anthropicPreset.apiBase, apiKey: anthropicKey.trim(), models: anthropicPreset.models }], defaultModel)
+      setAnthropicKey('')
+      setCustomModels(saved)
+      setCustomProviderId('anthropic')
+      setCustomModel(anthropicPreset.models[0])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : t('Could not save changes'))
+    } finally { setSavingKey(false) }
+  }
   const localAgent = localAgents.find((item) => item.id === localAgentId)
   const [error, setError] = useState('')
   const [name, setName] = useState(agent?.name ?? localAgents.find((item) => item.id === initialLocalAgentId)?.name ?? '')
@@ -116,7 +141,6 @@ export function BotModal({
     if (!name.trim()) return
     if (!agent && !role.trim()) return
     if (!agent && agentSource === 'local' && !localAgent?.installed) return
-    if (!agent && !selectedCustomModel) return
     setSaving(true)
     setError('')
     try {
@@ -138,8 +162,7 @@ export function BotModal({
         labels: labels.trim(),
         color,
         localAgentId: agentSource === 'local' ? localAgentId : '',
-        ...(agentSource === 'custom' && customProviderId === 'cloud' && cloudModel !== 'douchat-default' ? { cloudModel: { model: cloudModel } } : {}),
-        ...(agentSource === 'custom' && selectedCustomModel?.providerId !== 'cloud' ? { customModel: selectedCustomModel } : {})
+        ...(agentSource === 'custom' && selectedCustomModel ? { customModel: selectedCustomModel } : {})
       }
       await onCreate(input)
       onClose()
@@ -173,6 +196,27 @@ export function BotModal({
         <label className="field-row"><span>{t('Agent name')}</span>
           <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder={t('Enter agent name')} />
         </label>
+        <div className="field-row agent-source-field claude-quick-start"><span>{t('Claude')}</span>
+          <div className="agent-source-cards" role="radiogroup" aria-label={t('Claude')}>
+            <button type="button" role="radio" aria-checked={claudeChoice === 'code'} className={claudeChoice === 'code' ? 'selected' : ''} onClick={chooseClaudeCode}>
+              <span className="agent-source-icon"><Laptop size={18} strokeWidth={1.9} /></span>
+              <span className="agent-source-copy"><strong>Claude Code</strong><small>{claudeCode?.installed ? t('Detected on this computer') : t('Not found — install Claude Code, then detect again')}</small></span>
+              <span className="agent-source-radio" aria-hidden="true"><i /></span>
+            </button>
+            <button type="button" role="radio" aria-checked={claudeChoice === 'api'} className={claudeChoice === 'api' ? 'selected' : ''} onClick={chooseAnthropicApi}>
+              <span className="agent-source-icon"><PlugZap size={18} /></span>
+              <span className="agent-source-copy"><strong>{t('Anthropic API')}</strong><small>{anthropicReady ? t('Key stored in the system credential store') : t('Needs an API key')}</small></span>
+              <span className="agent-source-radio" aria-hidden="true"><i /></span>
+            </button>
+          </div>
+        </div>
+        {claudeChoice === 'api' && !anthropicReady && <div className="field-row anthropic-key-row"><span>{t('Anthropic API key')}</span>
+          <div className="anthropic-key-input">
+            <input type="password" autoComplete="off" spellCheck={false} value={anthropicKey} disabled={savingKey} onChange={(event) => setAnthropicKey(event.target.value)} placeholder="sk-ant-…" aria-label={t('Anthropic API key')} />
+            <button type="button" className="secondary-button" disabled={savingKey || !anthropicKey.trim()} onClick={() => void saveAnthropicKey()}>{t(savingKey ? 'Saving…' : 'Save key')}</button>
+          </div>
+        </div>}
+        {claudeChoice === 'api' && !anthropicReady && <p className="settings-note">{t('The key is kept in your system credential store on this computer. It is never shown again or written to your chat history.')}</p>}
         <div className="field-row agent-source-field"><span>{t('Runs with')}</span>
           <div className="agent-source-cards" role="radiogroup" aria-label={t('Runs with')}>
             <button type="button" role="radio" aria-checked={agentSource === 'custom'} className={agentSource === 'custom' ? 'selected' : ''} onClick={() => setAgentSource('custom')}>
@@ -185,8 +229,8 @@ export function BotModal({
             </button>
           </div>
         </div>
-        {agentSource === 'custom' && <CustomModelSelection config={customModels} cloudModels={cloudModels} providerId={customProviderId} model={customProviderId === 'cloud' ? cloudModel : customModel} disabled={saving} onChange={(providerId, model) => { setCustomProviderId(providerId); providerId === 'cloud' ? setCloudModel(model) : setCustomModel(model) }} />}
-        {agentSource === 'custom' && <p className="settings-note">{modelLoadError || (customProviderId === 'cloud' ? t("Use Douchat cloud models with pay-as-you-go credits.") : t("Use your own API key. Your model provider handles billing."))} <button type="button" className="local-settings-link" onClick={customProviderId === 'cloud' ? (onCreditsSettings ?? onSettings) : (onModelSettings ?? onSettings)}>{customProviderId === 'cloud' ? t("View credits") : t("Configure model")}</button></p>}
+        {agentSource === 'custom' && <CustomModelSelection config={customModels} providerId={customProviderId} model={customModel} disabled={saving} onChange={(providerId, model) => { setCustomProviderId(providerId); setCustomModel(model) }} />}
+        {agentSource === 'custom' && <p className="settings-note">{modelLoadError || (customModels.providers.length ? t("Use your own API key. Your model provider handles billing.") : t("No model is configured yet. You can create the agent now and choose a model later."))} <button type="button" className="local-settings-link" onClick={onModelSettings ?? onSettings}>{t("Configure model")}</button></p>}
         {agentSource === 'local' && <div className="field-row"><span>{t('Local agent')}</span>
           <LocalAgentSelect agents={localAgents.filter((item) => item.installed)} value={localAgentId} onChange={setLocalAgentId} />
         </div>}
@@ -194,7 +238,7 @@ export function BotModal({
         {error && <p className="settings-error" role="alert">{t(error)}</p>}
         <div className="modal-footer">
           <button type="button" className="secondary-button" onClick={onClose} disabled={saving}>{t('Cancel')}</button>
-          <button className="primary-button" type="submit" disabled={saving || !name.trim() || (agentSource === 'local' && !localAgent?.installed) || (agentSource === 'custom' && !selectedCustomModel)}>{t(saving ? 'Saving…' : 'Create agent')}</button>
+          <button className="primary-button" type="submit" disabled={saving || !name.trim() || (agentSource === 'local' && !localAgent?.installed)}>{t(saving ? 'Saving…' : 'Create agent')}</button>
         </div>
       </form>
     </NativeDialog>
@@ -297,14 +341,8 @@ export function BotModal({
   )
 }
 
-export function AddMembersModal({ onRemoveContacts, onAddContacts, initialFriendIds, onCreateSocialGroup, social, onStartFriend, snapshot, conversation, onClose, onUpdate, manage = false, remove = false, initialAgentIds, onCreate, onStartDirect, onOpenConversation }: {
+export function AddMembersModal({ snapshot, conversation, onClose, onUpdate, manage = false, remove = false, initialAgentIds, onCreate, onStartDirect, onOpenConversation }: {
   snapshot: AppSnapshot
-  onRemoveContacts?: (friendIds: string[], agentIds: string[]) => Promise<void>
-  onAddContacts?: (friendIds: string[], agentIds: string[]) => Promise<void>
-  social?: SocialSnapshot
-  onStartFriend?: (id: string) => Promise<void>
-  initialFriendIds?: string[]
-  onCreateSocialGroup?: (friendIds: string[], agentIds: string[], memberOrder?: string[]) => Promise<void>
   conversation?: Conversation
   remove?: boolean
   manage?: boolean
@@ -317,50 +355,36 @@ export function AddMembersModal({ onRemoveContacts, onAddContacts, initialFriend
 }): ReactElement {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<string[]>(manage ? conversation?.agentIds ?? initialAgentIds ?? [] : [])
-  const [selectedFriendIds, setSelectedFriendIds] = useState<string[]>(initialFriendIds ?? [])
-  const [memberOrder, setMemberOrder] = useState<string[]>([...(initialFriendIds ?? []).map((id) => `person:${id}`), ...(initialAgentIds ?? []).map((id) => `agent:${id}`)])
-  const [friendsOpen, setFriendsOpen] = useState(true)
   const [selectedConversationId, setSelectedConversationId] = useState('')
   const [groupsOpen, setGroupsOpen] = useState(false)
   const [contactsOpen, setContactsOpen] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const startMode = manage && !conversation && !(initialAgentIds?.length) && !(initialFriendIds?.length)
-  const members = new Set(manage || remove ? [] : conversation?.socialRoom
-    ? conversation.socialRoom.agents.filter((agent) => agent.ownerId === social?.userId).map((agent) => agent.localId)
-    : conversation?.agentIds ?? [])
-  const humanMembers = new Set(conversation?.socialRoom?.members.map((person) => person.id) ?? [])
+  const startMode = manage && !conversation && !(initialAgentIds?.length)
+  const members = new Set(manage || remove ? [] : conversation?.agentIds ?? [])
   const needle = query.trim().toLocaleLowerCase()
-  const pickerAgents = remove && conversation?.socialRoom ? conversationMembers(conversation, snapshot.agents).filter((agent) => conversation.socialRoom!.members[0]?.id === social?.userId || agent.ownerId === social?.userId) : snapshot.agents
+  const pickerAgents = snapshot.agents
   const matchingAgents = pickerAgents.filter((agent) => (!remove || conversation?.agentIds.includes(agent.id)) && `${agent.name} ${agentDisplayName(agent)}`.toLocaleLowerCase().includes(needle))
-    .sort((a, b) => Number(b.systemRole === 'admin') - Number(a.systemRole === 'admin') || agentDisplayName(a).localeCompare(agentDisplayName(b)))
+    .sort((a, b) => agentDisplayName(a).localeCompare(agentDisplayName(b)))
   const matchingGroups = startMode
     ? snapshot.conversations.filter((item) => item.type === 'group' && `${item.name} ${conversationDisplayName(item, snapshot.agents)}`.toLocaleLowerCase().includes(needle))
       .sort((a, b) => conversationDisplayName(a, snapshot.agents).localeCompare(conversationDisplayName(b, snapshot.agents)))
     : []
-  const friends = remove && conversation?.socialRoom ? conversation.socialRoom.members.filter((person) => person.id !== conversation.socialRoom!.members[0]?.id && conversation.socialRoom!.members[0]?.id === social?.userId).map((person) => ({ person })) : (social?.friendships ?? []).filter((item) => item.status === 'accepted')
-  const acceptedFriendIds = new Set((social?.friendships ?? []).filter((item) => item.status === 'accepted').map((item) => item.person.id))
-  const matchingFriends = friends.filter((item) => `${item.person.name} ${acceptedFriendIds.has(item.person.id) ? item.person.email : ''}`.toLocaleLowerCase().includes(needle))
-  const selectedFriends = friends.filter((item) => selectedFriendIds.includes(item.person.id))
   const selectedConversation = matchingGroups.find((item) => item.id === selectedConversationId)
     ?? snapshot.conversations.find((item) => item.id === selectedConversationId && item.type === 'group')
   const selectedDirect = selected.length === 1
     ? snapshot.conversations.find((item) => item.type === 'direct' && item.agentIds[0] === selected[0])
     : undefined
   const toggle = (id: string): void => {
-    setMemberOrder((order) => selected.includes(id) ? order.filter((key) => key !== `agent:${id}`) : [...order, `agent:${id}`])
     setSelectedConversationId('')
     setSelected((ids) => ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id])
   }
   const chooseConversation = (id: string): void => {
-    setSelectedFriendIds([])
     setSelected([])
     setSelectedConversationId((current) => current === id ? '' : id)
   }
-  const selectionCount = selectedConversationId ? 1 : selected.length + selectedFriendIds.length
-  const invalid = remove && onRemoveContacts ? selectionCount < 1 : onAddContacts && conversation && !remove ? selectionCount < 1 : selectedFriendIds.length
-    ? selectionCount === 1 && startMode ? !onStartFriend : selectionCount < 2 || !onCreateSocialGroup
-    : startMode
+  const selectionCount = selectedConversationId ? 1 : selected.length
+  const invalid = startMode
       ? selectionCount < 1 || (Boolean(selectedConversationId) && !onOpenConversation) || (selected.length === 1 && !onStartDirect)
       : selected.length < (manage ? 2 : 1) || (remove && selected.length >= (conversation?.agentIds.length ?? 0))
   async function submit(event: FormEvent): Promise<void> {
@@ -369,18 +393,6 @@ export function AddMembersModal({ onRemoveContacts, onAddContacts, initialFriend
     setSaving(true)
     setError('')
     try {
-      if (remove && onRemoveContacts) { await onRemoveContacts(selectedFriendIds, selected); onClose(); return }
-      if (onAddContacts && conversation && !remove) {
-        await onAddContacts(selectedFriendIds, selected)
-        onClose()
-        return
-      }
-      if (selectedFriendIds.length) {
-        if (selectionCount === 1 && startMode && onStartFriend) await onStartFriend(selectedFriendIds[0])
-        else if (onCreateSocialGroup) await onCreateSocialGroup(selectedFriendIds, selected, memberOrder)
-        onClose()
-        return
-      }
       if (startMode && selectedConversationId && onOpenConversation) {
         await onOpenConversation(selectedConversationId)
         onClose()
@@ -465,20 +477,11 @@ export function AddMembersModal({ onRemoveContacts, onAddContacts, initialFriend
               </button>
             })}
             {(!startMode || contactsOpen || Boolean(needle)) && !matchingAgents.length && <p className="member-picker-empty">{t('No matching agents')}</p>}
-            {social && <>
-              <button type="button" className="member-picker-folder" aria-expanded={friendsOpen || Boolean(needle)} onClick={() => setFriendsOpen((open) => !open)}><ChevronRight size={15} className={friendsOpen || needle ? 'open' : ''} /><span>{t('Friends')}</span><em>{matchingFriends.length}</em></button>
-              {(friendsOpen || Boolean(needle)) && <div className="member-picker-folder-body">{matchingFriends.map(({ person }) => {
-                const joined = !remove && humanMembers.has(person.id)
-                const checked = joined || selectedFriendIds.includes(person.id)
-                return <button type="button" className={`member-picker-row ${checked ? 'selected' : ''}`} role="checkbox" aria-checked={checked} key={person.id} disabled={saving || joined} onClick={() => { setSelectedConversationId(''); setMemberOrder((order) => checked ? order.filter((key) => key !== `person:${person.id}`) : [...order, `person:${person.id}`]); setSelectedFriendIds((ids) => checked ? ids.filter((id) => id !== person.id) : [...ids, person.id]) }}><span className={`member-picker-check ${checked ? 'checked' : ''}`}><Check size={13} /></span><UserAvatar src={person.image || ''} name={person.name} size={36} /><span className="member-picker-name">{person.name}</span>{joined && <small>{t('Already added')}</small>}</button>
-              })}{!matchingFriends.length && <p className="member-picker-empty compact">{t('No matching friends')}</p>}</div>}
-            </>}
           </div>
         </section>
         <section className="member-picker-selection">
           <header><h2 id="add-members-title">{t(title)}</h2><span>{t('Selected')}: {selectionCount}</span></header>
           <div className="member-picker-list">
-            {selectedFriends.map((selectedFriend) => <div className="member-picker-chosen" key={selectedFriend.person.id}><UserAvatar src={selectedFriend.person.image || ''} name={selectedFriend.person.name} size={36} /><span className="member-picker-name">{selectedFriend.person.name}</span><button type="button" disabled={saving} onClick={() => setSelectedFriendIds((ids) => ids.filter((id) => id !== selectedFriend.person.id))} aria-label={`${t('Remove')} ${selectedFriend.person.name}`}><X size={13} /></button></div>)}
             {selectedConversation && <div className="member-picker-chosen"><ConversationAvatar conversation={selectedConversation} agents={snapshot.agents} userName={snapshot.userName} userAvatar={snapshot.userAvatar} size={36} /><span className="member-picker-name">{conversationDisplayName(selectedConversation, snapshot.agents)}</span><button type="button" disabled={saving} onClick={() => setSelectedConversationId('')} aria-label={`${t('Remove')} ${conversationDisplayName(selectedConversation, snapshot.agents)}`}><X size={13} /></button></div>}
             {selected.map((id) => {
               const agent = pickerAgents.find((item) => item.id === id)
@@ -497,12 +500,6 @@ export function AddMembersModal({ onRemoveContacts, onAddContacts, initialFriend
 
 export function GroupModal(props: {
   snapshot: AppSnapshot
-  onRemoveContacts?: (friendIds: string[], agentIds: string[]) => Promise<void>
-  onAddContacts?: (friendIds: string[], agentIds: string[]) => Promise<void>
-  social?: SocialSnapshot
-  onStartFriend?: (id: string) => Promise<void>
-  initialFriendIds?: string[]
-  onCreateSocialGroup?: (friendIds: string[], agentIds: string[], memberOrder?: string[]) => Promise<void>
   conversation?: Conversation
   initialAgentIds?: string[]
   onClose: () => void
@@ -687,134 +684,6 @@ export function RoutineModal({
           <p>{t('The app must be running. Missed times run once when the computer wakes.')}</p>
           <button className="primary-button" type="submit" disabled={saving || !name.trim() || !prompt.trim()}>
             {t(saving ? 'Creating…' : 'Create routine')}
-          </button>
-        </div>
-      </form>
-    </NativeDialog>
-  )
-}
-
-export function EndpointModal({
-  endpoint,
-  models,
-  onClose,
-  onSave,
-  onTest
-}: {
-  endpoint: EndpointSettings
-  models: number
-  onClose: () => void
-  onSave: (input: EndpointInput) => Promise<void>
-  onTest: (input: EndpointInput) => Promise<EndpointTestResult>
-}): ReactElement {
-  const [baseUrl, setBaseUrl] = useState(endpoint.baseUrl)
-  const [apiKey, setApiKey] = useState('')
-  const [result, setResult] = useState<EndpointTestResult>()
-  const [busy, setBusy] = useState(false)
-
-  const input = (): EndpointInput => ({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim() || undefined })
-
-  /** A missing IPC handler means the window reloaded onto a newer renderer
-   * while the old main process kept running. Say so instead of failing mute. */
-  const failure = (cause: unknown): EndpointTestResult => {
-    const message = cause instanceof Error ? cause.message : String(cause)
-    return {
-      ok: false,
-      models: 0,
-      error: /no handler registered/i.test(message)
-        ? 'This window is newer than the running app. Quit and start it again (npm run dev).'
-        : message
-    }
-  }
-
-  async function test(): Promise<EndpointTestResult> {
-    setBusy(true)
-    try {
-      const check = await onTest(input()).catch(failure)
-      setResult(check)
-      return check
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function submit(event: FormEvent): Promise<void> {
-    event.preventDefault()
-    const check = await test()
-    if (!check.ok) return
-    setBusy(true)
-    try {
-      await onSave(input())
-      onClose()
-    } catch (cause) {
-      setResult(failure(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <NativeDialog className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()} onClose={onClose}>
-      <form className="agent-modal" onSubmit={submit}>
-        <div className="modal-heading">
-          <div>
-            <span className="eyebrow">{t('Models')}</span>
-            <h2>{t('Connect an endpoint')}</h2>
-          </div>
-          <button type="button" className="icon-button" onClick={onClose} aria-label={t('Close')}>
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="routine-preview">
-          <span className="routine-clock">
-            <PlugZap size={20} />
-          </span>
-          <div>
-            <strong>{endpoint.hasApiKey ? tr('{count} chat models available', { count: models }) : t('Not connected yet')}</strong>
-            <span>
-              {endpoint.source === 'env'
-                ? t('Currently read from .env — saving here overrides it.')
-                : t('Any OpenAI-compatible base URL works, including a local router.')}
-            </span>
-          </div>
-        </div>
-
-        <label className="field-row">
-          <span>{t('Base URL')}</span>
-          <input
-            autoFocus
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="http://localhost:8080/api/v1"
-            spellCheck={false}
-          />
-        </label>
-
-        <label className="field-row">
-          <span>{t('API key')}</span>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder={endpoint.hasApiKey ? t('Saved — type to replace it') : 'sk-…'}
-            spellCheck={false}
-          />
-          <small>{t("Stored on this computer, in the app's own data folder.")}</small>
-        </label>
-
-        {result && (
-          <p className={`endpoint-result ${result.ok ? 'ok' : 'failed'}`}>
-            {result.ok ? tr('Reached the endpoint · {count} chat models', { count: result.models }) : t(result.error ?? '')}
-          </p>
-        )}
-
-        <div className="modal-footer">
-          <button type="button" className="quiet-link" onClick={() => void test()} disabled={busy}>
-            {t('Test connection')}
-          </button>
-          <button className="primary-button" type="submit" disabled={busy || !baseUrl.trim()}>
-            {t(busy ? 'Checking…' : 'Save and connect')}
           </button>
         </div>
       </form>

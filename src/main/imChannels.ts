@@ -1,6 +1,4 @@
 import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import * as lark from '@larksuiteoapi/node-sdk'
 import { downloadMedia, decryptWechatMedia, IMMediaError, MAX_IM_FILE_BYTES, type IMMedia, type IMReplyPart } from './imMedia'
@@ -8,14 +6,15 @@ import { startIMTyping } from './imTyping'
 import { formatIMMessages, type IMFormattedMessage } from './imFormatting'
 import type { IMChannel, IMConnectInput, IMLogin, IMLoginStatus, IMProvider } from '../shared/imChannels'
 
-interface RecordData {
+export interface RecordData {
   id: string; owner: string; agentId: string; provider: IMProvider; label: string
   token: string; remoteId?: string; appId?: string; baseURL?: string; peer?: string; pairingCode: string
   cursor?: string; seen: string[]
   inbox?: { id: string; raw: any; state: 'queued' | 'running'; receiptId?: string; receivedAt?: number }[]
 }
-interface Codec { encrypt(value: string): string; decrypt(value: string): string }
-interface Worker { abort: AbortController; close?: () => void; status: IMChannel['status']; error?: string; active: number; pending: (() => Promise<void>)[]; accepted: Set<string>; delivery: Promise<void>; typingCount: number; typingStop?: ReturnType<typeof startIMTyping>; typingBarrier?: Promise<void> }
+/** Where channel bindings persist. The bot token belongs in the credential vault, the rest in FeltDB. */
+export interface IMChannelStorage { load(): Promise<RecordData[]>; save(records: RecordData[]): Promise<void> }
+interface Worker { arriving: Set<string>; abort: AbortController; close?: () => void; status: IMChannel['status']; error?: string; active: number; pending: (() => Promise<void>)[]; accepted: Set<string>; delivery: Promise<void>; typingCount: number; typingStop?: ReturnType<typeof startIMTyping>; typingBarrier?: Promise<void> }
 interface Inbound { id: string; peer: string; text: string; context?: string; media?: () => Promise<IMMedia[]> }
 const WECHAT = 'https://ilinkai.weixin.qq.com'
 const quietLogger = { debug() {}, info() {}, warn() {}, error() {}, trace() {} }
@@ -40,68 +39,65 @@ export class IMChannelManager {
   private storageError = false
   private generation = 0
   private connecting = new Set<string>()
-  constructor(private directory: string, private codec: Codec,
-    private currentOwner: () => string, private hasAgent: (id: string) => boolean,
+  constructor(private storage: IMChannelStorage,
+    private currentOwner: () => string, private hasAgent: (id: string) => boolean | Promise<boolean>,
     private reply: (agentId: string, thread: string, text: string, signal: AbortSignal, provider?: IMProvider, media?: IMMedia[], receiptId?: string) => Promise<IMReplyPart[]>,
     private request: typeof fetch = fetch,
-    private received?: (agentId: string, thread: string, text: string, provider: IMProvider, messageId: string) => string,
+    private received?: (agentId: string, thread: string, text: string, provider: IMProvider, messageId: string) => string | Promise<string>,
     private diagnostic?: (event: string, detail: string) => void) {}
-  private file(): string { return join(this.directory, createHash('sha256').update(this.owner).digest('hex') + '.json') }
-  private save(): void {
-    mkdirSync(this.directory, { recursive: true, mode: 0o700 })
-    const file = this.file()
-    writeFileSync(file + '.tmp', this.codec.encrypt(JSON.stringify(this.records)), { mode: 0o600 })
-    renameSync(file + '.tmp', file)
+  /** Durable before it resolves; callers await it so a receipt is never acknowledged ahead of its record. */
+  private save(): Promise<void> {
+    return this.storage.save(this.records)
   }
-  activate(): void {
+  async activate(): Promise<void> {
     this.stop()
     this.owner = this.currentOwner()
     this.records = []
     this.storageError = false
     if (!this.owner) return
     try {
-      if (existsSync(this.file())) this.records = JSON.parse(this.codec.decrypt(readFileSync(this.file(), 'utf8')))
+      this.records = await this.storage.load()
     } catch (error) { this.storageError = true; throw error }
-    for (const record of this.records) if (this.hasAgent(record.agentId)) this.start(record)
+    for (const record of [...this.records]) if (await this.hasAgent(record.agentId)) this.start(record)
   }
   stop(): void {
     this.generation++
     for (const worker of this.workers.values()) { worker.abort.abort(); worker.close?.() }
     this.workers.clear(); this.logins.clear()
   }
-  private assert(agent: string): void {
+  private async assert(agent: string): Promise<void> {
     if (this.storageError) throw new Error('无法读取渠道凭证，请检查系统钥匙串后重新登录')
-    if (!this.owner || this.owner !== this.currentOwner() || !this.hasAgent(agent)) throw new Error('联系人不存在或账号已切换')
+    if (!this.owner || this.owner !== this.currentOwner() || !(await this.hasAgent(agent))) throw new Error('联系人不存在或账号已切换')
   }
-  list(agent: string): IMChannel[] {
-    this.assert(agent)
+  async list(agent: string): Promise<IMChannel[]> {
+    await this.assert(agent)
     return this.records.filter(r => r.agentId === agent).map(r => {
       const worker = this.workers.get(r.id)
       return { agentId: agent, provider: r.provider, label: r.label, status: worker?.status ?? 'error', error: worker?.error,
         paired: Boolean(r.peer), ...(!r.peer ? { pairingCode: r.pairingCode } : {}) }
     })
   }
-  disconnect(agent: string, provider: IMProvider): void {
-    this.assert(agent)
+  async disconnect(agent: string, provider: IMProvider): Promise<void> {
+    await this.assert(agent)
     const record = this.records.find(r => r.agentId === agent && r.provider === provider)
     if (!record) return
     const previous = this.records
     this.records = this.records.filter(r => r !== record)
-    try { this.save() } catch (error) { this.records = previous; throw error }
+    try { await this.save() } catch (error) { this.records = previous; throw error }
     const worker = this.workers.get(record.id)
     worker?.abort.abort(); worker?.close?.(); this.workers.delete(record.id)
     for (const [id, login] of this.logins) if (login.agent === agent) this.logins.delete(id)
   }
-  private commit(record: RecordData): void {
-    this.assert(record.agentId)
+  private async commit(record: RecordData): Promise<void> {
+    await this.assert(record.agentId)
     if (this.records.some(r => r.provider === record.provider && (r.appId || r.remoteId || r.label) === (record.appId || record.remoteId || record.label))) throw new Error('这个机器人已经绑定了联系人，请先断开原连接')
     if (this.records.some(r => r.agentId === record.agentId && r.provider === record.provider)) throw new Error('请先断开已有渠道')
     this.records.push(record)
-    try { this.save() } catch (error) { this.records.pop(); throw error }
+    try { await this.save() } catch (error) { this.records.pop(); throw error }
     this.start(record)
   }
   async connect(agent: string, input: IMConnectInput): Promise<void> {
-    this.assert(agent)
+    await this.assert(agent)
     if (!input || !['telegram', 'feishu'].includes(input.provider)) throw new Error('请选择支持的渠道')
     const lock = `${this.owner}:${agent}:${input.provider}`
     if (this.connecting.has(lock)) throw new Error('正在连接，请稍候')
@@ -127,14 +123,14 @@ export class IMChannelManager {
         record.label = record.appId
       }
       if (generation !== this.generation) throw new Error('账号已切换，请重新连接')
-      this.commit(record)
+      await this.commit(record)
     } finally { this.connecting.delete(lock) }
   }
   async login(agent: string): Promise<IMLogin> {
-    this.assert(agent)
+    await this.assert(agent)
     const generation = this.generation
     const data = await this.json(WECHAT + '/ilink/bot/get_bot_qrcode?bot_type=3')
-    this.assert(agent)
+    await this.assert(agent)
     if (generation !== this.generation) throw new Error('账号已切换')
     if (!data.qrcode || !data.qrcode_img_content) throw new Error('获取微信二维码失败')
     for (const [id, login] of this.logins) if (login.agent === agent || login.expires < Date.now()) this.logins.delete(id)
@@ -147,15 +143,15 @@ export class IMChannelManager {
     if (login?.owner === this.currentOwner() && login.agent === agent) this.logins.delete(sessionId)
   }
   async loginStatus(agent: string, sessionId: string): Promise<IMLoginStatus> {
-    this.assert(agent)
+    await this.assert(agent)
     const login = this.logins.get(sessionId)
     if (!login || login.owner !== this.owner || login.agent !== agent || login.expires < Date.now()) return { status: 'expired' }
     const data = await this.json(WECHAT + '/ilink/bot/get_qrcode_status?qrcode=' + encodeURIComponent(login.qr))
-    this.assert(agent)
+    await this.assert(agent)
     if (this.logins.get(sessionId) !== login) return { status: 'expired' }
     if (data.status === 'confirmed') {
       if (!data.bot_token || !data.ilink_bot_id) throw new Error('微信未返回有效凭证，请重新扫码')
-      this.commit({ id: randomUUID(), owner: this.owner, agentId: agent, provider: 'wechat', label: data.ilink_bot_id,
+      await this.commit({ id: randomUUID(), owner: this.owner, agentId: agent, provider: 'wechat', label: data.ilink_bot_id,
         token: data.bot_token, baseURL: wechatBaseURL(data.baseurl), pairingCode: randomBytes(8).toString('hex'), seen: [] })
       this.logins.delete(sessionId)
     } else if (data.status === 'expired') this.logins.delete(sessionId)
@@ -178,10 +174,10 @@ export class IMChannelManager {
       { AuthorizationType: 'ilink_bot_token', Authorization: `Bearer ${r.token}`, 'X-WECHAT-UIN': Buffer.from('123456789').toString('base64') }, signal)
   }
   private live(r: RecordData, worker: Worker): boolean {
-    return !worker.abort.signal.aborted && this.owner === r.owner && this.currentOwner() === r.owner && this.hasAgent(r.agentId) && this.workers.get(r.id) === worker
+    return !worker.abort.signal.aborted && this.owner === r.owner && this.currentOwner() === r.owner && this.workers.get(r.id) === worker
   }
   private start(r: RecordData): void {
-    const worker: Worker = { abort: new AbortController(), status: 'connecting', active: 0, pending: [], accepted: new Set(), delivery: Promise.resolve(), typingCount: 0 }
+    const worker: Worker = { arriving: new Set(), abort: new AbortController(), status: 'connecting', active: 0, pending: [], accepted: new Set(), delivery: Promise.resolve(), typingCount: 0 }
     this.workers.set(r.id, worker)
     if (r.provider === 'feishu') {
       const client = new lark.Client({ appId: r.appId!, appSecret: r.token, logger: quietLogger })
@@ -192,27 +188,26 @@ export class IMChannelManager {
         onError: () => { if (this.live(r, worker)) { worker.status = 'error'; worker.error = '飞书连接失败，请检查凭证和长连接订阅配置' } }
       })
       worker.close = () => ws.close({ force: true })
-      for (const entry of r.inbox ?? []) this.acceptFeishu(r, worker, client, entry.raw)
+      for (const entry of r.inbox ?? []) this.background(r, worker, this.acceptFeishu(r, worker, client, entry.raw))
       void ws.start({ eventDispatcher: new lark.EventDispatcher({}).register({
         'im.message.receive_v1': async data => {
-          this.acceptFeishu(r, worker, client, data)
+          await this.acceptFeishu(r, worker, client, data)
         }
       }) }).then(() => { if (!this.live(r, worker)) ws.close({ force: true }) }).catch(() => { worker.status = 'error'; worker.error = '飞书连接失败，请检查网络和长连接订阅配置' })
     } else {
       for (const entry of r.inbox ?? []) {
-        if (r.provider === 'telegram') this.acceptTelegram(r, worker, entry.raw)
-        else this.acceptWechat(r, worker, entry.raw)
+        this.background(r, worker, r.provider === 'telegram' ? this.acceptTelegram(r, worker, entry.raw) : this.acceptWechat(r, worker, entry.raw))
       }
       void this.poll(r, worker)
     }
   }
-  private acceptFeishu(r: RecordData, worker: Worker, client: lark.Client, data: any): void {
+  private async acceptFeishu(r: RecordData, worker: Worker, client: lark.Client, data: any): Promise<void> {
     const m = data.message
     if (m.chat_type !== 'p2p' || data.sender.sender_type !== 'user') return
     let content: { text?: string; image_key?: string; file_key?: string; file_name?: string } = {}
     try { content = JSON.parse(m.content) } catch { return }
     let reactionId: string | undefined
-    this.enqueue(r, worker, { id: m.message_id, peer: m.chat_id, text: m.message_type === 'text' ? content.text ?? '' : '',
+    await this.enqueue(r, worker, { id: m.message_id, peer: m.chat_id, text: m.message_type === 'text' ? content.text ?? '' : '',
       ...(['image', 'file'].includes(m.message_type) ? { media: async () => {
         // Fetch through our bounded, cancellable downloader rather than an unbounded SDK buffer.
         const signal = AbortSignal.any([worker.abort.signal, AbortSignal.timeout(45000)])
@@ -233,10 +228,10 @@ export class IMChannelManager {
       if (reactionId) await client.im.messageReaction.delete({ path: { message_id: m.message_id, reaction_id: reactionId } })
     }, 0), data)
   }
-  private acceptTelegram(r: RecordData, worker: Worker, update: any): void {
+  private async acceptTelegram(r: RecordData, worker: Worker, update: any): Promise<void> {
     const signal = worker.abort.signal
     const m = update.message
-    if (m && m.chat?.type === 'private' && !m.from?.is_bot) this.enqueue(r, worker,
+    if (m && m.chat?.type === 'private' && !m.from?.is_bot) await this.enqueue(r, worker,
       { id: String(update.update_id), peer: String(m.chat.id), text: m.text ?? m.caption ?? '',
         ...(m.photo?.length || m.document ? { media: async () => {
           const file = m.document ?? m.photo[m.photo.length - 1]
@@ -249,11 +244,11 @@ export class IMChannelManager {
         } } : {}) },
       (text, formatted) => this.telegram(r, 'sendMessage', { chat_id: m.chat.id, text, ...(formatted?.entities.length ? { entities: formatted.entities } : {}) }, signal), undefined, update)
   }
-  private acceptWechat(r: RecordData, worker: Worker, m: any): void {
+  private async acceptWechat(r: RecordData, worker: Worker, m: any): Promise<void> {
     const signal = worker.abort.signal
     if (m.message_type !== 1 || m.message_state !== 2) return
     const text = (m.item_list ?? []).map((item: any) => item.type === 1 ? item.text_item?.text : item.type === 3 ? item.voice_item?.text : '').filter(Boolean).join('\n')
-    this.enqueue(r, worker, { id: String(m.message_id ?? m.seq ?? ''), peer: m.from_user_id, text, context: m.context_token,
+    await this.enqueue(r, worker, { id: String(m.message_id ?? m.seq ?? ''), peer: m.from_user_id, text, context: m.context_token,
       ...((m.item_list ?? []).some((i: any) => i.type === 2 || i.type === 4) ? { media: async () => {
         const items = m.item_list.filter((i: any) => i.type === 2 || i.type === 4)
         if (items.length > 4) throw new IMMediaError('一次最多发送 4 个附件，请分批发送。')
@@ -271,6 +266,12 @@ export class IMChannelManager {
       } } : {}) },
       text => this.wechat(r, 'sendmessage', { msg: { from_user_id: r.label, to_user_id: m.from_user_id, client_id: randomUUID(), message_type: 2, message_state: 2,
         context_token: m.context_token, item_list: [{ type: 1, text_item: { text } }] } }, signal), undefined, m)
+  }
+  /** Work started outside a request (replaying saved messages) has no caller to report to. */
+  private background(r: RecordData, worker: Worker, work: Promise<void>): void {
+    work.catch(() => {
+      if (this.live(r, worker)) { worker.status = 'error'; worker.error = '消息处理失败，请检查本机存储后重新连接渠道' }
+    })
   }
   private drain(r: RecordData, worker: Worker): void {
     while (this.live(r, worker) && worker.active < 4 && worker.pending.length) {
@@ -302,8 +303,13 @@ export class IMChannelManager {
       return worker.typingBarrier ?? Promise.resolve()
     }
   }
-  private enqueue(r: RecordData, worker: Worker, message: Inbound, send: (text: string, formatted?: IMFormattedMessage) => Promise<void>, typing: (() => () => Promise<void>) | undefined, raw: any): void {
-    if (!this.live(r, worker) || !message.id || !message.peer || worker.accepted.has(message.id)) return
+  private async enqueue(r: RecordData, worker: Worker, message: Inbound, send: (text: string, formatted?: IMFormattedMessage) => Promise<void>, typing: (() => () => Promise<void>) | undefined, raw: any): Promise<void> {
+    if (!this.live(r, worker) || !message.id || !message.peer || worker.accepted.has(message.id) || worker.arriving.has(message.id)) return
+    // The same message can arrive twice while its receipt is still being written.
+    worker.arriving.add(message.id)
+    try { await this.receive(r, worker, message, send, typing, raw) } finally { worker.arriving.delete(message.id) }
+  }
+  private async receive(r: RecordData, worker: Worker, message: Inbound, send: (text: string, formatted?: IMFormattedMessage) => Promise<void>, typing: (() => () => Promise<void>) | undefined, raw: any): Promise<void> {
     const saved = r.inbox?.find(entry => entry.id === message.id)
     if (!saved && r.seen.includes(message.id)) return
     // Persist receipt before advancing the polling cursor or running any tools.
@@ -312,19 +318,19 @@ export class IMChannelManager {
       if (!r.peer) {
         const paired = message.text.trim() === `/pair ${r.pairingCode}`
         if (paired) { r.peer = message.peer; r.pairingCode = '' }
-        this.save()
+        await this.save()
         void send(paired ? '配对成功，可以开始给这个联系人发消息了。' :
           (/^\/pair(?:\s|$)/.test(message.text.trim()) ? '配对指令无效。' : '还未配对，暂时无法聊天。') + '请在 Douchat 中打开对应联系人的「消息渠道」，复制配对指令并发送到当前私信，完成绑定后即可聊天。').catch(() => {})
         return
       }
-      if (message.peer !== r.peer) { this.save(); return }
+      if (message.peer !== r.peer) { await this.save(); return }
     }
     if (message.peer !== r.peer) return
     const entry = saved ?? { id: message.id, raw, state: 'queued' as const, receiptId: undefined as string | undefined, receivedAt: Date.now() }
-    if (!saved) { (r.inbox ??= []).push(entry); this.save() }
+    if (!saved) { (r.inbox ??= []).push(entry); await this.save() }
     // Receipt IDs are deterministic, so recovery between these writes cannot duplicate the desktop message.
-    entry.receiptId ??= this.received?.(r.agentId, r.id, message.text, r.provider, message.id)
-    this.save()
+    entry.receiptId ??= await this.received?.(r.agentId, r.id, message.text, r.provider, message.id)
+    await this.save()
     worker.accepted.add(message.id)
     this.diagnostic?.('im.received', JSON.stringify({ provider: r.provider, channel: r.id, message: message.id, pending: worker.pending.length, active: worker.active }))
     const stopTyping = (message.text.trim() || message.media) ? (typing ? typing() : this.acquireTyping(r, worker, message)) : undefined
@@ -347,7 +353,7 @@ export class IMChannelManager {
               throw new IMMediaError('附件下载失败，请检查渠道权限或网络后重新发送。')
             }
             if (!this.live(r, worker)) return
-            entry.state = 'running'; this.save()
+            entry.state = 'running'; await this.save()
             this.diagnostic?.('im.processing', JSON.stringify({ provider: r.provider, channel: r.id, message: message.id, waitMs: Date.now() - (entry.receivedAt ?? Date.now()) }))
             bubbles = await this.reply(r.agentId, r.id, message.text, worker.abort.signal, r.provider, media, entry.receiptId)
           }
@@ -385,7 +391,7 @@ export class IMChannelManager {
           this.diagnostic?.('im.finished', JSON.stringify({ provider: r.provider, channel: r.id, message: message.id, elapsedMs: Date.now() - (entry.receivedAt ?? Date.now()) }))
           worker.accepted.delete(message.id)
           r.inbox = (r.inbox ?? []).filter(item => item !== entry)
-          this.save()
+          await this.save()
         }
       }
     })
@@ -472,25 +478,25 @@ export class IMChannelManager {
           if (!this.live(r, worker)) return
           received = updates.length > 0
           for (const update of updates) {
-            this.acceptTelegram(r, worker, update)
+            await this.acceptTelegram(r, worker, update)
             if (!this.live(r, worker)) return
-            r.cursor = String(update.update_id + 1); this.save()
+            r.cursor = String(update.update_id + 1); await this.save()
           }
         } else {
           const data = await this.wechat(r, 'getupdates', { get_updates_buf: r.cursor || '' }, signal)
           if (!this.live(r, worker)) return
           if (data.errcode === -14) {
-            if (r.cursor) { r.cursor = ''; expired = 0; this.save() } else expired++
+            if (r.cursor) { r.cursor = ''; expired = 0; await this.save() } else expired++
             if (expired >= 20) { worker.status = 'error'; worker.error = '微信登录已失效，请断开后重新扫码'; return }
             throw new Error('微信会话正在恢复')
           }
           expired = 0
           received = Boolean(data.msgs?.length)
           for (const m of data.msgs ?? []) {
-            this.acceptWechat(r, worker, m)
+            await this.acceptWechat(r, worker, m)
           }
           if (!this.live(r, worker)) return
-          if (data.get_updates_buf) { r.cursor = data.get_updates_buf; this.save() }
+          if (data.get_updates_buf) { r.cursor = data.get_updates_buf; await this.save() }
         }
         failures = 0; worker.status = worker.error ? 'error' : 'connected'
         if (!received) await delay(200, undefined, { signal })

@@ -56,16 +56,6 @@ describe('user avatar', () => {
     expect(container.querySelector('svg')).not.toBeNull()
   })
 
-  it('renders another account’s shared agent using its published avatar', async () => {
-    const group = { id: 'shared', ownerId: 'viewer', type: 'group', agentIds: ['remote'], socialRoom: {
-      agents: [{ id: 'remote', localId: 'local', ownerId: 'creator', name: '阿喵', avatarEmoji: '🐱', color: '#ffccdd' }]
-    } } as unknown as Conversation
-    const [member] = conversationMembers(group, [])
-    await act(async () => root.render(<AgentAvatar agent={member} />))
-    expect(container.querySelector('.emoji-agent-avatar')?.textContent).toBe('🐱')
-    expect(member.ownerId).toBe('creator')
-  })
-
   it('renders an emoji avatar instead of the generated fallback', async () => {
     await act(async () => root.render(
       <AgentAvatar agent={{
@@ -131,9 +121,9 @@ describe('user avatar', () => {
 
   it('uses the same compact source label across contact surfaces', () => {
     const base = {
-      name: 'Agent', role: 'Assistant', instructions: '', color: '#7C6CF2', provider: 'gateway', model: 'default', createdAt: 1
+      name: 'Agent', role: 'Assistant', instructions: '', color: '#7C6CF2', provider: 'anthropic', model: 'default', createdAt: 1
     }
-    expect(agentSourceLabel({ ...base, id: 'cloud' })).toBe('Douchat Cloud')
+    expect(agentSourceLabel({ ...base, id: 'cloud' })).toBe('Model API')
     expect(agentSourceLabel({ ...base, id: 'custom-model', provider: 'custom:deepseek' })).toBe('Custom model')
     expect(agentSourceLabel({ ...base, id: 'following', provider: 'custom:deepseek', followDefaultModel: true })).toBe('Custom model')
     expect(agentSourceLabel({ ...base, id: 'local', localAgentId: 'opencode', provider: 'local' })).toBe('Local agent · OpenCode')
@@ -141,21 +131,3 @@ describe('user avatar', () => {
   })
 })
 
-
-it('only offers owned agents and peers with published allow or ask permissions', () => {
-  const conversation = { ownerId: 'alice', agentIds: [], socialRoom: { agents: [
-    { id: 'mine', localId: 'one', ownerId: 'alice', name: 'Mine', avatarEmoji: '🐱' },
-    { id: 'peer', localId: 'two', ownerId: 'bob', name: 'Peer', avatarSeed: 'peer-seed', color: '#112233', localAgentId: 'claude', avatar: 'https://example.com/avatar.png' },
-    { id: 'admin', localId: 'admin', ownerId: 'bob', name: 'Dr. Dou', systemRole: 'admin' }
-  ] } } as unknown as Conversation
-  const members = conversationMembers(conversation, [])
-  expect(members[1]).toMatchObject({ avatarSeed: 'peer-seed', avatar: 'https://example.com/avatar.png', color: '#112233', localAgentId: 'claude' })
-  expect(members[2].systemRole).toBe('admin')
-  expect(mentionableAgents(conversation, members).map((agent) => agent.id)).toEqual(['mine'])
-  conversation.socialRoom!.agents[1].interactionHumans = 'allow'
-  conversation.socialRoom!.agents[2].interactionHumans = 'ask'
-  expect(mentionableAgents(conversation, members).map((agent) => agent.id)).toEqual(['mine', 'peer', 'admin'])
-  conversation.socialRoom!.agents[1].interactionHumans = 'deny'
-  expect(mentionableAgents(conversation, members).map((agent) => agent.id)).toEqual(['mine', 'admin'])
-  expect(mentionableAgents({ ...conversation, socialRoom: undefined }, members)).toEqual(members)
-})

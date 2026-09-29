@@ -1,9 +1,9 @@
 import { groupMemberSessionId } from '../shared/bot/group'
 import type { SelectedMention } from '../shared/bot/mentions'
-import { ConnanyManager } from './connany'
 import { supportedInterfaceLanguage } from '../shared/language'
-import { CONNECTORS_ENABLED } from '../shared/connany'
-import { LocalAccountData } from './accountData'
+import { LocalDesktopData } from './desktopData'
+import { LOCAL_USER_ID } from '../shared/userMemory'
+import { startDesktop, stopDesktop, DesktopStartupError, type DesktopState } from './desktop'
 import { exportAgentArchive, parseAgentArchive } from './agentArchive'
 import { parseSkillArchive } from './skillArchive'
 import { replyToIM } from './imReply'
@@ -13,7 +13,6 @@ import { listLocalAgentModels, cancelLocalModelQueries } from './localAgentModel
 import { localModelId, configurableLocalAgents } from '../shared/localModels'
 import { thinkingLevel } from '../shared/thinkingLevels'
 import { authorizeTokenDance } from './tokenDanceAuth'
-import { CustomModelStore } from './customModels'
 import { CUSTOM_PROVIDER_PREFIX, type CustomProviderInput, type CustomModelTest } from '../shared/customModels'
 import { configureManagedNode, ensureManagedNode } from './managedNode'
 import { configureNativeDialogWindows, resizeNativeDialog } from './nativeDialogs'
@@ -22,43 +21,38 @@ import { writeFile } from 'node:fs/promises'
 import { DiagnosticLog } from './diagnostics'
 import { release as osRelease } from 'node:os'
 import { notifyWindows } from './windowNotifications'
-import { SocialClient } from './social'
-import type { SocialAction } from '../shared/social'
 import 'dotenv/config'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { app, BrowserWindow, clipboard, crashReporter, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, powerSaveBlocker, session, shell, safeStorage, systemPreferences } from 'electron'
 import electronUpdater from 'electron-updater'
 import type {
-  AppSnapshot,
   CodeArtifactInput,
   EmailConnectorInput,
   CreateAgentInput,
   CustomLocalAgentInput,
-  DesktopAuthState,
-  EndpointInput,
   MessageImageInput,
   MessageFileInput,
   CreateGroupInput,
   CreateRoutineInput,
   UpdateAgentInput,
   UpdateConversationInput,
-  UpdateDesktopProfileInput,
+  UpdateProfileInput,
   UpdateState
 } from '../shared/types'
 import { LocalComputerProvider } from './computer'
 import { DouchatRuntime } from './runtime'
 import { RoutineScheduler } from './scheduler'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
+import { DesktopProjection } from './projection'
 import { addCustomLocalAgent, configureLocalAgentRegistry, detectLocalAgents, removeCustomLocalAgent, updateLocalAgent, validateLocalAgent } from './localAgents'
 import { checkLocalAgentUpdates } from './localAgentUpdates'
 import { resetShellPath } from './shellPath'
-import { DesktopAuth } from './desktopAuth'
-import { chatApiBaseUrl, desktopAuthScheme, isDesktopAuthUrl, isDesktopCreditsUrl, parseDesktopGroupUrl, normalizeWebAppUrl } from './authProtocol'
 import { DesktopUpdater, type UpdateDriver } from './updater'
 import { EmailConnectorManager } from './emailConnector'
+import type { SecretCodec } from './credentialVault'
 import { applicationName, userDataDirectoryName } from './userData'
-import { configureLocalWorkspaces, validateWorkspaceFolder, resolveSavedWorkspace, localWorkspace, openableWorkspace } from './localWorkspaces'
+import { validateWorkspaceFolder, resolveSavedWorkspace, localWorkspace, openableWorkspace } from './localWorkspaces'
 import { canAssignConversationWorkspace } from '../shared/conversationWorkspace'
 import { prepareNpmMaintenance, resolveMaintenancePlan } from './localAgentMaintenance'
 import { openMaintenanceTerminal, openLocalAgentTerminal } from './terminalLauncher'
@@ -73,11 +67,6 @@ const development = !app.isPackaged
 // contend with the signed release's "Douchat Safe Storage" credentials.
 app.setName(applicationName(development))
 const appIcon = join(app.getAppPath(), 'resources/icons', development ? 'douchat-dev.png' : 'douchat.png')
-const authScheme = desktopAuthScheme()
-const webAppUrl = normalizeWebAppUrl(
-  process.env.DOUCHAT_SERVICE_URL || process.env.DOUCHAT_WEB_URL,
-  development
-)
 
 /**
  * Keep packaged user data stable across display-name changes, while isolating
@@ -87,19 +76,15 @@ const webAppUrl = normalizeWebAppUrl(
 app.setPath('userData', join(app.getPath('appData'), userDataDirectoryName(development)))
 configureLocalAgentRegistry(app.getPath('userData'))
 configureManagedNode(app.getPath('userData'))
-configureLocalWorkspaces(app.getPath('userData'))
-const customModels = new CustomModelStore(join(app.getPath('userData'), 'custom-models'), {
-  encrypt: (value) => {
-    if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) throw new Error("System credential storage is unavailable. Enable the system keychain and try again.")
-    return safeStorage.encryptString(value).toString('base64')
-  },
+/** Provider secrets go through the operating system's credential store, never into FeltDB. */
+const credentialCodec: SecretCodec = {
+  available: () => safeStorage.isEncryptionAvailable() && !(process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text'),
+  encrypt: (value) => safeStorage.encryptString(value).toString('base64'),
   decrypt: (value) => safeStorage.decryptString(Buffer.from(value, 'base64'))
-})
-function reloadCustomModels(): void {
-  if (store.currentAccountId) {
-    try { runtime.configureCustomModels(customModels.records(store.currentAccountId), customModels.list(store.currentAccountId).defaultModel) }
-    catch { runtime.configureCustomModels([]); console.warn('[douchat] Custom model keys could not be loaded for this account') }
-  } else runtime.configureCustomModels([])
+}
+async function reloadCustomModels(): Promise<void> {
+  try { await runtime.configureCustomModels(await desktop.providers.records(), (await desktop.providers.list()).defaultModel) }
+  catch { await runtime.configureCustomModels([]); console.warn('[douchat] Provider keys could not be loaded') }
 }
 const diagnostics = new DiagnosticLog(join(app.getPath('userData'), 'logs'))
 try {
@@ -169,7 +154,7 @@ app.on('browser-window-created', (_event, window) => {
   })
 })
 app.on('child-process-gone', (_event, details) => diagnostics.write('child-process.gone', JSON.stringify(details)))
-ipcMain.handle('douchat:resize-dialog', (event, name: unknown, width: unknown, height: unknown) => {
+ipcMain.handle('douchat:resize-dialog', async (event, name: unknown, width: unknown, height: unknown) => {
   if (typeof name !== 'string' || typeof width !== 'number' || typeof height !== 'number') return false
   return resizeNativeDialog(event.sender, name, height, width)
 })
@@ -199,20 +184,15 @@ ipcMain.handle('douchat:open-diagnostic-logs', async (event) => {
 
 
 let mainWindow: BrowserWindow | null = null
-let store: DouchatStore
+let desktop: DesktopState
+let store: DesktopRepository
 let imChannels: IMChannelManager | undefined
 let runtime: DouchatRuntime
 let computer: LocalComputerProvider
 let scheduler: RoutineScheduler
-let auth: DesktopAuth
 let updater: DesktopUpdater
-let connany: ConnanyManager
 let emailConnectors: EmailConnectorManager
-let pendingGroupRoom = ''
-let openingGroupRoom = false
-let pendingAuthUrl = ''
-let pendingCreditsRefresh = false
-let cloudSessionActive = false
+let projection: DesktopProjection
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
@@ -229,170 +209,22 @@ function focusMainWindow(): void {
   mainWindow.focus()
 }
 
-function callbackUrlFromArgs(args: string[]): string | undefined {
-  return args.find((arg) => isDesktopAuthUrl(arg, authScheme) || isDesktopCreditsUrl(arg, authScheme) || Boolean(parseDesktopGroupUrl(arg)))
-}
-
-async function openPendingGroup(): Promise<void> {
-  if (!pendingGroupRoom || openingGroupRoom || !social || auth?.getState().status !== 'signed-in') return
-  openingGroupRoom = true
-  const roomId = pendingGroupRoom
-  try {
-    await social.syncInbox(true)
-    const conversation = store.accountConversations.find((item) => item.remoteRoomId === roomId)
-    if (!conversation) throw new Error("Sign in with the same account used to join this group.")
-    if (conversation.hidden) store.updateConversation(conversation.id, { hidden: false })
-    openChatWindow(conversation.id)
-  } catch (error) {
-    await dialog.showMessageBox({ type: 'info', message: ui('Could not open the group chat', '无法打开群聊'), detail: error instanceof Error ? error.message : ui('Please try again later.', '请稍后重试。') })
-  } finally {
-    if (pendingGroupRoom === roomId) pendingGroupRoom = ''
-    openingGroupRoom = false
-  }
-}
-
-function receiveAppUrl(url: string): void {
-  const roomId = parseDesktopGroupUrl(url)
-  if (roomId) {
-    pendingGroupRoom = roomId
-    focusMainWindow()
-    void openPendingGroup()
-    return
-  }
-  if (isDesktopCreditsUrl(url, authScheme)) {
-    pendingCreditsRefresh = true
-    focusMainWindow()
-    if (mainWindow) notifyWindows([mainWindow], 'douchat:credits-updated')
-    return
-  }
-  if (!isDesktopAuthUrl(url, authScheme)) return
-  focusMainWindow()
-  if (!auth) {
-    pendingAuthUrl = url
-    return
-  }
-  void auth.handleCallback(url)
-}
-
 if (hasSingleInstanceLock) {
-  app.on('second-instance', (_event, commandLine) => {
-    const url = callbackUrlFromArgs(commandLine)
-    if (url) receiveAppUrl(url)
-    else focusMainWindow()
-  })
-  app.on('open-url', (event, url) => {
-    event.preventDefault()
-    receiveAppUrl(url)
-  })
-}
-
-const initialAppUrl = callbackUrlFromArgs(process.argv)
-if (initialAppUrl) {
-  if (parseDesktopGroupUrl(initialAppUrl)) pendingGroupRoom = parseDesktopGroupUrl(initialAppUrl)!
-  else if (isDesktopCreditsUrl(initialAppUrl, authScheme)) pendingCreditsRefresh = true
-  else pendingAuthUrl = initialAppUrl
+  app.on('second-instance', () => focusMainWindow())
 }
 
 let localWorkBlocker: number | undefined
 let quitting = false
-function broadcast(snapshot: AppSnapshot): void {
+/** Something that exists only while the app runs changed: keep the machine awake while a local agent works, and tell the renderer. */
+function ephemeralChanged(): void {
   if (quitting) return
-  const localWork = !quitting && snapshot.agents.some((agent) => agent.localAgentId && snapshot.agentStatuses[agent.id] === 'thinking')
+  const localWork = runtime?.hasLocalAgentWork() ?? false
   if (localWork && localWorkBlocker === undefined) localWorkBlocker = powerSaveBlocker.start('prevent-app-suspension')
   if (!localWork && localWorkBlocker !== undefined) {
     powerSaveBlocker.stop(localWorkBlocker)
     localWorkBlocker = undefined
   }
-  notifyWindows(BrowserWindow.getAllWindows(), 'douchat:snapshot', snapshot)
-}
-
-let social: SocialClient | undefined
-let socialAccountId = ''
-
-function broadcastAuth(state: DesktopAuthState): void {
-  const nextSocialAccount = state.status === 'signed-in' ? state.user.id : ''
-  const accountChanged = Boolean(store && store.currentAccountId !== nextSocialAccount)
-  if (store && accountChanged) {
-    cancelLocalModelQueries()
-    const previousAgents = store.accountAgents
-    const previousConversations = store.accountConversations
-    runtime?.games.stopAll()
-    for (const conversation of previousConversations) runtime?.stopConversation(conversation.id)
-    for (const agent of previousAgents) runtime?.disposeAgent(agent.id)
-    for (const window of chatWindows.values()) window.close()
-    for (const window of codeArtifactWindows.values()) window.close()
-    codeArtifacts.clear()
-    store.setCurrentAccountId(nextSocialAccount)
-    reloadCustomModels()
-    try { imChannels?.activate() } catch { console.warn("[douchat] IM credentials could not be loaded") }
-    scheduler?.accountChanged()
-    // Models and credentials are account state. Force the connection catalog
-    // to be rebuilt even when both the old and new account are signed in.
-    cloudSessionActive = false
-  }
-  if (nextSocialAccount !== socialAccountId) {
-    socialAccountId = nextSocialAccount
-    if (nextSocialAccount) social?.start()
-    else social?.stop()
-  }
-  let welcomeConversationId: string | undefined
-  let builtInRefresh: Promise<string | undefined> = Promise.resolve(undefined)
-  if (state.status === 'signed-in' && store && runtime) {
-    // The service account is the identity authority. Keep only the name as a
-    // local runtime cache so agent prompts use the same identity when offline.
-    store.setUserName(state.user.name)
-    const welcome = store.ensureDefaultCloudContact(state.user.id, runtime.defaultCloudAgentModel())
-    welcomeConversationId = welcome.conversation?.id ?? store.defaultConversationId
-    broadcast(runtime.snapshot())
-    builtInRefresh = auth.getBuiltInAgentManifest()
-      .then((manifest) => {
-        const current = auth.getState()
-        if (current.status !== 'signed-in' || current.user.id !== state.user.id) return undefined
-        const synced = store.ensureDefaultCloudContact(
-          state.user.id,
-          runtime.defaultCloudAgentModel(),
-          manifest
-        )
-        // Window focus refreshes the profile too. Refresh cached sessions only
-        // after active replies finish; disposeAgent would cancel their requests.
-        if (synced.agent) runtime.refreshAgent(synced.agent.id)
-        broadcast(runtime.snapshot())
-        return synced.conversation?.id ?? store.defaultConversationId
-      })
-      .catch((error) => {
-        // The cached manifest and embedded definition keep the administrator
-        // usable offline. A refresh failure is therefore diagnostic only.
-        console.warn('[douchat] built-in agent refresh failed:', error instanceof Error ? error.message : error)
-        return welcomeConversationId
-      })
-  }
-  const signedIn = state.status === 'signed-in'
-  const shouldConnect = runtime && (
-    signedIn
-      ? !cloudSessionActive || runtime.snapshot().runtime.mode !== 'live'
-      : cloudSessionActive
-  )
-  if (runtime && shouldConnect) {
-    cloudSessionActive = signedIn
-    void Promise.all([runtime.connect(), builtInRefresh]).then(async ([, refreshedConversationId]) => {
-      if (state.status === 'signed-in' && store.currentAccountId === state.user.id) void runtime.recoverGroupWorkflows()
-      // Wait for the account's Cloud model before asking Dr. Dou to open the
-      // welcome chat. greet() is otherwise idempotent once a message exists.
-      const current = auth?.getState()
-      if (
-        (refreshedConversationId ?? welcomeConversationId)
-        && state.status === 'signed-in'
-        && current?.status === 'signed-in'
-        && current.user.id === state.user.id
-      ) {
-        await runtime.greet((refreshedConversationId ?? welcomeConversationId)!)
-      }
-      broadcast(runtime.snapshot())
-    })
-  } else {
-    void builtInRefresh
-  }
-  notifyWindows(BrowserWindow.getAllWindows(), 'douchat:auth-state', state)
+  projection?.ephemeralChanged()
 }
 
 function broadcastUpdate(state: UpdateState): void {
@@ -400,10 +232,11 @@ function broadcastUpdate(state: UpdateState): void {
 }
 
 const chatWindows = new Map<string, BrowserWindow>()
-function openChatWindow(conversationId: string): void {
+async function openChatWindow(conversationId: string): Promise<void> {
   const existing = chatWindows.get(conversationId)
   if (existing && !existing.isDestroyed()) { existing.show(); existing.focus(); return }
-  const window = new BrowserWindow({ acceptFirstMouse: true, icon: appIcon, width: 820, height: 720, minWidth: 480, minHeight: 480, title: store.conversation(conversationId)?.name,
+  const title = (await store.conversation(conversationId))?.name
+  const window = new BrowserWindow({ acceptFirstMouse: true, icon: appIcon, width: 820, height: 720, minWidth: 480, minHeight: 480, title,
     webPreferences: { preload: join(__dirname, '../preload/index.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } })
   chatWindows.set(conversationId, window)
   window.on('closed', () => chatWindows.delete(conversationId))
@@ -501,10 +334,10 @@ function createWindow(): void {
   }
 }
 
-function validateRoutineInput(input: CreateRoutineInput): void {
+async function validateRoutineInput(input: CreateRoutineInput): Promise<void> {
   if (!input.name?.trim() || !input.prompt?.trim()) throw new Error('Routine name and instructions are required')
-  if (!store.accountAgents.some((agent) => agent.id === input.agentId)) throw new Error('Routine agent not found')
-  if (!store.accountConversations.some((conversation) => conversation.id === input.conversationId)) {
+  if (!(await store.agent(input.agentId))) throw new Error('Routine agent not found')
+  if (!(await store.conversation(input.conversationId))) {
     throw new Error('Routine conversation not found')
   }
   if (input.schedule.kind === 'once') {
@@ -545,20 +378,13 @@ function configureMediaPermissions(): void {
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return
   // Electron creates a default File/Edit/View/Window menu on Windows when no
   // application menu is provided. Douchat exposes its actions in the app UI,
   // so remove the native menu instead of merely hiding it until Alt is pressed.
   if (process.platform === 'win32') Menu.setApplicationMenu(null)
   configureMediaPermissions()
-  // Development auth returns through a loopback HTTP callback, so it must not
-  // claim the production douchat:// scheme. Registering Electron.app here
-  // causes macOS to route packaged-app login and payment callbacks back into
-  // the development process instead of /Applications/Douchat.app.
-  if (!development) {
-    app.setAsDefaultProtocolClient(authScheme)
-  }
   app.dock?.setIcon(appIcon)
   ipcMain.on('douchat:window-action', (event, action: string) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
@@ -566,68 +392,60 @@ app.whenReady().then(() => {
     else if (action === 'minimize') mainWindow.minimize()
     else if (action === 'fullscreen') mainWindow.setFullScreen(!mainWindow.isFullScreen())
   })
-  ipcMain.handle('douchat:set-interface-language', (_event, language: unknown) => {
+  const requireConversation = async (id: unknown) => {
+    const conversation = typeof id === 'string' ? await store.conversation(id) : undefined
+    if (!conversation) throw new Error('Chat not found')
+    return conversation
+  }
+  const requireAgent = async (id: unknown) => {
+    const agent = typeof id === 'string' ? await store.agent(id) : undefined
+    if (!agent) throw new Error('Agent not found')
+    return agent
+  }
+  ipcMain.handle('douchat:set-interface-language', async (_event, language: unknown) => {
     runtime.setInterfaceLanguage(typeof language === 'string' ? language : '')
   })
-  store = DouchatStore.atUserData(app.getPath('userData'))
-  // The account id persisted in the database belongs to the previous app
-  // session. Keep the workspace closed until DesktopAuth identifies the
-  // current session; otherwise its scheduler could briefly run old tasks.
-  store.setCurrentAccountId('')
-  emailConnectors = new EmailConnectorManager(store, app.getPath('userData'))
-  connany = new ConnanyManager(store, webAppUrl, () => auth?.getAccessToken(), url => shell.openExternal(url))
+  // The desktop's durable state is FeltDB. It is opened first, before any
+  // window, and a failure stops the app here instead of falling back.
+  try {
+    desktop = await startDesktop({ userData: app.getPath('userData'), codec: credentialCodec, demo: process.env.DOUCHAT_DEMO === '1' })
+  } catch (error) {
+    const detail = error instanceof DesktopStartupError ? error.message : String(error)
+    diagnostics.write('desktop.start-failed', error instanceof Error ? error.stack || detail : detail)
+    dialog.showErrorBox('Douchat', `${ui('Douchat could not open its local data and will close.', 'Douchat 无法打开本地数据，即将退出。')}\n\n${detail}`)
+    quitting = true
+    app.exit(1)
+    return
+  }
+  store = desktop.repository
+  diagnostics.write('desktop.started', JSON.stringify({ database: desktop.databaseDirectory, migration: desktop.migration.status, imported: desktop.migration.imported }))
+  emailConnectors = new EmailConnectorManager(store, desktop.vault)
   computer = new LocalComputerProvider(
-    () => !quitting && runtime && broadcast(runtime.snapshot()),
+    () => ephemeralChanged(),
     [app.getPath('downloads'), app.getPath('desktop'), app.getPath('documents')],
     (path) => shell.openPath(path)
   )
-  runtime = new DouchatRuntime(store, computer, broadcast, {
-    baseUrl: chatApiBaseUrl(webAppUrl),
-    resolveAccessToken: () => auth?.getAccessToken(),
-    onUnauthorized: async () => { await auth?.invalidateSession() },
-    avatarFromImage: (image) => {
-      const source = nativeImage.createFromBuffer(Buffer.from(image.data, 'base64'))
-      const size = source.getSize()
-      if (source.isEmpty() || !size.width || !size.height) throw new Error('The attached image could not be read.')
-      const edge = Math.min(size.width, size.height)
-      return source
-        .crop({
-          x: Math.floor((size.width - edge) / 2),
-          y: Math.floor((size.height - edge) / 2),
-          width: edge,
-          height: edge
-        })
-        .resize({ width: 256, height: 256, quality: 'best' })
-        .toDataURL()
-    }
-  }, { revision: () => connany.revision(), snapshot: () => emailConnectors.snapshot(), createTools: id => [...emailConnectors.createTools(id), ...(CONNECTORS_ENABLED ? connany.createTools(id) : [])] })
-  imChannels = new IMChannelManager(join(app.getPath('userData'), 'im-channels'), {
-    encrypt: value => {
-      if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) throw new Error(ui('The system keychain is unavailable. Enable it and try again.', '系统钥匙串不可用，请启用后重试'))
-      return safeStorage.encryptString(value).toString('base64')
-    },
-    decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64'))
-  }, () => store.currentAccountId, id => store.accountAgents.some(agent => agent.id === id),
-  async (agent, thread, text, signal, provider, media, receiptId) => {
-    const answer = await replyToIM(store, runtime, agent, thread, text, signal, provider, media, receiptId)
-    broadcast(runtime.snapshot())
-    return answer
-  }, (input, init) => net.fetch(String(input), init),
+  runtime = new DouchatRuntime(store, computer, ephemeralChanged, { snapshot: () => emailConnectors.snapshot(), createTools: id => emailConnectors.createTools(id) })
+  // FeltDB announces every durable change; the projection turns each into a small delta for the renderer.
+  projection = new DesktopProjection(store, {
+    ephemeral: () => runtime.ephemeralState(),
+    runtimeStatus: agents => runtime.runtimeStatus(agents),
+    availableModels: () => runtime.availableModels(),
+    connectors: () => emailConnectors.snapshot()
+  }, delta => { if (!quitting) notifyWindows(BrowserWindow.getAllWindows(), 'douchat:projection', delta) })
+  projection.start()
+  imChannels = new IMChannelManager(desktop.imStorage, () => LOCAL_USER_ID, async id => Boolean(await store.agent(id)),
+  (agent, thread, text, signal, provider, media, receiptId) => replyToIM(store, runtime, agent, thread, text, signal, provider, media, receiptId), (input, init) => net.fetch(String(input), init),
   (agent, thread, text, provider, messageId) => runtime.receiveIMMessage(agent, thread, text, provider, messageId),
   (event, detail) => diagnostics.write(event, detail))
-  ipcMain.handle('douchat:im-list', (_event, agent) => imChannels!.list(agent))
-  ipcMain.handle('douchat:im-connect', (_event, agent, input) => imChannels!.connect(agent, input))
-  ipcMain.handle('douchat:im-disconnect', (_event, agent, provider) => imChannels!.disconnect(agent, provider))
-  ipcMain.handle('douchat:im-login', (_event, agent) => imChannels!.login(agent))
-  ipcMain.handle('douchat:im-cancel-login', (_event, agent, session) => imChannels!.cancelLogin(agent, session))
-  ipcMain.handle('douchat:im-status', (_event, agent, session) => imChannels!.loginStatus(agent, session))
+  ipcMain.handle('douchat:im-list', async (_event, agent) => imChannels!.list(agent))
+  ipcMain.handle('douchat:im-connect', async (_event, agent, input) => imChannels!.connect(agent, input))
+  ipcMain.handle('douchat:im-disconnect', async (_event, agent, provider) => imChannels!.disconnect(agent, provider))
+  ipcMain.handle('douchat:im-login', async (_event, agent) => imChannels!.login(agent))
+  ipcMain.handle('douchat:im-cancel-login', async (_event, agent, session) => imChannels!.cancelLogin(agent, session))
+  ipcMain.handle('douchat:im-status', async (_event, agent, session) => imChannels!.loginStatus(agent, session))
   runtime.setInterfaceLanguage(app.getLocale())
-  scheduler = new RoutineScheduler(
-    store,
-    runtime,
-    () => { if (!quitting) broadcast(runtime.snapshot()) },
-    async () => (await auth.getUsageSummary()).credits
-  )
+  scheduler = new RoutineScheduler(store, runtime)
   runtime.setRoutineCreator((input) => scheduler.createRoutine(input))
   const updateDriver = app.isPackaged
     ? electronUpdater.autoUpdater as unknown as UpdateDriver
@@ -636,46 +454,24 @@ app.whenReady().then(() => {
     updateDriver,
     app.getVersion(),
     app.isPackaged,
-    () => runtime.snapshot().activity.length,
+    () => runtime.ephemeralState().activity.length,
     broadcastUpdate
   )
-  auth = new DesktopAuth(webAppUrl, authScheme, development, app.getPath('userData'), (state, reason) => {
-    broadcastAuth(state)
-    if (CONNECTORS_ENABLED && state.status === 'signed-in') void connany.command({ op: 'list' }).catch(() => { /* Recheck from Settings when the service is available. */ })
-    // The development flow returns through a loopback HTTP server instead of
-    // the custom protocol, so it does not pass through receiveAppUrl(). Bring
-    // Douchat forward only for an explicit login callback, never for session
-    // restoration, profile refreshes or profile edits in the background.
-    if (state.status === 'signed-in' && reason === 'login-completed') { focusMainWindow(); void openPendingGroup() }
-  })
-
-  social = new SocialClient(webAppUrl, auth, store, runtime, () => { if (!quitting) broadcast(runtime.snapshot()) })
-  runtime.setHumanSender((id, text, images, files, mentions) => social!.sendMessage(id, text, images, files, mentions))
-  ipcMain.handle('douchat:social-snapshot', (event) => {
-    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
-    return social!.snapshot()
-  })
-  ipcMain.handle('douchat:social-action', async (event, input: SocialAction) => {
-    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
-    const result = await social!.action(input)
-    return result
-  })
-  ipcMain.handle('douchat:get-auth-state', () => auth.getState())
-  ipcMain.handle('douchat:user-memory', (event, agentId?: string) => {
+  ipcMain.handle('douchat:user-memory', async (event, agentId?: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unknown window')
-    return new LocalAccountData(store).getUserMemory(agentId)
+    return new LocalDesktopData(store).getUserMemory(agentId)
   })
-  ipcMain.handle('douchat:save-user-memory', (event, document: import('../shared/userMemory').UserMemoryDocument, agentId?: string) => {
+  ipcMain.handle('douchat:save-user-memory', async (event, document: import('../shared/userMemory').UserMemoryDocument, agentId?: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unknown window')
-    return new LocalAccountData(store).saveUserMemory(document, agentId)
+    return new LocalDesktopData(store).saveUserMemory(document, agentId)
   })
-  ipcMain.handle('douchat:group-memory', (event, conversationId: string) => {
+  ipcMain.handle('douchat:group-memory', async (event, conversationId: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unknown window')
-    return new LocalAccountData(store).getGroupMemory(conversationId)
+    return new LocalDesktopData(store).getGroupMemory(conversationId)
   })
-  ipcMain.handle('douchat:save-group-memory', (event, document: import('../shared/userMemory').UserMemoryDocument, conversationId: string) => {
+  ipcMain.handle('douchat:save-group-memory', async (event, document: import('../shared/userMemory').UserMemoryDocument, conversationId: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unknown window')
-    return new LocalAccountData(store).saveGroupMemory(document, conversationId)
+    return new LocalDesktopData(store).saveGroupMemory(document, conversationId)
   })
   ipcMain.handle('douchat:request-microphone-access', async (event) => {
     if (!isDouchatRenderer(event.sender)) return 'denied'
@@ -697,24 +493,22 @@ app.whenReady().then(() => {
       await shell.openExternal('ms-settings:privacy-microphone')
     }
   })
-  ipcMain.handle('douchat:start-login', () => auth.startLogin())
-  ipcMain.handle('douchat:cancel-login', () => auth.cancelLogin())
-  ipcMain.handle('douchat:retry-auth', () => auth.initialize())
-  ipcMain.handle('douchat:sign-out', () => auth.signOut())
-  ipcMain.handle('douchat:refresh-profile', () => auth.refreshProfile())
-  ipcMain.handle('douchat:update-profile', (_event, input: UpdateDesktopProfileInput) => auth.updateProfile(input))
-  ipcMain.handle('douchat:get-usage-summary', () => auth.getUsageSummary())
-  ipcMain.handle('douchat:consume-credits-return', (event) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) return false
-    const shouldRefresh = pendingCreditsRefresh
-    pendingCreditsRefresh = false
-    return shouldRefresh
+  ipcMain.handle('douchat:update-profile', async (event, input: UpdateProfileInput) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    if (typeof input?.name === 'string') await store.setUserName(input.name)
+    if (typeof input?.image === 'string') await store.setUserAvatar(input.image)
   })
-  ipcMain.handle('douchat:open-subscription-plans', () => auth.openSubscriptionPlans())
-  ipcMain.handle('douchat:open-billing-portal', () => auth.openBillingPortal())
-  ipcMain.handle('douchat:get-update-state', () => updater.state())
-  ipcMain.handle('douchat:check-for-updates', () => updater.checkForUpdates())
-  ipcMain.handle('douchat:install-update', () => updater.installUpdate())
+  ipcMain.handle('douchat:complete-onboarding', async (event) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    await store.setSetting('onboarding', { completed: true, at: Date.now() })
+  })
+  ipcMain.handle('douchat:resolve-attention', async (event, id: string) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
+    await store.resolveAttention(id)
+  })
+  ipcMain.handle('douchat:get-update-state', async () => updater.state())
+  ipcMain.handle('douchat:check-for-updates', async () => updater.checkForUpdates())
+  ipcMain.handle('douchat:install-update', async () => updater.installUpdate())
   ipcMain.handle('douchat:maintain-local-agent', async (event, id: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Invalid local agent request')
     const agent = (await detectLocalAgents({ version: async () => undefined }, id))[0]
@@ -731,13 +525,13 @@ app.whenReady().then(() => {
     await openMaintenanceTerminal(plan.command)
     return true
   })
-  ipcMain.handle('douchat:list-local-agent-models', (_event, agentId: string) => {
-    const agent = store.accountAgents.find(item => item.id === agentId)
+  ipcMain.handle('douchat:list-local-agent-models', async (_event, agentId: string) => {
+    const agent = await store.agent(agentId)
     if (!agent?.localAgentId) throw new Error('Local agent not found')
     return listLocalAgentModels(agent.localAgentId)
   })
   ipcMain.handle('douchat:detect-local-agents', async () => { resetShellPath(); return checkLocalAgentUpdates(await detectLocalAgents()) })
-  ipcMain.handle('douchat:open-local-agent-terminal', (event, id: unknown) => {
+  ipcMain.handle('douchat:open-local-agent-terminal', async (event, id: unknown) => {
     if (!isDouchatRenderer(event.sender) || id !== 'claude') throw new Error('Invalid local agent terminal request')
     return openLocalAgentTerminal(id, {
       termanyAutomationAllowed: process.platform !== 'darwin' || systemPreferences.isTrustedAccessibilityClient(false)
@@ -768,27 +562,27 @@ app.whenReady().then(() => {
     try { return await testLocalAgent(id, input, abort.signal) }
     finally { event.sender.removeListener('destroyed', cancel); localAgentTests.delete(senderId) }
   })
-  ipcMain.handle('douchat:cancel-local-agent-test', (event) => {
+  ipcMain.handle('douchat:cancel-local-agent-test', async (event) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Invalid local agent request')
     localAgentTests.get(event.sender.id)?.abort(new Error('Connection test cancelled.'))
   })
   ipcMain.handle('douchat:remove-custom-local-agent', async (event, id: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Invalid custom local agent request')
-    if (store.agents.some((agent) => agent.localAgentId === id)) {
+    if ((await store.agents()).some((agent) => agent.localAgentId === id)) {
       throw new Error('Remove contacts using this local agent before deleting it.')
     }
     await removeCustomLocalAgent(id)
     return checkLocalAgentUpdates(await detectLocalAgents())
   })
-  ipcMain.handle('douchat:search-messages', (event, id: string, query: string) => {
+  ipcMain.handle('douchat:search-messages', async (event, id: string, query: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unknown window')
-    return new LocalAccountData(store).searchMessages(id, query)
+    return new LocalDesktopData(store).searchMessages(id, query)
   })
-  ipcMain.handle('douchat:message-page', (event, conversationId: string, topicId: string, before?: string) => {
+  ipcMain.handle('douchat:message-page', async (event, conversationId: string, topicId: string, before?: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unknown window')
-    return new LocalAccountData(store).getMessagePage(conversationId, topicId, before)
+    return new LocalDesktopData(store).getMessagePage(conversationId, topicId, before)
   })
-  ipcMain.handle('douchat:copy-text', (event, text: string) => {
+  ipcMain.handle('douchat:copy-text', async (event, text: string) => {
     if (!isDouchatRenderer(event.sender) || typeof text !== 'string') throw new Error('Invalid clipboard request')
     clipboard.writeText(text)
   })
@@ -798,41 +592,36 @@ app.whenReady().then(() => {
     if (image.isEmpty()) throw new Error('Image could not be copied')
     clipboard.writeImage(image)
   })
-  ipcMain.handle('douchat:attachment-data', (_event, attachmentId: string) => store.attachmentDataUrl(attachmentId))
+  ipcMain.handle('douchat:attachment-data', async (_event, attachmentId: string) => store.attachmentDataUrl(attachmentId))
   ipcMain.handle('douchat:open-local-file', async (event, path: string, conversationId?: string) => {
     if (!isDouchatRenderer(event.sender) || typeof path !== 'string' || (conversationId !== undefined && typeof conversationId !== 'string')) throw new Error('Invalid file request')
     const document = await store.ownedDocumentPath(path)
     if (document) {
       const error = await shell.openPath(document)
       if (error) throw new Error(error)
-    } else await computer.openLocalFile(path, () => {
-      const conversation = store.accountConversations.find(item => item.id === conversationId)
-      if (!conversation || !canAssignConversationWorkspace(conversation, store.accountAgents, store.currentAccountId)) return []
+    } else await computer.openLocalFile(path, async () => {
+      const conversation = conversationId ? await store.conversation(conversationId) : undefined
+      if (!conversation || !canAssignConversationWorkspace(conversation)) return []
       const roots = [...(conversation.allowedFolders ?? []), ...(conversation.workspacePath ? [conversation.workspacePath] : [])]
       if (!conversation.workspacePath) {
-        const topic = store.activeTopicId(conversation.id)
+        const topic = await store.activeTopicId(conversation.id)
         for (const id of conversation.agentIds) {
-          const agent = store.accountAgents.find(item => item.id === id)!
+          const agent = (await store.agent(id))!
           const key = conversation.type === 'direct' ? `direct:${conversation.id}:${topic}` : groupMemberSessionId(conversation.id, id, topic)
-          const workspace = openableWorkspace(agent, key, conversation.type === 'group')
+          const workspace = await openableWorkspace(agent, key, conversation.type === 'group')
           if (workspace) roots.push(workspace.directory)
         }
       }
       return roots.flatMap(root => { try { return [resolveSavedWorkspace(root)] } catch { return [] } })
     })
   })
-  ipcMain.handle('douchat:get-snapshot', () => runtime.snapshot())
-  const push = (): AppSnapshot => {
-    const snapshot = runtime.snapshot()
-    broadcast(snapshot)
-    return snapshot
-  }
+  // What a renderer needs to start: the current durable state, plus the sequence of the last change it already contains.
+  ipcMain.handle('douchat:get-snapshot', () => projection.snapshot())
 
   const tokenDanceFlows = new Map<number, AbortController>()
   ipcMain.handle('douchat:authorize-tokendance', async (event) => {
-    if (!isDouchatRenderer(event.sender) || !store.currentAccountId) throw new Error('Unauthorized')
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     const owner = event.sender.id
-    const account = store.currentAccountId
     tokenDanceFlows.get(owner)?.abort()
     const controller = new AbortController()
     tokenDanceFlows.set(owner, controller)
@@ -840,83 +629,74 @@ app.whenReady().then(() => {
     event.sender.once('destroyed', cancel)
     try {
       const key = await authorizeTokenDance(url => shell.openExternal(url), controller.signal)
-      if (store.currentAccountId !== account) throw new Error('Account changed. Please authorize again.')
       return key
     } finally {
       event.sender.removeListener('destroyed', cancel)
       if (tokenDanceFlows.get(owner) === controller) tokenDanceFlows.delete(owner)
     }
   })
-  ipcMain.handle('douchat:cancel-tokendance', (event) => {
+  ipcMain.handle('douchat:cancel-tokendance', async (event) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     tokenDanceFlows.get(event.sender.id)?.abort()
   })
-  ipcMain.handle('douchat:custom-models', (event) => {
+  ipcMain.handle('douchat:custom-models', async (event) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
-    return customModels.list(store.currentAccountId)
+    return desktop.providers.list()
   })
-  ipcMain.handle('douchat:decision-settings', (event) => {
+  ipcMain.handle('douchat:decision-settings', async (event) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     return store.decisionSettings()
   })
-  ipcMain.handle('douchat:cloud-decision-models', (event) => {
-    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
-    return runtime.getCloudDecisionModels()
-  })
-  ipcMain.handle('douchat:save-decision-settings', (event, settings) => {
+  ipcMain.handle('douchat:save-decision-settings', async (event, settings) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     return runtime.saveDecisionSettings(settings)
   })
-  ipcMain.handle('douchat:test-decision-settings', (event, settings) => {
+  ipcMain.handle('douchat:test-decision-settings', async (event, settings) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     return runtime.testDecisionSettings(settings)
   })
-  ipcMain.handle('douchat:save-custom-models', (event, providers: CustomProviderInput[], defaultModel: string) => {
+  ipcMain.handle('douchat:save-custom-models', async (event, providers: CustomProviderInput[], defaultModel: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
-    const result = customModels.save(store.currentAccountId, providers, defaultModel)
-    reloadCustomModels()
-    push()
+    const result = await desktop.providers.save(providers, defaultModel)
+    await reloadCustomModels()
     return result
   })
-  ipcMain.handle('douchat:test-custom-model', (event, input: CustomModelTest) => {
+  ipcMain.handle('douchat:test-custom-model', async (event, input: CustomModelTest) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
-    return customModels.test(store.currentAccountId, input)
+    return desktop.providers.test(input)
   })
   ipcMain.handle('douchat:create-agent', async (event, input: CreateAgentInput) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
-    if ((input.customModel || input.cloudModel) && input.localAgentId) throw new Error("Select one execution mode.")
-    if (input.customModel && input.cloudModel) throw new Error("Select one model source.")
+    if (input.customModel && input.localAgentId) throw new Error("Select one execution mode.")
     const localAgent = input.localAgentId ? await validateLocalAgent(input.localAgentId) : undefined
-    // The main process owns runtime bindings. In particular, a renderer cannot
-    // choose a model for a Cloud Agent by smuggling provider/model over IPC.
+    // The main process owns runtime bindings: a renderer cannot choose a
+    // provider or model by smuggling one over IPC.
     const binding = input.localAgentId
       ? { provider: 'local', model: 'default' }
-      : input.customModel ? runtime.customAgentModel(input.customModel.providerId, input.customModel.model) : input.cloudModel ? runtime.cloudAgentModel(input.cloudModel.model) : runtime.defaultCloudAgentModel()
-    const { customModel: _selection, cloudModel: _cloudSelection, thinkingLevel: requestedThinking, ...agentInput } = input
-    const agent = store.createAgent({
+      : input.customModel ? runtime.customAgentModel(input.customModel.providerId, input.customModel.model) : runtime.unconfiguredAgentModel()
+    const { customModel: _selection, thinkingLevel: requestedThinking, ...agentInput } = input
+    const agent = await store.createAgent({
       ...agentInput,
-      // Douchat cloud models do not take a per-agent thinking level.
       thinkingLevel: binding.provider === 'local' || binding.provider.startsWith(CUSTOM_PROVIDER_PREFIX) ? thinkingLevel(requestedThinking) : undefined,
       avatar: agentInput.avatar || (agentInput.avatarEmoji ? undefined : localAgent?.avatar),
       localAgentName: localAgent?.custom ? localAgent.name : undefined,
       ...binding,
       followDefaultModel: input.customModel?.providerId === '@default'
     })
-    const direct = store.accountConversations.find(
+    const direct = (await store.conversations()).find(
       (conversation) => conversation.type === 'direct' && conversation.agentIds[0] === agent.id
     )
     // A new bot opens with its own proactive greeting, like a new topic does.
-    if (direct) void runtime.greet(direct.id)
-    return push()
+    if (direct) runtime.greetLater(direct.id)
+    return { agentId: agent.id, ...(direct ? { conversationId: direct.id } : {}) }
   })
-  ipcMain.handle('douchat:resolve-agent-permission', (_event, id: string, allow: import('../shared/agentPermissions').PermissionApproval) => {
+  ipcMain.handle('douchat:resolve-agent-permission', async (_event, id: string, allow: import('../shared/agentPermissions').PermissionApproval) => {
     runtime.resolveAgentPermission(id, allow)
-    return push()
+    ephemeralChanged()
   })
   ipcMain.handle('douchat:export-agent-archive', async (event, agentId: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
-    const agent = store.accountAgents.find(agent => agent.id === agentId)
-    if (!agent) throw new Error('Agent not found')
+    const agent = await requireAgent(agentId)
     const data = exportAgentArchive(agent)
     const filename = agent.name.replace(/[\\/:*?"<>|\x00-\x1f]/g, '-').replace(/[. ]+$/, '') || 'agent'
     const options = { defaultPath: join(app.getPath('downloads'), `${filename}.zip`), filters: [{ name: 'ZIP', extensions: ['zip'] }] }
@@ -927,7 +707,7 @@ app.whenReady().then(() => {
     shell.showItemInFolder(result.filePath)
     return true
   })
-  ipcMain.handle('douchat:parse-agent-archive', (event, data: Uint8Array, root?: string) => {
+  ipcMain.handle('douchat:parse-agent-archive', async (event, data: Uint8Array, root?: string) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     return parseAgentArchive(data, root)
   })
@@ -936,16 +716,13 @@ app.whenReady().then(() => {
     return parseSkillArchive(data)
   })
   ipcMain.handle('douchat:update-agent', async (_event, agentId: string, input: UpdateAgentInput) => {
-    if (!store.accountAgents.some((agent) => agent.id === agentId)) throw new Error('Agent not found')
-    const existing = store.accountAgents.find(agent => agent.id === agentId)!
-    const { customModel, cloudModel, ...update } = input
-    if (customModel && cloudModel) throw new Error("Select one model source.")
+    const existing = await requireAgent(agentId)
+    const { customModel, ...update } = input
     // Whitelist before storing; 'default' clears the override.
     if ('thinkingLevel' in update) (update as UpdateAgentInput).thinkingLevel = thinkingLevel(update.thinkingLevel) ?? 'default'
-    if ((customModel || cloudModel) && (existing.localAgentId || input.localAgentId)) throw new Error("Select one execution mode.")
-    const selectedBinding = customModel ? runtime.customAgentModel(customModel.providerId, customModel.model) : cloudModel ? runtime.cloudAgentModel(cloudModel.model) : undefined
+    if (customModel && (existing.localAgentId || input.localAgentId)) throw new Error("Select one execution mode.")
+    const selectedBinding = customModel ? runtime.customAgentModel(customModel.providerId, customModel.model) : undefined
     input = { ...update, ...selectedBinding, followDefaultModel: customModel?.providerId === '@default' ? true : selectedBinding || input.localAgentId ? false : existing.followDefaultModel }
-    // Douchat cloud models do not take a per-agent thinking level; clear any stale override.
     const finalProvider = input.localAgentId || existing.localAgentId ? 'local' : input.provider ?? existing.provider
     if (finalProvider !== 'local' && !finalProvider.startsWith(CUSTOM_PROVIDER_PREFIX) && (existing.thinkingLevel || 'thinkingLevel' in input)) input.thinkingLevel = 'default'
     if (input.model !== undefined && (input.localAgentId || existing.localAgentId)) {
@@ -955,63 +732,51 @@ app.whenReady().then(() => {
     }
     const localAgent = input.localAgentId ? await validateLocalAgent(input.localAgentId) : undefined
     const { localAgentName: _ignoredLocalAgentName, ...safeInput } = input
-    store.updateAgent(agentId, {
+    await store.updateAgent(agentId, {
       ...safeInput,
       ...(input.localAgentId !== undefined ? { localAgentName: localAgent?.custom ? localAgent.name : undefined } : {})
-    }, selectedBinding ? { binding: selectedBinding, followDefault: cloudModel?.model === 'douchat-default' } : undefined)
+    })
     // Identity and model edits take effect on the next turn, not mid-session.
     runtime.disposeAgent(agentId)
-    return push()
   })
-  ipcMain.handle('douchat:delete-agent', (_event, agentId: string) => {
-    const agent = store.accountAgents.find((item) => item.id === agentId)
-    if (!agent) throw new Error('Agent not found')
-    if (agent.systemRole === 'admin') {
-      throw new Error('The system administrator cannot be deleted')
-    }
+  ipcMain.handle('douchat:delete-agent', async (_event, agentId: string) => {
+    await requireAgent(agentId)
     runtime.disposeAgent(agentId)
-    for (const provider of ['wechat', 'feishu', 'telegram'] as const) imChannels?.disconnect(agentId, provider)
-    store.deleteAgent(agentId)
-    return push()
+    for (const provider of ['wechat', 'feishu', 'telegram'] as const) await imChannels?.disconnect(agentId, provider)
+    await store.deleteAgent(agentId)
   })
-  ipcMain.handle('douchat:start-direct-chat', (_event, agentId: string) => {
-    if (typeof agentId !== 'string' || !store.accountAgents.some((agent) => agent.id === agentId)) {
+  ipcMain.handle('douchat:start-direct-chat', async (_event, agentId: string) => {
+    if (typeof agentId !== 'string' || !(await store.agent(agentId))) {
       throw new Error('Contact not found')
     }
-    const { conversation, created } = store.ensureDirectConversation(agentId)
-    store.markConversationRead(conversation.id)
-    if (created) void runtime.greet(conversation.id)
-    return { snapshot: push(), conversationId: conversation.id }
+    const { conversation, created } = await store.ensureDirectConversation(agentId)
+    await store.markConversationRead(conversation.id)
+    if (created) runtime.greetLater(conversation.id)
+    return { conversationId: conversation.id }
   })
-  ipcMain.handle('douchat:create-group', (_event, input: CreateGroupInput) => {
+  ipcMain.handle('douchat:create-group', async (_event, input: CreateGroupInput) => {
     if (!input.agentIds?.length) throw new Error('A group needs at least one bot')
-    const group = store.createGroup(input)
-    void runtime.greet(group.id)
-    return push()
+    const group = await store.createGroup(input)
+    runtime.greetLater(group.id)
+    return { conversationId: group.id }
   })
   ipcMain.handle('douchat:update-conversation', async (_event, conversationId: string, input: UpdateConversationInput) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    const target = store.accountConversations.find((conversation) => conversation.id === conversationId)!
-    if (target.type === 'group' && target.remoteRoomId && input.name !== undefined && input.name.trim() !== target.name) {
-      await social!.action({ action: 'rename-room', roomId: target.remoteRoomId, name: input.name.trim() })
-    }
-    store.updateConversation(conversationId, input)
-    if (input.agentIds || input.leadAgentId) runtime.resetConversation(conversationId)
-    return push()
+    await requireConversation(conversationId)
+    await store.updateConversation(conversationId, input)
+    if (input.agentIds || input.leadAgentId) await runtime.resetConversation(conversationId)
   })
   ipcMain.handle('douchat:open-conversation-workspace', async (event, conversationId: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof conversationId !== 'string') throw new Error('Invalid workspace request')
-    const conversation = store.accountConversations.find(item => item.id === conversationId)
-    if (!conversation) throw new Error('Chat not found')
+    const conversation = await requireConversation(conversationId)
     let directory: string | undefined
     if (conversation.workspacePath) directory = resolveSavedWorkspace(conversation.workspacePath)
     else {
-      if (!canAssignConversationWorkspace(conversation, store.accountAgents, store.currentAccountId)) throw new Error('Workspace unavailable')
-      const topicId = store.activeTopicId(conversationId)
-      const members = conversation.agentIds.map(id => store.accountAgents.find(agent => agent.id === id)!).filter(Boolean)
+      if (!canAssignConversationWorkspace(conversation)) throw new Error('Workspace unavailable')
+      const topicId = await store.activeTopicId(conversationId)
+      const members = (await Promise.all(conversation.agentIds.map(id => store.agent(id)))).filter((agent): agent is NonNullable<typeof agent> => Boolean(agent))
       const key = (id: string) => conversation.type === 'direct' ? `direct:${conversationId}:${topicId}` : groupMemberSessionId(conversationId, id, topicId)
-      const existing = members.flatMap(agent => { const result = openableWorkspace(agent, key(agent.id), conversation.type === 'group'); return result ? [result] : [] }).sort((a, b) => b.modified - a.modified)
-      directory = existing[0]?.directory ?? localWorkspace(members[0], key(members[0].id))?.directory
+      const existing = (await Promise.all(members.map(agent => openableWorkspace(agent, key(agent.id), conversation.type === 'group')))).flatMap(result => result ? [result] : []).sort((a, b) => b.modified - a.modified)
+      directory = existing[0]?.directory ?? (await localWorkspace(members[0], key(members[0].id)))?.directory
     }
     if (!directory) throw new Error('Workspace unavailable')
     const error = await shell.openPath(directory)
@@ -1019,135 +784,110 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('douchat:choose-conversation-workspace', async (event, conversationId: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof conversationId !== 'string') throw new Error('Invalid workspace request')
-    const target = store.accountConversations.find((conversation) => conversation.id === conversationId)
-    if (!target) throw new Error('Chat not found')
-    if (!canAssignConversationWorkspace(target, store.accountAgents, store.currentAccountId)) throw new Error('Only chats whose members are all your own agents can use a custom workspace.')
+    const target = await requireConversation(conversationId)
+    if (!canAssignConversationWorkspace(target)) throw new Error('Only chats whose members are all your own agents can use a custom workspace.')
     const options: Electron.OpenDialogOptions = { title: ui('Choose a workspace folder', '选择工作区文件夹'), buttonLabel: ui('Use this folder', '使用此文件夹'), properties: ['openDirectory', 'createDirectory'], ...(target.workspacePath ? { defaultPath: target.workspacePath } : {}) }
     if (process.platform === 'darwin') app.focus({ steal: true })
     BrowserWindow.fromWebContents(event.sender)?.focus()
     const result = await dialog.showOpenDialog(options)
-    if (result.canceled || !result.filePaths[0]) return runtime.snapshot()
+    if (result.canceled || !result.filePaths[0]) return
     const folder = validateWorkspaceFolder(result.filePaths[0])
-    const current = store.accountConversations.find((conversation) => conversation.id === conversationId)
-    if (!current || !canAssignConversationWorkspace(current, store.accountAgents, store.currentAccountId)) throw new Error('Chat members changed. Try again.')
+    const current = await store.conversation(conversationId)
+    if (!current || !canAssignConversationWorkspace(current)) throw new Error('Chat members changed. Try again.')
     if (current.workspacePath !== folder) {
-      store.setConversationWorkspace(conversationId, folder)
-      runtime.workspaceChanged(conversationId)
+      await store.setConversationWorkspace(conversationId, folder)
+      await runtime.workspaceChanged(conversationId)
     }
-    return push()
   })
-  ipcMain.handle('douchat:clear-conversation-workspace', (event, conversationId: unknown) => {
+  ipcMain.handle('douchat:clear-conversation-workspace', async (event, conversationId: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof conversationId !== 'string') throw new Error('Invalid workspace request')
-    const target = store.accountConversations.find((conversation) => conversation.id === conversationId)
-    if (!target) throw new Error('Chat not found')
+    const target = await requireConversation(conversationId)
     if (target.workspacePath) {
-      store.setConversationWorkspace(conversationId, undefined)
-      runtime.workspaceChanged(conversationId)
+      await store.setConversationWorkspace(conversationId, undefined)
+      await runtime.workspaceChanged(conversationId)
     }
-    return push()
   })
-  ipcMain.handle('douchat:open-conversation-window', (_event, conversationId: string) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    openChatWindow(conversationId)
+  ipcMain.handle('douchat:open-conversation-window', async (_event, conversationId: string) => {
+    await requireConversation(conversationId)
+    await openChatWindow(conversationId)
   })
-  ipcMain.handle('douchat:open-code-artifact', (event, input: CodeArtifactInput) => {
+  ipcMain.handle('douchat:open-code-artifact', async (event, input: CodeArtifactInput) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Invalid preview request')
     openCodeArtifactWindow(input)
   })
-  ipcMain.handle('douchat:get-code-artifact', (event, artifactId: string) => {
+  ipcMain.handle('douchat:get-code-artifact', async (event, artifactId: string) => {
     if (typeof artifactId !== 'string') return null
     const window = codeArtifactWindows.get(artifactId)
     if (!window || window.isDestroyed() || window.webContents !== event.sender) return null
     return codeArtifacts.get(artifactId) ?? null
   })
-  ipcMain.handle('douchat:connany', (event, command) => {
-    if (!isDouchatRenderer(event.sender)) throw new Error('Invalid connector request')
-    return connany.command(command)
-  })
-  ipcMain.handle('douchat:connany-select', (event, selection) => {
-    if (!isDouchatRenderer(event.sender)) throw new Error('Invalid connector request')
-    return connany.select(selection)
-  })
-  ipcMain.handle('douchat:test-email-connector', (event, input: EmailConnectorInput) => {
+  ipcMain.handle('douchat:test-email-connector', async (event, input: EmailConnectorInput) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Invalid connector request')
     return emailConnectors.test(input)
   })
   ipcMain.handle('douchat:save-email-connector', async (event, input: EmailConnectorInput) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Invalid connector request')
     await emailConnectors.save(input)
-    for (const agent of store.accountAgents) runtime.disposeAgent(agent.id)
-    return push()
+    for (const agent of await store.agents()) runtime.disposeAgent(agent.id)
   })
   ipcMain.handle('douchat:disconnect-email-connector', async (event, connectorId: string) => {
     if (!isDouchatRenderer(event.sender) || typeof connectorId !== 'string') throw new Error('Invalid connector request')
     await emailConnectors.disconnect(connectorId)
-    for (const agent of store.accountAgents) runtime.disposeAgent(agent.id)
-    return push()
+    for (const agent of await store.agents()) runtime.disposeAgent(agent.id)
   })
   ipcMain.handle('douchat:delete-message', async (event, conversationId: string, messageId: string) => {
     if (!isDouchatRenderer(event.sender) || typeof conversationId !== 'string' || typeof messageId !== 'string') throw new Error('Invalid message request')
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
+    await requireConversation(conversationId)
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options = { type: 'warning' as const, message: ui('Delete this message?', '删除这条消息？'), detail: ui('The message will be removed from your local chat history and cannot be recovered. This does not unsend it for others.', '消息将从本地聊天记录中删除，无法恢复。此操作不会撤回对方的消息。'), buttons: [ui('Cancel', '取消'), ui('Delete', '删除')], defaultId: 0, cancelId: 0 }
     const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
     if (result.response !== 1) return false
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    store.deleteMessage(conversationId, messageId)
-    push()
+    await requireConversation(conversationId)
+    await store.deleteMessage(conversationId, messageId)
     return true
   })
   ipcMain.handle('douchat:delete-conversation', async (event, conversationId: string) => {
-    const target = store.accountConversations.find((conversation) => conversation.id === conversationId)
-    if (!target) return runtime.snapshot()
+    const target = await store.conversation(conversationId)
+    if (!target) return
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options = { type: 'warning' as const, message: ui(`Delete the chat with “${target.name}”?`, `删除与“${target.name}”的聊天？`), detail: ui('The chat history will be deleted. This cannot be undone.', '聊天记录会被删除，此操作无法撤销。'), buttons: [ui('Cancel', '取消'), ui('Delete', '删除')], defaultId: 0, cancelId: 0 }
     const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
-    if (result.response !== 1) return runtime.snapshot()
+    if (result.response !== 1) return
     chatWindows.get(conversationId)?.close()
-    runtime.stopConversation(conversationId)
-    runtime.resetConversation(conversationId)
-    store.deleteConversation(conversationId)
-    return push()
+    await runtime.stopConversation(conversationId)
+    await runtime.resetConversation(conversationId)
+    await store.deleteConversation(conversationId)
   })
-  ipcMain.handle('douchat:set-conversation-pinned', (_event, conversationId: string, pinned: boolean) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    store.setConversationPinned(conversationId, Boolean(pinned))
-    return push()
+  ipcMain.handle('douchat:set-conversation-pinned', async (_event, conversationId: string, pinned: boolean) => {
+    await requireConversation(conversationId)
+    await store.setConversationPinned(conversationId, Boolean(pinned))
   })
-  ipcMain.handle('douchat:mark-read', (_event, conversationId: string) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    const conversation = store.conversation(conversationId)
-    if (conversation?.type === 'direct') {
-      void runtime.greet(conversationId)
-    }
-    store.markConversationRead(conversationId)
-    return push()
+  ipcMain.handle('douchat:mark-read', async (_event, conversationId: string) => {
+    await requireConversation(conversationId)
+    const conversation = await store.conversation(conversationId)
+    if (conversation?.type === 'direct') runtime.greetLater(conversationId)
+    await store.markConversationRead(conversationId)
   })
-  ipcMain.handle('douchat:mark-all-read', () => {
-    store.markAllConversationsRead()
-    return push()
+  ipcMain.handle('douchat:mark-all-read', async () => {
+    await store.markAllConversationsRead()
   })
-  ipcMain.handle('douchat:create-topic', (_event, conversationId: string) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    const topic = store.createTopic(conversationId)
-    if (topic) void runtime.greet(conversationId)
-    return push()
+  ipcMain.handle('douchat:create-topic', async (_event, conversationId: string) => {
+    await requireConversation(conversationId)
+    const topic = await store.createTopic(conversationId)
+    if (topic) runtime.greetLater(conversationId)
   })
-  ipcMain.handle('douchat:rename-topic', (_event, conversationId: string, topicId: string, title: string) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    store.renameTopic(conversationId, topicId, title)
-    return push()
+  ipcMain.handle('douchat:rename-topic', async (_event, conversationId: string, topicId: string, title: string) => {
+    await requireConversation(conversationId)
+    await store.renameTopic(conversationId, topicId, title)
   })
-  ipcMain.handle('douchat:delete-topic', (_event, conversationId: string, topicId: string) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    runtime.resetConversation(conversationId, topicId)
-    store.deleteTopic(conversationId, topicId)
-    return push()
+  ipcMain.handle('douchat:delete-topic', async (_event, conversationId: string, topicId: string) => {
+    await requireConversation(conversationId)
+    await runtime.resetConversation(conversationId, topicId)
+    await store.deleteTopic(conversationId, topicId)
   })
-  ipcMain.handle('douchat:set-active-topic', (_event, conversationId: string, topicId: string) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    store.setActiveTopic(conversationId, topicId)
-    return push()
+  ipcMain.handle('douchat:set-active-topic', async (_event, conversationId: string, topicId: string) => {
+    await requireConversation(conversationId)
+    await store.setActiveTopic(conversationId, topicId)
   })
   ipcMain.handle('douchat:send-message', async (
     _event,
@@ -1157,110 +897,113 @@ app.whenReady().then(() => {
     files?: MessageFileInput[],
     mentions?: SelectedMention[]
   ) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
+    await requireConversation(conversationId)
     await runtime.sendMessage(conversationId, text, images, files, mentions)
   })
-  ipcMain.handle('douchat:stop-conversation', (_event, conversationId: string) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    runtime.stopConversation(conversationId)
+  ipcMain.handle('douchat:stop-conversation', async (_event, conversationId: string) => {
+    await requireConversation(conversationId)
+    await runtime.stopConversation(conversationId)
   })
-  ipcMain.handle('douchat:set-endpoint', async (_event, input: EndpointInput) => {
-    await runtime.setEndpoint(input)
-    return push()
-  })
-  ipcMain.handle('douchat:test-endpoint', (_event, input: EndpointInput) => runtime.testEndpoint(input))
-  ipcMain.handle('douchat:clear-conversation', (_event, conversationId: string) => {
-    if (!store.accountConversations.some((conversation) => conversation.id === conversationId)) throw new Error('Chat not found')
-    const topicId = store.activeTopicId(conversationId)
-    store.clearConversation(conversationId, topicId)
-    runtime.resetConversation(conversationId, topicId)
-    return push()
+  ipcMain.handle('douchat:clear-conversation', async (_event, conversationId: string) => {
+    await requireConversation(conversationId)
+    const topicId = await store.activeTopicId(conversationId)
+    await store.clearConversation(conversationId, topicId)
+    await runtime.resetConversation(conversationId, topicId)
   })
   ipcMain.handle('douchat:reset-conversation-context', async (_event, conversationId: string) => {
-    const conversation = store.accountConversations.find(item => item.id === conversationId)
-    if (!conversation) throw new Error('Chat not found')
-    if (conversation.remoteRoomId) {
-      if (!social) throw new Error('Chat service is unavailable')
-      await social.resetConversationContext(conversationId)
-    }
-    const topicId = store.activeTopicId(conversationId)
-    runtime.resetConversation(conversationId, topicId)
-    store.resetConversationContext(conversationId, topicId)
-    if (conversation.type === 'direct' && !conversation.remoteRoomId) void runtime.greet(conversationId)
-    return push()
+    const conversation = await requireConversation(conversationId)
+    const topicId = await store.activeTopicId(conversationId)
+    await runtime.resetConversation(conversationId, topicId)
+    await store.resetConversationContext(conversationId, topicId)
+    if (conversation.type === 'direct') runtime.greetLater(conversationId)
   })
-  ipcMain.handle('douchat:create-routine', (_event, input: CreateRoutineInput) => {
-    validateRoutineInput(input)
-    scheduler.createRoutine({
+  ipcMain.handle('douchat:create-routine', async (_event, input: CreateRoutineInput) => {
+    await validateRoutineInput(input)
+    await scheduler.createRoutine({
       ...input,
       name: input.name.trim(),
       prompt: input.prompt.trim()
     })
-    return runtime.snapshot()
   })
-  ipcMain.handle('douchat:delete-routine', (_event, routineId: string) => {
-    scheduler.deleteRoutine(routineId)
-    return runtime.snapshot()
+  ipcMain.handle('douchat:delete-routine', async (_event, routineId: string) => {
+    await scheduler.deleteRoutine(routineId)
   })
-  ipcMain.handle('douchat:set-routine-enabled', (_event, routineId: string, enabled: boolean) => {
-    scheduler.setEnabled(routineId, Boolean(enabled))
-    return runtime.snapshot()
+  ipcMain.handle('douchat:set-routine-enabled', async (_event, routineId: string, enabled: boolean) => {
+    await scheduler.setEnabled(routineId, Boolean(enabled))
   })
   ipcMain.handle('douchat:run-routine-now', async (_event, routineId: string) => {
     await scheduler.runNow(routineId)
   })
   ipcMain.handle('douchat:start-computer', async (_event, agentId: string) => {
-    if (!store.accountAgents.some((agent) => agent.id === agentId)) throw new Error('Agent not found')
+    await requireAgent(agentId)
     await computer.start(agentId)
-    const snapshot = runtime.snapshot()
-    broadcast(snapshot)
-    return snapshot
   })
   ipcMain.handle('douchat:stop-computer', async (_event, agentId: string) => {
-    if (!store.accountAgents.some((agent) => agent.id === agentId)) throw new Error('Agent not found')
+    await requireAgent(agentId)
     await computer.stop(agentId)
-    const snapshot = runtime.snapshot()
-    broadcast(snapshot)
-    return snapshot
   })
   ipcMain.handle('douchat:show-computer', async (_event, agentId: string) => {
-    if (!store.accountAgents.some((agent) => agent.id === agentId)) throw new Error('Agent not found')
+    await requireAgent(agentId)
     await computer.show(agentId)
   })
 
-  createWindow()
-  void auth.initialize().then(() => {
-    if (!pendingAuthUrl) return
-    const url = pendingAuthUrl
-    pendingAuthUrl = ''
-    return auth.handleCallback(url)
-  })
-  // Packaged clients quietly check after launch; development never contacts
-  // the release feed, and draft releases are not copied to the public CDN.
-  updater.startAutomaticChecks()
+  // Windows open on the local desktop immediately. Nothing waits on a network,
+  // an account, or a provider: models are configured when the person wants them.
+  await reloadCustomModels()
+  try { await imChannels.activate() } catch { console.warn('[douchat] IM credentials could not be loaded') }
+  // Update checks contact the release feed, so they run only when asked for.
   scheduler.start()
-  powerMonitor.on('resume', () => { scheduler.checkNow(); updater.checkAfterResume() })
+  powerMonitor.on('resume', () => { scheduler.checkNow() })
   app.on('activate', () => focusMainWindow())
+  createWindow()
+  // Group tasks interrupted by the last shutdown continue in the background; their progress arrives through FeltDB.
+  void runtime.recoverGroupWorkflows().catch(error => diagnostics.write('recovery.failed', error instanceof Error ? error.stack || error.message : String(error)))
+}).catch(error => {
+  diagnostics.write('desktop.boot-failed', error instanceof Error ? error.stack || error.message : String(error))
+  dialog.showErrorBox('Douchat', String(error instanceof Error ? error.message : error))
+  quitting = true
+  app.exit(1)
 })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', () => {
-  if (quitting) return
+/**
+ * Shutdown is ordered so that nothing durable is lost: stop accepting work,
+ * cancel what is running and let it settle (each turn writes its final state),
+ * then wait for FeltDB to finish its writes and close it.
+ */
+let shutdown: Promise<void> | undefined
+app.on('before-quit', (event) => {
+  if (shutdown) {
+    // A second quit request arrives once shutdown has finished.
+    if (shutdownComplete) return
+    event.preventDefault()
+    return
+  }
   quitting = true
-  updater?.stopAutomaticChecks()
-  cancelLocalModelQueries()
-  social?.stop()
-  imChannels?.stop()
-  if (localWorkBlocker !== undefined) { powerSaveBlocker.stop(localWorkBlocker); localWorkBlocker = undefined }
-  for (const agent of store?.agents ?? []) runtime?.disposeAgent(agent.id)
-  scheduler?.dispose()
-  computer?.dispose()
+  if (!runtime && !desktop) return
+  event.preventDefault()
+  shutdown = (async () => {
+    updater?.stopAutomaticChecks()
+    cancelLocalModelQueries()
+    runtime?.stopAccepting()
+    imChannels?.stop()
+    runtime?.cancelAll()
+    if (localWorkBlocker !== undefined) { powerSaveBlocker.stop(localWorkBlocker); localWorkBlocker = undefined }
+    computer?.dispose()
+    try {
+      await scheduler?.dispose()
+      await runtime?.games.settled()
+      await runtime?.idle()
+      await projection?.stop()
+    } catch (error) {
+      diagnostics.write('shutdown.failed', error instanceof Error ? error.stack || error.message : String(error))
+    }
+    // FeltDB writes are awaited, then its journal is folded into a snapshot and its lock released.
+    try { await stopDesktop(desktop) }
+    catch (error) { diagnostics.write('shutdown.close-failed', error instanceof Error ? error.stack || error.message : String(error)) }
+  })().finally(() => { shutdownComplete = true; app.quit() })
 })
-
-app.on('will-quit', () => {
-  // Closing checkpoints the WAL, so the next launch opens a single tidy file.
-  store?.close()
-})
+let shutdownComplete = false

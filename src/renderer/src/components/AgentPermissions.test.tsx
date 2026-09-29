@@ -79,32 +79,12 @@ vi.mock('./NativeDialog', async () => {
   return { NativeDialog: ({ children, onClose, width, height, ...props }: any) => createElement('div', props, children) }
 })
 
-it('shows a human requester’s profile photo and nickname instead of their UUID', async () => {
-  const request = { id: 'r', ownerId: 'owner', agentId: 'a', agentName: 'Agent', requester: 'Old name', requesterId: 'person-uuid', requesterKind: 'person' as const, roomName: 'Game', capability: 'filesRead' as const, operation: 'Read', details: '', createdAt: 0 }
-  await act(async () => root.render(<AgentPermissionPrompt request={request} social={{ userId: 'owner', friendships: [], rooms: [{ id: 'room', name: 'Game', kind: 'group', createdAt: '', agents: [], members: [{ id: 'person-uuid', name: 'Deniffer Yoho', email: '', image: 'https://example.com/avatar.png' }] }] }} onResolve={vi.fn()} />))
-  expect(node.querySelector('.permission-requester')?.textContent).toContain('Deniffer Yoho')
-  expect(node.querySelector('.permission-requester img')?.getAttribute('src')).toBe('https://example.com/avatar.png')
-  expect(node.textContent).not.toContain('person-uuid')
-  expect(node.textContent).not.toContain('Old name')
-})
-
 it('falls back to the request name and default avatar when no member profile is available', async () => {
   await act(async () => root.render(<AgentPermissionPrompt request={{ id: 'r', ownerId: 'owner', agentId: 'a', agentName: 'Agent', requester: 'Friend', requesterId: 'person-uuid', requesterKind: 'person', roomName: 'Game', capability: 'filesRead', operation: 'Read', details: '', createdAt: 0 }} onResolve={vi.fn()} />))
   expect(node.querySelector('.permission-requester')?.textContent).toContain('Friend')
   expect(node.querySelector('.permission-requester .user-avatar')).not.toBeNull()
   expect(node.querySelector('.permission-requester img')).toBeNull()
   expect(node.textContent).not.toContain('person-uuid')
-})
-
-it('shows the executing contact’s current avatar and nickname above the action', async () => {
-  const request = { id: 'r', ownerId: 'owner', agentId: 'a', agentName: 'Old name', requester: 'Owner', roomName: 'Chat', context: 'direct' as const, capability: 'filesWrite' as const, operation: 'Write', details: '', createdAt: 0 }
-  const agent = { id: 'a', ownerId: 'owner', name: '小丽', avatar: 'https://example.com/xiaoli.png' } as AgentConfig
-  await act(async () => root.render(<AgentPermissionPrompt request={request} agent={agent} onResolve={vi.fn()} />))
-  expect(node.querySelector('.permission-actor strong')?.textContent).toBe('小丽')
-  expect(node.querySelector('.permission-actor img')?.getAttribute('src')).toBe(agent.avatar)
-  await act(async () => root.render(<AgentPermissionPrompt request={request} agent={{ ...agent, ownerId: 'another-owner' }} onResolve={vi.fn()} />))
-  expect(node.querySelector('.permission-actor strong')?.textContent).toBe('Old name')
-  expect(node.querySelector('.permission-actor img')).toBeNull()
 })
 
 it.each(['get_app_state', 'click', 'type_text', 'scroll'])('offers app-scoped session approval for %s and collapses technical details', async tool => {

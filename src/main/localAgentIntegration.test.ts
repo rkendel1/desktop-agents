@@ -1,3 +1,4 @@
+import { openAtFile } from './testSupport'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -5,15 +6,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerProvider } from './computer'
 import { runLocalAgent } from './localAgentRuntime'
 import { DouchatRuntime } from './runtime'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 vi.mock('./localAgentRuntime', () => ({ runLocalAgent: vi.fn(), disposeLocalAgentSessions: vi.fn(), resetLocalAgentConversation: vi.fn() }))
 const directories: string[] = []
 afterEach(() => { vi.resetAllMocks(); for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }) })
 function setup(localAgentId = 'codex') {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-local-test-'))
   directories.push(directory)
-  const store = new DouchatStore(join(directory, 'state.json'))
-  store.setCurrentAccountId('test-account')
+  const store = openAtFile(join(directory, 'state.json'))
   const computer: ComputerProvider = { snapshots: () => [], start: vi.fn(), stop: vi.fn(), show: vi.fn(), createTools: () => [], dispose: vi.fn() }
   const runtime = new DouchatRuntime(store, computer, () => {})
   const agent = store.createAgent({ name: 'Local researcher', role: 'Researcher', instructions: 'Find evidence', color: '#14B8A6', localAgentId, provider: 'local', model: 'default' })
@@ -110,8 +110,7 @@ describe('local contact routing', () => {
       const path = fileURLToPath(url.replace('douchat-file:', 'file:'))
       expect(await store.ownedDocumentPath(path)).toBe(path)
       expect(await readFile(path, 'utf8')).toBe('<html>Douchat slides</html>')
-      store.setCurrentAccountId('another-owner')
-      await expect(store.ownedDocumentPath(path)).rejects.toThrow('Document not found')
+      await expect(store.ownedDocumentPath(join(path, '..', 'not-generated.html'))).rejects.toThrow('Document not found')
     } finally { runtime.disposeAgent(agent.id); store.close() }
   })
   it('calls the local CLI without endpoint auth and isolates topic history', async () => {

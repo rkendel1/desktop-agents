@@ -2,7 +2,8 @@ import type { GroupWorkflow } from '../shared/groupWorkflow'
 
 /** An interrupted tool-bearing reply is never automatically re-executed. */
 export class GroupWorkflowJournal {
-  constructor(readonly state: GroupWorkflow, private save: (value: GroupWorkflow) => void) {}
+  private heartbeats: Promise<void> = Promise.resolve()
+  constructor(readonly state: GroupWorkflow, private save: (value: GroupWorkflow) => Promise<void>) {}
   progress(key: string): void {
     const call = this.state.calls[key]
     if (call?.status === 'running' && this.state.status === 'running') call.lastProgressAt = Date.now()
@@ -13,22 +14,26 @@ export class GroupWorkflowJournal {
     if (existing?.status === 'running' && kind === 'reply') throw new Error('The previous attempt was interrupted at this step and may have performed external actions. Check the results and send a new explicit instruction. This step will not be repeated automatically.')
     const startedAt = Date.now()
     this.state.calls[key] = { status: 'running', kind, startedAt, heartbeatAt: startedAt }
-    this.save(this.state)
+    await this.save(this.state)
     // This pulse proves the local executor is alive, not that a remote model is
     // making progress. Real adapter events update lastProgressAt separately.
     const heartbeat = kind === 'reply' ? setInterval(() => {
       if (this.state.status !== 'running' || this.state.calls[key]?.status !== 'running') return
       this.state.calls[key].heartbeatAt = Date.now()
-      this.save(this.state)
+      // Heartbeats are stored in order, and the call does not finish before the last one lands.
+      this.heartbeats = this.heartbeats.then(() => this.save(this.state)).catch(() => undefined)
     }, 15_000) : undefined
     try {
       const value = await execute()
       this.state.calls[key] = { ...this.state.calls[key], status: 'done', kind, value, finishedAt: Date.now() }
-      this.save(this.state)
+      clearInterval(heartbeat)
+      await this.heartbeats
+      await this.save(this.state)
       return value
     } finally { clearInterval(heartbeat) }
   }
-  finish(status: GroupWorkflow['status'], error?: string): void {
-    this.state.status = status; this.state.error = error; this.save(this.state)
+  async finish(status: GroupWorkflow['status'], error?: string): Promise<void> {
+    await this.heartbeats
+    this.state.status = status; this.state.error = error; await this.save(this.state)
   }
 }

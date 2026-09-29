@@ -14,7 +14,6 @@ export interface RuntimeErrorSummary {
   /** A tightly scoped recovery action rendered beside diagnostic controls. */
   action?:
     | { kind: 'open-local-agent-terminal'; agentId: 'claude'; label: 'Open Claude Code' }
-    | { kind: 'open-douchat-credits'; label: 'Top up credits' }
     | { kind: 'update-local-agent'; agentId: 'grok'; label: 'Update Grok' }
   /** The untouched original, for the details disclosure. */
   detail: string
@@ -24,11 +23,6 @@ const OPEN_CLAUDE: RuntimeErrorSummary['action'] = {
   kind: 'open-local-agent-terminal',
   agentId: 'claude',
   label: 'Open Claude Code'
-}
-
-const OPEN_DOUCHAT_CREDITS: RuntimeErrorSummary['action'] = {
-  kind: 'open-douchat-credits',
-  label: 'Top up credits'
 }
 
 const RETRY = /^Reconnecting\b/i
@@ -50,15 +44,6 @@ export function summarizeRuntimeError(raw: string): RuntimeErrorSummary {
   const detail = String(raw ?? '').trim()
   const flat = detail.replace(/\s+/g, ' ')
   if (!flat) return { title: 'The conversation could not finish.', detail }
-
-  if (isDouchatCreditError(flat)) {
-    return {
-      title: 'Douchat does not have enough credits',
-      guidance: 'Top up credits to continue.',
-      action: OPEN_DOUCHAT_CREDITS,
-      detail
-    }
-  }
 
   const localAgent = localAgentFailure(flat)
   if (localAgent) return { ...localAgent, detail }
@@ -84,11 +69,6 @@ export function summarizeRuntimeError(raw: string): RuntimeErrorSummary {
 
   const headline = describe(source, status, retries)
   return { title: clip(facts.length ? `${headline} · ${facts.join(' · ')}` : headline), detail }
-}
-
-export function isDouchatCreditError(raw: string | undefined): boolean {
-  if (!raw) return false
-  return /Douchat\s+(?:credit balance|credits?|points?).{0,40}(?:insufficient|not enough|too low|exhausted)|Douchat\s+(?:点数|额度)不足/i.test(raw)
 }
 
 function localAgentFailure(source: string): Omit<RuntimeErrorSummary, 'detail'> | undefined {

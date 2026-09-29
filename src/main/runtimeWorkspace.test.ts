@@ -1,3 +1,4 @@
+import { openAtFile } from './testSupport'
 import { agentPermissions } from '../shared/agentPermissions'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,7 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { groupMemberSessionId } from '../shared/bot/group'
 import { runLocalAgent } from './localAgentRuntime'
 import { DouchatRuntime } from './runtime'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 
 vi.mock('./localAgentRuntime', async (original) => ({ ...await original<object>(), runLocalAgent: vi.fn() }))
 vi.mock('./localWorkspaces', async (original) => {
@@ -21,13 +22,12 @@ function setup() {
   directories.push(directory)
   const project = join(directory, 'project')
   mkdirSync(project)
-  const store = new DouchatStore(join(directory, 'state.json'))
-  store.setCurrentAccountId('me')
+  const store = openAtFile(join(directory, 'state.json'))
   const runtime = new DouchatRuntime(store, { snapshots: () => [], start: vi.fn(), stop: vi.fn(), show: vi.fn(), createTools: () => [], dispose: vi.fn() }, () => undefined)
-  const make = (name: string, localAgentId?: string) => store.createAgent({ name, role: 'Engineer', instructions: '', color: '#14B8A6', provider: localAgentId ? 'local' : 'gateway', model: 'default', ...(localAgentId ? { localAgentId } : {}) })
+  const make = (name: string, localAgentId?: string) => store.createAgent({ name, role: 'Engineer', instructions: '', color: '#14B8A6', provider: localAgentId ? 'local' : 'anthropic', model: 'default', ...(localAgentId ? { localAgentId } : {}) })
   const codex = make('Codex', 'codex'), claude = make('Claude', 'claude'), cloud = make('Cloud')
   store.createGroup({ name: 'Builders', agentIds: [codex.id, claude.id] })
-  const group = store.accountConversations.find(item => item.type === 'group' && item.name === 'Builders')!
+  const group = store.conversations.find(item => item.type === 'group' && item.name === 'Builders')!
   const internal = runtime as any
   const run = (agentId: string, conversationId = group.id, sessionKey = groupMemberSessionId(conversationId, agentId, 'main'), extra: object = {}) =>
     internal.runReply({ config: store.agent(agentId)!, sessionKey, conversationId, topicId: 'main', context: 'group', prompt: 'Edit files', ...extra })
@@ -115,7 +115,7 @@ it('uses the folder for a direct chat with my local agent', async () => {
   expect(vi.mocked(runLocalAgent).mock.calls[0][4]?.workspaceDirectory).toBe(project)
 })
 
-it('lets cloud agents read and write the selected folder while enforcing permissions and shared-room isolation', async () => {
+it('lets cloud agents read and write the selected folder while enforcing permissions', async () => {
   const { store, runtime, project, cloud } = setup()
   const { conversation } = store.ensureDirectConversation(cloud.id)
   store.setConversationWorkspace(conversation.id, project)
@@ -131,12 +131,10 @@ it('lets cloud agents read and write the selected folder while enforcing permiss
   expect(JSON.stringify(await tools.find((tool: any) => tool.name === 'read_workspace_file').execute('read', { path: 'hello.md' }))).toContain('Cloud workspace')
   permissions.sensitive.filesWrite = 'deny'; store.updateAgent(cloud.id, { permissions })
   await expect(write.execute('write', { path: 'denied.md', content: 'no' })).rejects.toThrow('disabled')
-  internal.sharedCallers.set(session, { requesterId: 'another-person' })
-  await expect(tools.find((tool: any) => tool.name === 'read_workspace_file').execute('read', { path: 'hello.md' })).rejects.toThrow('unavailable')
 })
 
 
-it('refreshes file roots from the active conversation and excludes shared tasks', () => {
+it('refreshes file roots from the active conversation', () => {
   const { store, runtime, project, cloud } = setup()
   const { conversation } = store.ensureDirectConversation(cloud.id)
   const extra = join(project, 'assets'); mkdirSync(extra)
@@ -150,15 +148,10 @@ it('refreshes file roots from the active conversation and excludes shared tasks'
   expect(internal.conversationFileRoots('other-agent', session)).toEqual([])
   store.setConversationAllowedFolders(conversation.id, [])
   expect(internal.conversationFileRoots(cloud.id, session)).toEqual([project])
-  internal.sharedCallers.set(session, { requesterId: 'other-person' })
-  expect(internal.conversationFileRoots(cloud.id, session)).toEqual([])
-  internal.sharedCallers.delete(session)
-  store.setCurrentAccountId('another-account')
-  expect(internal.conversationFileRoots(cloud.id, session)).toEqual([])
 })
 
 
-it.each(['allow', 'decline', 'cancel', 'account-change'])('handles on-demand folder approval: %s', async decision => {
+it.each(['allow', 'decline', 'cancel'])('handles on-demand folder approval: %s', async decision => {
   const { store, runtime, project, cloud } = setup()
   const { conversation } = store.ensureDirectConversation(cloud.id)
   const internal = runtime as any, session = `direct:${conversation.id}:main`
@@ -176,7 +169,6 @@ it.each(['allow', 'decline', 'cancel', 'account-change'])('handles on-demand fol
   if (decision === 'cancel') abort.abort()
   else {
     runtime.resolveAgentPermission(request.id, decision !== 'decline')
-    if (decision === 'account-change') store.setCurrentAccountId('another-account')
   }
   expect(await result).toBe(decision === 'allow' ? 'allowed' : 'denied')
   expect(store.conversation(conversation.id)?.allowedFolders ?? []).toEqual(decision === 'allow' ? [project] : [])

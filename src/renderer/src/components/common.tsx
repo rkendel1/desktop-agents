@@ -30,22 +30,15 @@ export function localAgentDisplayName(localAgentId: string): string {
 export function agentSourceLabel(agent: AgentConfig): string {
   return agent.localAgentId
     ? `${t('Local agent')} · ${agent.localAgentName || localAgentDisplayName(agent.localAgentId)}`
-    : agent.provider.startsWith('custom:') ? t('Custom model') : t('Douchat Cloud')
+    : agent.provider.startsWith('custom:') ? t('Custom model') : t('Model API')
 }
 
-export function isDrDou(agent: AgentConfig): boolean {
-  return agent.systemRole === 'admin' || agent.id.startsWith('dr-dou-')
-}
-
-/** Built-in identities are stored under a stable canonical name, while their
- * presentation follows the interface language. A user-supplied rename wins. */
 export function agentDisplayName(agent: AgentConfig): string {
-  return isDrDou(agent) && agent.name === 'Dr. Dou' ? t('Dr. Dou') : agent.name
+  return agent.name
 }
 
 export function agentDisplayRole(agent: AgentConfig): string {
-  if (agent.systemRole === 'admin') return t('System administrator')
-  return isDrDou(agent) && agent.role === '豆博士' ? t('Douchat assistant') : agent.role
+  return agent.role
 }
 
 export function conversationDisplayName(conversation: Conversation, agents: AgentConfig[], compact = false): string {
@@ -57,13 +50,12 @@ export function conversationDisplayName(conversation: Conversation, agents: Agen
     }
     const members = conversationMembers(conversation, agents)
     const names = members.map(member => member.name)
-    const humanNames = conversation.socialRoom?.members.filter(member => member.id !== conversation.ownerId).map(member => member.name) ?? []
     // Older member pickers saved the generated roster as an explicit name.
     // Recognize that presentation without rewriting the stored group name.
     const nameParts = conversation.name.split(/[,、]/u).map(name => name.trim()).filter(Boolean)
     const sameNames = (expected: string[]) => nameParts.length === expected.length && [...nameParts].sort().every((name, index) => name === [...expected].sort()[index])
-    const rosterName = conversation.autoNamed || sameNames(names) || sameNames([...names, ...humanNames])
-    const count = members.length + (conversation.socialRoom?.members.length ?? 1)
+    const rosterName = conversation.autoNamed || sameNames(names)
+    const count = members.length + 1
     if (rosterName && nameParts.length >= 2 && (nameParts.length > 3 || shorten(conversation.name, 32) !== conversation.name)) {
       const [first, second] = nameParts.slice(0, 2).map(name => {
         const member = members.find(member => member.name === name)
@@ -80,14 +72,13 @@ export function conversationDisplayName(conversation: Conversation, agents: Agen
 
 export function AgentAvatar({ agent, size = 36 }: { agent: AgentConfig; size?: number }): ReactElement {
   const logo = agent.localAgentId ? agentIcons[agent.localAgentId] : undefined
-  const builtInPicture = isDrDou(agent) ? agentIcons['dr-dou-human'] : undefined
   const emoji = agent.avatarEmoji
-  const picture = agent.avatar || (!emoji ? logo || builtInPicture : undefined)
+  const picture = agent.avatar || (!emoji ? logo : undefined)
   const generated = !picture && !emoji && Boolean(agent.avatarSeed)
   const displayName = agentDisplayName(agent)
   return (
     <span
-      className={`agent-avatar${logo && !agent.avatar && !emoji ? ' local-agent-avatar' : ''}${builtInPicture && !agent.avatar && !emoji ? ' built-in-agent-avatar' : ''}${agent.avatar ? ' custom-agent-avatar' : ''}${emoji ? ' emoji-agent-avatar' : ''}${generated ? ' generated-agent-avatar' : ''}`}
+      className={`agent-avatar${logo && !agent.avatar && !emoji ? ' local-agent-avatar' : ''}${agent.avatar ? ' custom-agent-avatar' : ''}${emoji ? ' emoji-agent-avatar' : ''}${generated ? ' generated-agent-avatar' : ''}`}
       data-agent={agent.localAgentId}
       style={{ '--agent-color': agent.color, '--avatar-size': `${size}px` } as CSSProperties}
       aria-label={displayName}
@@ -169,7 +160,6 @@ export function ConversationAvatar({
   userAvatar: string
   size?: number
 }): ReactElement {
-  if (conversation.person) return <UserAvatar src={conversation.person.image || ''} name={conversation.person.name} size={size} />
   const members = conversationMembers(conversation, agents)
   if (conversation.type === 'direct') {
     return members[0] ? <AgentAvatar agent={members[0]} size={size} /> : <EmptyAvatar size={size} />
@@ -181,7 +171,7 @@ export function ConversationAvatar({
   }
   // The person is a member of every group too. Reserve the last mosaic tile
   // for them so they stay visible even when a room has many agents.
-  const people = conversation.socialRoom?.members ?? [{ id: 'user', name: userName, image: userAvatar }]
+  const people = [{ id: 'user', name: userName, image: userAvatar }]
   const visibleAgents = members.slice(0, Math.max(0, 9 - Math.min(people.length, 9)))
   const visiblePeople = people.slice(0, 9 - visibleAgents.length)
   const tileCount = visibleAgents.length + visiblePeople.length
@@ -234,14 +224,6 @@ export function isDifferentDay(current: ChatMessage, previous?: ChatMessage): bo
 
 export function conversationMembers(conversation: Conversation | undefined, agents: AgentConfig[]): AgentConfig[] {
   if (!conversation) return []
-  if (conversation.socialRoom) return conversation.socialRoom.agents.map((remote) => {
-    const local = remote.ownerId === conversation.ownerId ? agents.find((agent) => agent.id === remote.localId) : undefined
-    return { role: '', instructions: '', color: '#6b8afd', provider: '', model: '', createdAt: 0,
-      avatar: remote.avatar, avatarEmoji: remote.avatarEmoji, avatarSeed: remote.avatarSeed,
-      localAgentId: remote.localAgentId, systemRole: remote.systemRole,
-      ...(remote.color ? { color: remote.color } : {}),
-      ...local, id: remote.id, ownerId: remote.ownerId, name: remote.name }
-  })
   return conversation.agentIds
     .map((id) => agents.find((agent) => agent.id === id))
     .filter((agent): agent is AgentConfig => Boolean(agent))
@@ -292,11 +274,7 @@ export function SidebarResizer(): ReactElement {
   )
 }
 
-/** Only offer callable agents; execution permissions are checked again when sending. */
-export function mentionableAgents(conversation: Conversation | undefined, members: AgentConfig[]): AgentConfig[] {
-  if (!conversation?.socialRoom) return members
-  const memberIds = new Set(conversation.socialRoom.agents
-    .filter((agent) => agent.ownerId === conversation.ownerId || agent.interactionHumans === 'allow' || agent.interactionHumans === 'ask')
-    .map((agent) => agent.id))
-  return members.filter((agent) => memberIds.has(agent.id))
+/** Every agent in a local conversation can be mentioned. */
+export function mentionableAgents(_conversation: Conversation | undefined, members: AgentConfig[]): AgentConfig[] {
+  return members
 }

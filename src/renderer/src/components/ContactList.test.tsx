@@ -31,19 +31,15 @@ const localAgent: AgentConfig = {
   id: 'codex', name: 'Codex', localAgentId: 'codex', role: 'Assistant', instructions: '', color: '#7C6CF2', provider: 'local', model: 'codex', createdAt: 2
 }
 
-const builtInAgent: AgentConfig = {
-  id: 'system-admin-1', name: 'Dr. Dou', systemRole: 'admin', role: '豆博士', instructions: '', color: '#14B8A6', provider: 'gateway', model: 'default', createdAt: 0
-}
-
 const group: Conversation = {
   id: 'group-team', savedToContacts: true, type: 'group', name: 'Team room', agentIds: ['alpha'], topics: [], activeTopicId: '', unread: 0,
   readAt: 0, createdAt: 1, updatedAt: 1
 }
 
 const snapshot = {
-  agents: [agent, localAgent, builtInAgent],
+  agents: [agent, localAgent],
   conversations: [group],
-  agentStatuses: { alpha: 'idle', codex: 'idle', 'system-admin-1': 'idle' }
+  agentStatuses: { alpha: 'idle', codex: 'idle' }
 } as unknown as AppSnapshot
 
 describe('contact list', () => {
@@ -80,10 +76,8 @@ describe('contact list', () => {
     expect(container.querySelector('[aria-label="Create contact"]')).toBeNull()
     expect(container.querySelector('.contacts-manage')).toBeNull()
     const folders = [...container.querySelectorAll<HTMLButtonElement>('.contact-folder')]
-    expect(folders.map((button) => button.textContent)).toEqual(['Built-in1', 'Group chats1', 'Agents2', 'Friends0'])
-    expect(container.querySelector('.contact-built-in')?.textContent).toContain('Dr. Dou')
+    expect(folders.map((button) => button.textContent)).toEqual(['Group chats1', 'Agents2'])
     expect([...container.querySelectorAll('.contact-row-copy small')].map((item) => item.textContent)).toEqual([
-      'Cloud',
       'Cloud',
       'Local · Codex'
     ])
@@ -95,37 +89,4 @@ describe('contact list', () => {
     expect(container.querySelector('[data-conversation-avatar="group-team"]')).not.toBeNull()
     expect(container.textContent).not.toContain('New group')
   })
-  it('lists searchable friends and opens their conversations from the existing contacts section', async () => {
-    const onSelect = vi.fn()
-    await act(async () => root.render(<ContactList snapshot={snapshot} onSelect={onSelect}
-      social={{ userId: 'me', rooms: [], friendships: [{ id: 'f', senderId: 'me', recipientId: 'bob', status: 'accepted', person: { id: 'bob', name: 'Bob', email: 'bob@example.com' } }] }} />))
-    expect(container.querySelector('.contact-friends')?.textContent).toContain('Bob')
-    const friend = [...container.querySelectorAll<HTMLButtonElement>('.contact-row')].find((row) => row.textContent?.includes('bob@example.com'))!
-    await act(async () => friend.click())
-    expect(onSelect).toHaveBeenCalledWith({ kind: 'friend', id: 'bob' })
-    expect(container.querySelector('.friend-contact-status')?.textContent).toBe('Added')
-    expect(container.querySelector('.contact-friend-actions')).toBeNull()
-    expect(container.textContent).not.toContain('Friend requests')
-    const input = container.querySelector('input')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'missing')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    expect(container.querySelector('.contact-friends')?.textContent).not.toContain('bob@example.com')
-  })
-
-  it('does not display or search pending contacts by email address', async () => {
-    await act(async () => root.render(<ContactList snapshot={snapshot} onSelect={vi.fn()}
-      social={{ userId: 'me', rooms: [], friendships: [{ id: 'f', senderId: 'bob', recipientId: 'me', status: 'pending', person: { id: 'bob', name: 'Bob', email: 'private@example.com' } }] }} />))
-    expect(container.querySelector('.contact-friends')?.textContent).toContain('Bob')
-    expect(container.textContent).not.toContain('private@example.com')
-
-    const input = container.querySelector('input')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'private@example.com')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    expect(container.querySelector('.contact-friends')?.textContent).not.toContain('Bob')
-  })
-
 })

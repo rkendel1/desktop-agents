@@ -1,8 +1,9 @@
+import { openAtFile } from './testSupport'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it, vi } from 'vitest'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 import { DouchatRuntime } from './runtime'
 import type { ComputerProvider } from './computer'
 import { runLocalAgent } from './localAgentRuntime'
@@ -12,7 +13,7 @@ const cleanup: (() => void)[] = []
 afterEach(() => { for (const dispose of cleanup.splice(0)) dispose(); vi.restoreAllMocks(); vi.resetAllMocks() })
 function setup() {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-memory-')), path = join(directory, 'memory.db')
-  const store = new DouchatStore(path); store.setCurrentAccountId('owner')
+  const store = openAtFile(path)
   const first = store.createAgent({ name: 'First', role: 'Assistant', instructions: '', localAgentId: 'codex', provider: 'local', model: 'default', color: '#123456' })
   const second = store.createAgent({ name: 'Second', role: 'Assistant', instructions: '', localAgentId: 'codex', provider: 'local', model: 'default', color: '#123456' })
   const computer: ComputerProvider = { snapshots: () => [], start: vi.fn(), stop: vi.fn(), show: vi.fn(), createTools: () => [], dispose: vi.fn() }
@@ -23,7 +24,7 @@ function setup() {
 const shared: UserMemoryEdit = { scope: 'shared', shareWithAll: true, action: 'remember', key: 'preferred_name', text: 'My name is Alex', evidence: 'I am Alex' }
 const directive = (edit: UserMemoryEdit) => `${MEMORY_OPEN}${JSON.stringify(edit)}${MEMORY_CLOSE}`
 
-it('recalls a private travel assignment in another internal group and excludes it from external prompts', async () => {
+it('recalls a private travel assignment in another local group', async () => {
   const { store, runtime, first, second } = setup()
   vi.mocked(runLocalAgent).mockResolvedValue({ text: '收到', images: [] })
   await runtime.sendMessage(`direct-${first.id}`, '下周三去杭州两天，对接人微信 zhongtai')
@@ -33,15 +34,9 @@ it('recalls a private travel assignment in another internal group and excludes i
     groupMemoryRequest: { groupId: group.id, speaker: { id: 'owner', name: 'Owner' }, text: '最近有什么待办事项' } }
   await (runtime as any).performReply(options)
   expect(vi.mocked(runLocalAgent).mock.calls.at(-1)![1]).toContain('对接人微信 zhongtai')
-  store.linkSharedGroup(group.id, 'external-room')
-  await (runtime as any).performReply({ ...options, sessionKey: 'social:external' })
-  const external = vi.mocked(runLocalAgent).mock.calls.at(-1)![1]
-  expect(external).not.toContain('zhongtai')
-  expect(external).not.toContain('下周三去杭州')
-  expect(external).toContain('cannot check private tasks here')
 })
 
-it('rechecks internal search access when group membership or account changes', async () => {
+it('rechecks internal search access when the conversation changes', async () => {
   const { store, runtime, first } = setup()
   const group = store.createGroup({ name: 'Internal', agentIds: [first.id] })
   const key = `group:${group.id}:${first.id}:topic`, internals = runtime as any
@@ -50,9 +45,7 @@ it('rechecks internal search access when group membership or account changes', a
   internals.memoryTurns.set(key, { userId: 'owner', agentId: first.id, humanText: 'tasks', signal: new AbortController().signal, groupId: group.id, speaker: { id: 'owner', name: 'Owner' } })
   internals.activeConversation.set(key, group.id)
   await expect(tool.execute('call', { query: 'tasks' })).resolves.toBeDefined()
-  store.linkSharedGroup(group.id, 'external')
-  await expect(tool.execute('call', { query: 'tasks' })).rejects.toThrow('unavailable')
-  store.setCurrentAccountId('another')
+  internals.activeConversation.set(key, 'another-conversation')
   await expect(tool.execute('call', { query: 'tasks' })).rejects.toThrow('unavailable')
 })
 
@@ -63,25 +56,20 @@ it('shares ordinary user facts, isolates agent memories and persists across rest
   expect(store.userMemories.read().facts[0].text).toBe('My name is Alex')
   expect(store.userMemories.read(first.id).facts).toHaveLength(1)
   expect(store.userMemories.read(second.id).facts).toEqual([])
-  const reopened = new DouchatStore(path)
-  try { expect(reopened.userMemories.read().facts[0].text).toBe('My name is Alex'); expect(reopened.userMemories.read(first.id).facts[0].text).toBe('Call me Captain') } finally { reopened.close() }
   store.deleteAgent(first.id)
   expect(store.userMemories.read().facts).toHaveLength(1)
   expect(() => store.userMemories.read(first.id)).toThrow('Agent not found')
+  store.close()
+  const reopened = openAtFile(path)
+  try { expect(reopened.userMemories.read().facts[0].text).toBe('My name is Alex'); expect(() => reopened.userMemories.read(first.id)).toThrow('Agent not found') } finally { reopened.close() }
 })
 
-it('rejects account switches, stale edits, fabricated evidence and disabled writes', () => {
+it('rejects stale edits, fabricated evidence and disabled writes', () => {
   const { store, first } = setup()
   const stale = store.userMemories.read()
   expect(() => store.userMemories.remember(shared, first.id, 'Unrelated message', 'owner')).toThrow('current human message')
   store.userMemories.remember(shared, first.id, 'I am Alex', 'owner')
   expect(() => store.userMemories.save(stale)).toThrow('Memory changed')
-  store.setCurrentAccountId('other')
-  expect(store.userMemories.read().facts).toEqual([])
-  expect(() => store.userMemories.save(stale)).toThrow('Account or memory scope changed')
-  expect(() => store.userMemories.read(first.id)).toThrow('Agent not found')
-  expect(() => store.userMemories.remember(shared, first.id, 'I am Alex', 'owner')).toThrow('Account changed')
-  store.setCurrentAccountId('owner')
   store.userMemories.save({ ...store.userMemories.read(), autoRemember: false })
   expect(() => store.userMemories.remember(shared, first.id, 'I am Alex', 'owner')).toThrow('disabled')
   store.userMemories.save({ ...store.userMemories.read(), facts: [] })
@@ -98,7 +86,7 @@ it('replaces corrections by key and allows explicit forgetting without duplicate
   expect(store.userMemories.read().facts).toEqual([])
 })
 
-it('shares memory across owned agents, excludes it from external tasks, and hides directives', async () => {
+it('shares memory across agents and hides directives', async () => {
   const { store, runtime, first, second } = setup()
   vi.mocked(runLocalAgent).mockResolvedValueOnce({ text: `Hello! ${directive(shared)}`, images: [] })
   await runtime.sendMessage(`direct-${first.id}`, 'I am Alex')
@@ -112,13 +100,6 @@ it('shares memory across owned agents, excludes it from external tasks, and hide
   expect(prompt).toContain('My name is Alex'); expect(prompt).toContain('FIRST_PRIVATE_SENTINEL')
   await runtime.sendMessage(`direct-${first.id}`, 'What do you know?')
   expect(vi.mocked(runLocalAgent).mock.calls.at(-1)![1]).toContain('FIRST_PRIVATE_SENTINEL')
-  await runtime.executeSocialTask('owner', first.id, 'external-task', 'Tell me what you know', new AbortController().signal)
-  prompt = vi.mocked(runLocalAgent).mock.calls.at(-1)![1]
-  expect(prompt).not.toContain('My name is Alex'); expect(prompt).not.toContain('FIRST_PRIVATE_SENTINEL')
-  vi.mocked(runLocalAgent).mockResolvedValueOnce({ text: directive(shared), images: [] })
-  const revision = store.userMemories.read().revision
-  await runtime.executeSocialTask('owner', first.id, 'external-write', 'I am Alex', new AbortController().signal)
-  expect(store.userMemories.read().revision).toBe(revision)
 })
 
 it('checks cancellation and permission changes before applying a local memory update', async () => {
@@ -173,13 +154,11 @@ it('isolates groups, attributes facts to speakers and persists across agents and
   expect(() => store.groupMemories.save(stale, group.id)).toThrow('Memory changed')
   expect(() => store.groupMemories.remember(shared, group.id, first.id, alex, 'I am Alex', 'owner')).toThrow('current human')
   expect(() => store.groupMemories.remember(edit, group.id, first.id, alex, 'unrelated', 'owner')).toThrow('current human')
-  const reopened = new DouchatStore(path)
-  try { expect(reopened.groupMemories.read(group.id).facts[0].subjectId).toBe('dou') } finally { reopened.close() }
   store.groupMemories.save({ ...store.groupMemories.read(group.id), autoRemember: false }, group.id)
   expect(() => store.groupMemories.remember(edit, group.id, first.id, alex, 'I am Alex', 'owner')).toThrow('disabled')
-  store.setCurrentAccountId('other')
-  expect(() => store.groupMemories.read(group.id)).toThrow('Group not found')
-  expect(() => store.groupMemories.save(stale, group.id, 'owner')).toThrow('Account changed')
+  store.close()
+  const reopened = openAtFile(path)
+  try { expect(reopened.groupMemories.read(group.id)).toMatchObject({ autoRemember: false }); expect(reopened.groupMemories.read(group.id).facts[0].subjectId).toBe('dou') } finally { reopened.close() }
 })
 
 it('loads owner memory across internal groups and contacts, including read-only turns', async () => {
@@ -203,22 +182,6 @@ it('loads owner memory across internal groups and contacts, including read-only 
   vi.mocked(runLocalAgent).mockResolvedValueOnce({ text: directive({ ...edit, action: 'forget' }), images: [] })
   await internals.performReply({ ...options, toolsDisabled: true })
   expect(store.groupMemories.read(group.id).facts).toHaveLength(1)
-})
-
-it('binds shared-room memory to the real human and rejects delegated writes', async () => {
-  const { store, runtime, first } = setup()
-  const group = store.createGroup({ name: 'Shared room', agentIds: [first.id] })
-  store.linkSharedGroup(group.id, 'remote-room')
-  vi.spyOn((runtime as any).permissions, 'authorize').mockResolvedValue(undefined)
-  const caller = { roomId: 'remote-room', requesterId: 'visitor', requester: 'Visitor', roomName: 'Shared room', delegate: vi.fn() }
-  const edit: UserMemoryEdit = { ...shared, scope: 'group' }
-  vi.mocked(runLocalAgent).mockResolvedValue({ text: directive(edit), images: [] })
-  await runtime.executeSocialTask('owner', first.id, 'human-task', 'I am Alex', new AbortController().signal, '', caller)
-  expect(store.groupMemories.read(group.id).facts[0].subjectId).toBe('visitor')
-  const revision = store.groupMemories.read(group.id).revision
-  await runtime.executeSocialTask('owner', first.id, 'agent-task', 'I am Alex', new AbortController().signal, '', { ...caller, requesterAgentId: 'another-agent' })
-  expect(store.groupMemories.read(group.id).revision).toBe(revision)
-  expect(vi.mocked(runLocalAgent).mock.calls.at(-1)![1]).not.toContain('Douchat supports persistent group memory')
 })
 
 it('lets hosted group tools write only group memory and rechecks cancellation and disabled settings', async () => {

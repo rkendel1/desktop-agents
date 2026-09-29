@@ -12,7 +12,7 @@ import { killLocalProcess } from './localAgentConnection'
 
 const MAX_FILE = 20 * 1024 * 1024
 export interface ArtifactHost {
-  skills(): AgentSkill[]
+  skills(): AgentSkill[] | Promise<AgentSkill[]>
   authorize(details: string, signal?: AbortSignal): Promise<void>
   save(name: string, data: Uint8Array, signal?: AbortSignal): Promise<string>
 }
@@ -93,7 +93,7 @@ export function createArtifactTools(host: ArtifactHost): AgentTool[] {
       return result({ file: await host.save(args.name, data, signal), bytes: data.length })
     } },
     { name: 'run_skill_script', label: 'Run skill script', description: 'Run an enabled skill’s packaged Python or JavaScript script on this computer AFTER explicit owner approval. This is NOT an OS sandbox: the script runs with the app user’s access. It receives a temporary copy of the skill and optional text inputs, without inherited API secrets. No shell command interpolation or automatic dependency installation. Maximum 120 seconds; return named relative output files (20 MB combined) as downloadable deliverables. Read the script and relevant instructions first. For plain HTML generation prefer create_file, which needs no script execution.', parameters: runParameters, execute: async (_id: string, args: Static<typeof runParameters>, signal?: AbortSignal) => {
-      const raw = host.skills().find(s => s.id === args.skillId && s.enabled)
+      const raw = (await host.skills()).find(s => s.id === args.skillId && s.enabled)
       if (!raw) throw new Error('Enabled skill not found')
       const skill = validateAgentSkills([raw])[0]
       safePath(args.path)
@@ -101,7 +101,7 @@ export function createArtifactTools(host: ArtifactHost): AgentTool[] {
       const fingerprint = JSON.stringify(skill)
       await host.authorize(JSON.stringify({ execution: '本机运行，非操作系统沙箱 / Local execution, not an OS sandbox', skill: skill.name, path: args.path, args: args.args ?? [], inputs: args.inputs ?? [], outputs: args.outputs, sha256: createHash('sha256').update(fingerprint).digest('hex'), script: Buffer.from(skill.files.find(f => f.path === args.path)!.data, 'base64').toString('utf8') }, null, 2), signal)
       signal?.throwIfAborted()
-      const current = host.skills().find(s => s.id === args.skillId && s.enabled)
+      const current = (await host.skills()).find(s => s.id === args.skillId && s.enabled)
       if (!current || JSON.stringify(validateAgentSkills([current])[0]) !== fingerprint) throw new Error('Skill changed during approval; retry with current files')
       const outcome = await runPackagedScript(skill, args.path, args.args ?? [], args.inputs ?? [], args.outputs, signal)
       const links: string[] = []

@@ -1,6 +1,8 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CredentialVault } from './credentialVault'
+import { createTestDesktop, disposeTestDesktops } from './testSupport'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createModels } from '@earendil-works/pi-ai'
 import { CustomModelStore, customModelProvider } from './customModels'
@@ -8,23 +10,37 @@ import { customEndpoint } from '../shared/customModels'
 const folders: string[] = []
 function setup() {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-models-')); folders.push(directory)
-  const store = new CustomModelStore(directory, { encrypt: s => Buffer.from(s).toString('base64'), decrypt: s => Buffer.from(s, 'base64').toString() })
-  return { store, directory }
+  const desktop = createTestDesktop()
+  const vault = new CredentialVault(directory, { available: () => true, encrypt: s => Buffer.from(s).toString('base64'), decrypt: s => Buffer.from(s, 'base64').toString() })
+  const store = new CustomModelStore(desktop.repository, vault)
+  return { store, directory, desktop, vault }
 }
 const provider = { id: 'example', name: 'Example', kind: 'openai' as const, apiBase: 'https://example.com/v1', apiKey: 'secret-test-key', models: ['org/model'] }
-afterEach(() => { vi.unstubAllGlobals(); for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true }) })
-it('keeps keys out of public state and isolates accounts while retaining omitted keys', () => {
-  const { store, directory } = setup()
-  const config = store.save('a', [provider], 'example/org/model')
+afterEach(() => { disposeTestDesktops(); vi.unstubAllGlobals(); for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true }) })
+it('keeps keys out of public state and FeltDB while retaining omitted keys', () => {
+  const { store, directory, desktop, vault } = setup()
+  const config = store.save([provider], 'example/org/model')
   expect(JSON.stringify(config)).not.toContain(provider.apiKey)
   expect(config.providers[0].hasKey).toBe(true)
-  expect(readFileSync(join(directory, readdirSync(directory)[0]), 'utf8')).not.toContain(provider.apiKey)
-  expect(store.list('b').providers).toEqual([])
-  store.save('a', [{ ...provider, apiKey: undefined, name: 'Renamed' }], config.defaultModel)
-  expect(store.records('a')[0].apiKey).toBe(provider.apiKey)
-  expect(() => store.save('b', [{ ...provider, apiKey: undefined }], '')).toThrow('API key')
-  expect(() => store.save('a', [{ ...provider, apiBase: 'https://other.example', apiKey: undefined }], '')).toThrow('Enter the API key again')
-  expect(store.save('a', [], config.defaultModel)).toEqual({ providers: [], defaultModel: '' })
+  // Provider configuration is durable FeltDB state; the secret is not.
+  expect(desktop.repository.providers()[0]).toMatchObject({ id: 'example', credentialRef: 'provider:example' })
+  expect(JSON.stringify(desktop.repository.providers())).not.toContain(provider.apiKey)
+  const feltDirectory = join(desktop.root, 'felt')
+  for (const entry of readdirSync(feltDirectory, { withFileTypes: true })) if (entry.isFile()) expect(readFileSync(join(feltDirectory, entry.name), 'utf8')).not.toContain(provider.apiKey)
+  expect(readFileSync(join(directory, 'vault.json'), 'utf8')).not.toContain(provider.apiKey)
+  expect(vault.get('provider:example')).toBe(provider.apiKey)
+  store.save([{ ...provider, apiKey: undefined, name: 'Renamed' }], config.defaultModel)
+  expect(store.records()[0].apiKey).toBe(provider.apiKey)
+  expect(() => store.save([{ ...provider, apiBase: 'https://other.example', apiKey: undefined }], '')).toThrow('Enter the API key again')
+  expect(store.save([], config.defaultModel)).toEqual({ providers: [], defaultModel: '' })
+  expect(vault.has('provider:example')).toBe(false)
+})
+it('survives a restart with configuration in FeltDB and the key in the vault', () => {
+  const { store, desktop, vault } = setup()
+  store.save([provider], 'example/org/model')
+  const reopened = new CustomModelStore(desktop.restart(), vault)
+  expect(reopened.list()).toMatchObject({ defaultModel: 'example/org/model', providers: [{ id: 'example', hasKey: true }] })
+  expect(reopened.records()[0].apiKey).toBe(provider.apiKey)
 })
 it('normalizes complete and versioned endpoints without duplicate v1', () => {
   expect(customEndpoint('https://example.com/v1/', 'openai')).toBe('https://example.com/v1/chat/completions')
@@ -32,16 +48,16 @@ it('normalizes complete and versioned endpoints without duplicate v1', () => {
   expect(customEndpoint('https://example.com/anthropic', 'anthropic')).toBe('https://example.com/anthropic/v1/messages')
 })
 it('tests with a saved key, blocks changed destinations, and does not echo upstream secrets', async () => {
-  const { store } = setup(); store.save('a', [provider], '')
+  const { store } = setup(); store.save([provider], '')
   const request = vi.fn(async () => new Response(JSON.stringify({ choices: [{}] }), { status: 200 }))
   vi.stubGlobal('fetch', request)
-  expect(await store.test('a', { provider: { ...provider, apiKey: '' }, model: 'org/model' })).toMatchObject({ ok: true })
+  expect(await store.test({ provider: { ...provider, apiKey: '' }, model: 'org/model' })).toMatchObject({ ok: true })
   expect(request.mock.calls[0]).toBeTruthy()
   request.mockClear()
-  expect(await store.test('a', { provider: { ...provider, apiBase: 'https://other.example', apiKey: '' }, model: 'org/model' })).toMatchObject({ ok: false })
+  expect(await store.test({ provider: { ...provider, apiBase: 'https://other.example', apiKey: '' }, model: 'org/model' })).toMatchObject({ ok: false })
   expect(request).not.toHaveBeenCalled()
   request.mockImplementation(async () => new Response(provider.apiKey, { status: 401 }))
-  expect(JSON.stringify(await store.test('a', { provider, model: 'org/model' }))).not.toContain(provider.apiKey)
+  expect(JSON.stringify(await store.test({ provider, model: 'org/model' }))).not.toContain(provider.apiKey)
 })
 it.each(['openai', 'anthropic'] as const)('registers %s models with the configured key and endpoint', async kind => {
   const models = createModels()

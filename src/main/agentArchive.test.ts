@@ -1,8 +1,9 @@
+import { openAtFile } from './testSupport'
 import { expect, it } from 'vitest'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 import { exportAgentArchive, parseAgentArchive } from './agentArchive'
 import type { AgentConfig } from '../shared/types'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -42,9 +43,9 @@ it('rejects unsupported manifests, missing files, duplicate skill roots and unde
 })
 it('replaces custom files and skills while retaining profile, model and memory', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'agent-import-'))
-  const store = new DouchatStore(join(directory, 'test.db'), { seedDemo: true })
+  const store = openAtFile(join(directory, 'test.db'), { seedDemo: true })
   try {
-    const target = store.accountAgents[0]
+    const target = store.agents[0]
     store.updateAgent(target.id, { systemFiles: { 'SOUL.md': 'Old soul', 'HEARTBEAT.md': 'Old heartbeat', 'USER.md': 'Keep user', 'MEMORY.md': 'Keep memory' }, skills: [] })
     const before = store.agent(target.id)!
     const parsed = await parseAgentArchive(exportAgentArchive(agent))

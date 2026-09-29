@@ -24,7 +24,7 @@ vi.mock('./common', () => ({
 
 import { SettingsPanel } from './SettingsPanel'
 
-describe('usage and billing settings', () => {
+describe('settings panel', () => {
   let container: HTMLDivElement
   let root: Root
   let getUsageSummary: ReturnType<typeof vi.fn>
@@ -261,84 +261,6 @@ describe('usage and billing settings', () => {
     expect(container.textContent).not.toContain('Updates are downloaded from signed Douchat releases')
   })
 
-  it('shows only the credit balance and a top-up action', async () => {
-    await renderUsage()
-
-    expect(container.querySelector('#usage-tab')?.getAttribute('aria-selected')).toBe('true')
-    expect(container.textContent).toContain('Credits')
-    expect(container.textContent).toContain('Credit balance')
-    expect(container.textContent).toContain('1,611')
-    expect(container.textContent).not.toContain('Current plan')
-    expect(container.textContent).not.toContain('Billing')
-    expect(container.textContent).not.toContain('Invoices and payment methods')
-
-    const topUp = [...container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent?.includes('Top up'))
-    await act(async () => topUp?.click())
-    expect(openSubscriptionPlans).toHaveBeenCalledOnce()
-  })
-
-  it('prompts for a top-up when the conversation runs out of credits', async () => {
-    getUsageSummary.mockResolvedValueOnce({ planName: 'Free', status: 'free', credits: 0 })
-    await renderUsage(0, true)
-
-    const alert = container.querySelector('[role="alert"].usage-credit-alert')
-    expect(alert?.textContent).toContain('Not enough Douchat credits')
-    expect(alert?.textContent).toContain('Top up credits to continue.')
-
-    const topUp = [...container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent?.includes('Top up'))
-    await act(async () => topUp?.click())
-    expect(openSubscriptionPlans).toHaveBeenCalledOnce()
-  })
-
-  it('clears a stale insufficient-credit prompt after a positive balance loads', async () => {
-    getUsageSummary.mockResolvedValueOnce({ planName: 'Free', status: 'free', credits: 5000 })
-    await renderUsage(0, true)
-
-    expect(container.textContent).toContain('5,000')
-    expect(container.querySelector('.usage-credit-alert')).toBeNull()
-    expect(onCreditsAvailable).toHaveBeenCalledOnce()
-  })
-
-  it('keeps top-up available when the balance cannot be loaded', async () => {
-    getUsageSummary.mockRejectedValueOnce(new Error('Could not load credits.'))
-    await renderUsage(0, true)
-
-    const topUp = [...container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent?.includes('Top up'))
-    expect(topUp?.disabled).toBe(false)
-    await act(async () => topUp?.click())
-    expect(openSubscriptionPlans).toHaveBeenCalledOnce()
-  })
-
-  it('offers a retry when the usage summary cannot be loaded', async () => {
-    getUsageSummary
-      .mockRejectedValueOnce(new Error('Could not load credits. Check your connection and try again.'))
-      .mockResolvedValueOnce({ planName: 'Pro', status: 'active', credits: 300 })
-
-    await renderUsage()
-    expect(container.textContent).toContain('Could not load credits')
-
-    const retry = [...container.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent === 'Try again')
-    await act(async () => retry?.click())
-
-    expect(getUsageSummary).toHaveBeenCalledTimes(2)
-    expect(container.textContent).toContain('300')
-    expect(container.textContent).not.toContain('Pro')
-  })
-
-  it('reloads the balance after a completed browser top-up returns to the app', async () => {
-    await renderUsage(0)
-    expect(getUsageSummary).toHaveBeenCalledTimes(1)
-
-    getUsageSummary.mockResolvedValueOnce({ planName: 'Free', status: 'free', credits: 2029 })
-    await renderUsage(1)
-
-    expect(getUsageSummary).toHaveBeenCalledTimes(2)
-    expect(container.textContent).toContain('2,029')
-  })
 })
 
 // Component behavior tests use an inline host; NativeDialog has separate window lifecycle tests.

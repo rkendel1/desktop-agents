@@ -1,24 +1,24 @@
+import { openAtFile } from './testSupport'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 import { DouchatRuntime } from './runtime'
 import { DecisionEscalation } from './groupDecision'
 import type { ComputerProvider } from './computer'
 import type { GroupDecisionContext } from '../shared/bot/group'
 
-const resources: { store: DouchatStore; directory: string }[] = []
+const resources: { store: DesktopRepository; directory: string }[] = []
 function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-workflow-'))
-  const store = new DouchatStore(join(directory, 'state.db'), { seedDemo: true })
+  const store = openAtFile(join(directory, 'state.db'), { seedDemo: true })
   resources.push({ store, directory })
   const agents = ['组长', '产品', '工程', '测试'].map(name => store.createAgent({ name, role: name, instructions: '', color: '', provider: 'test', model: 'script' }))
   const group = store.createGroup({ name: '企业项目组', agentIds: agents.map(agent => agent.id), leadAgentId: agents[0].id })
   const computer: ComputerProvider = { snapshots: () => [], createTools: () => [], start: async () => { throw new Error('unused') }, stop: async () => {}, show: async () => {}, dispose: () => {} }
   const runtime = new DouchatRuntime(store, computer, () => {})
   runtime.setInterfaceLanguage('zh-CN')
-  vi.spyOn(runtime, 'connect').mockResolvedValue(undefined)
   const internal = runtime as any
   internal.canRunLive = async () => true
   internal.refreshHealth = async () => ({})
@@ -576,7 +576,8 @@ it('keeps a failed controller eligible to speak and ends a round after consecuti
     return agents.slice(2).some(agent => agent.id === config.id) ? { text: '', error: 'offline' } : { text: config.name + '报到' }
   }
   await runtime.sendMessage(group.id, '报个数')
-  expect(controllers.filter(id => id === agents[0].id)).toHaveLength(2)
+  // The lightweight participation review runs first, then the two full-plan attempts.
+  expect(controllers.filter(id => id === agents[0].id)).toHaveLength(3)
   expect(speakers).toEqual(agents.map(agent => agent.id))
   expect(store.groupHealth(group.id)[agents[0].id].status).toBe('healthy')
   expect(store.groupWorkflows().at(-1)?.status).toBe('completed')
@@ -663,15 +664,19 @@ it('repairs a hosted coordinator format error in a fresh session before falling 
     expect(internal.sessions.has(sessionKey)).toBe(false)
     internal.sessions.set(sessionKey, { agentId: config.id, agent: { abort: aborted } })
     attempts++
-    if (attempts === 1) return { text: JSON.stringify({ mode: 'single', memberIds: [config.id], triggerMessageIds: [], participantScope: 'everyone' }) }
+    // Later calls are the result review after the leader has answered.
+    if (attempts > 3) return { text: JSON.stringify({ mode: 'none', memberIds: [], triggerMessageIds: [] }) }
+    // The first call is the lightweight participation review; it declines, so the full plan follows.
+    if (attempts === 1) return { text: 'not a participation decision' }
+    if (attempts === 2) return { text: JSON.stringify({ mode: 'single', memberIds: [config.id], triggerMessageIds: [], participantScope: 'everyone' }) }
     expect(prompt).toContain('The previous response failed validation: Invalid participant scope')
     const payload = JSON.parse(prompt.slice(prompt.indexOf('{'), prompt.indexOf('\nThe previous response')))
     return { text: JSON.stringify({ mode: 'single', memberIds: [config.id], addressedMemberId: config.id, triggerMessageIds: [payload.currentRequest.id],
       assignments: { [config.id]: '回复用户', [agents[1].id]: null }, participantScope: null, publicDeliverables: null }) }
   }
   await runtime.sendMessage(group.id, '请组长回答这个问题。')
-  expect(planners).toEqual([agents[0].id, agents[0].id])
-  expect(aborted).toHaveBeenCalledTimes(2)
+  expect(planners.slice(0, 3)).toEqual([agents[0].id, agents[0].id, agents[0].id])
+  expect(aborted).toHaveBeenCalledTimes(planners.length)
   expect(store.runEvents.some(event => event.label === 'Correcting decision format')).toBe(true)
   expect(store.runEvents.some(event => event.label === 'Coordinator unavailable')).toBe(false)
   expect(store.groupWorkflows().at(-1)?.status).toBe('completed')
@@ -763,27 +768,6 @@ it.each([false, true])('numbers only successful roll-call replies and preserves 
   expect(store.groupWorkflows().at(-1)?.status).toBe('completed')
 })
 
-it('resolves a cloud decision model and automatically falls back when its service fails', async () => {
-  const { runtime, store, group, internal } = fixture()
-  internal.cloudGateway = { baseUrl: 'https://douchat.test/v1', resolveAccessToken: () => 'test-desktop-token' }
-  runtime.saveDecisionSettings({ mode: 'model', providerId: 'douchat:cloud', model: 'cloud-decision' })
-  const fetchModel = vi.fn(async () => Response.json({ code: 0, data: [{ id: 'cloud-decision', name: 'Decision', protocol: 'jev', creditsPerRequest: 2, maxOutputTokens: 8192 }] }))
-  vi.stubGlobal('fetch', fetchModel)
-  const decide = vi.spyOn(internal.groupDecisionService, 'decide').mockRejectedValue(new Error('Cloud decision unavailable'))
-  internal.runReply = async ({ context, prompt }: { context: string; prompt: string }) => {
-    if (context !== 'controller') return { text: '需要我处理什么？' }
-    const payload = JSON.parse(prompt.slice(prompt.indexOf('{')))
-    return { text: JSON.stringify({ mode: 'single', waitForHuman: true, memberIds: [payload.leadMember.id], triggerMessageIds: [payload.messages.at(-1).id] }) }
-  }
-  try {
-    await runtime.sendMessage(group.id, '你好')
-    expect(fetchModel).toHaveBeenCalledOnce()
-    expect(decide.mock.calls[0][1]).toMatchObject({ apiKey: 'test-desktop-token', cloud: { endpoint: 'https://douchat.test/v1/decisions/completions', protocol: 'jev' } })
-    expect(store.runEvents.some(event => event.label === 'Decision fallback')).toBe(true)
-    expect(store.groupWorkflows()[0].status).toBe('waiting')
-  } finally { vi.unstubAllGlobals() }
-})
-
 it('writes English scheduling notices with reusable translation metadata', async () => {
   const { runtime, store, agents, group, internal } = fixture()
   runtime.setInterfaceLanguage('en')
@@ -844,10 +828,12 @@ it('accepts an Arabic clarification question without repairing it as non-questio
   expect(store.topicMessages(group.id, group.activeTopicId).at(-1)?.text).toBe('هل تريد تشغيل الاختبار داخليًا فقط؟')
 })
 
-it('defaults to cloud decisions and resumes a clarification from a short human answer', async () => {
+it('uses a configured decision model and resumes a clarification from a short human answer', async () => {
   const { runtime, store, agents, group, internal } = fixture()
-  expect(store.decisionSettings()).toMatchObject({ mode: 'model', providerId: 'douchat:cloud' })
-  const provider = { id: 'douchat:cloud' }
+  runtime.configureCustomModels([{ id: 'mine', name: 'Mine', kind: 'openai', apiBase: 'https://custom.example/v1', apiKey: 'test-key', models: ['decision-model'] }], 'mine/decision-model')
+  runtime.saveDecisionSettings({ mode: 'model', providerId: 'mine', model: 'decision-model' })
+  expect(store.decisionSettings()).toMatchObject({ mode: 'model', providerId: 'mine' })
+  const provider = { id: 'mine' }
   internal.decisionProvider = vi.fn(async () => provider)
   let answered = false
   const decide = vi.spyOn(internal.groupDecisionService, 'decide').mockImplementation(async (...args: any[]) => {
@@ -925,10 +911,12 @@ it('routes using labelled agent file capabilities and skills without loading the
   store.updateAgent(agents[1].id, { systemFiles: {
     'SOUL.md': 'UNSHARED_PERSONA\n## Capabilities\nPUBLIC_ANALYSIS_SKILL', 'USER.md': 'PRIVATE_USER_SENTINEL', 'MEMORY.md': 'PRIVATE_MEMORY_SENTINEL'
   }, skills: [{ id: 'sql', name: 'SQL analysis', content: '---\ndescription: Analyze database bottlenecks\n---\nPRIVATE_SKILL_IMPLEMENTATION', enabled: true }] })
+  const controllerPrompts: string[] = []
   internal.runReply = async ({ context, prompt }: any) => {
     if (context === 'controller') {
-      expect(prompt).toContain('PUBLIC_ANALYSIS_SKILL'); expect(prompt).toContain('SQL analysis')
-      for (const privateText of ['UNSHARED_PERSONA', 'PRIVATE_USER_SENTINEL', 'PRIVATE_MEMORY_SENTINEL', 'PRIVATE_SKILL_IMPLEMENTATION']) expect(prompt).not.toContain(privateText)
+      controllerPrompts.push(prompt)
+      // Not an attendance request: decline the lightweight review so the full plan (with capabilities) runs.
+      if (prompt.startsWith('Review only whether this request asks named members')) return { text: JSON.stringify({ participation: false }) }
       return scriptedPolicy(prompt, agents, { target: agents[1].id })
     }
     return { text: 'Analysis complete' }
@@ -936,6 +924,11 @@ it('routes using labelled agent file capabilities and skills without loading the
   expect(internal.systemPrompt(store.agent(agents[1].id), 'controller', false)).not.toContain('PUBLIC_ANALYSIS_SKILL')
   await runtime.sendMessage(group.id, '分析数据库性能')
   expect(store.groupWorkflows()[0].status).toBe('completed')
+  // Planning sees each member's public capabilities and skills, never private memory, persona or skill bodies.
+  expect(controllerPrompts.some(prompt => prompt.includes('PUBLIC_ANALYSIS_SKILL') && prompt.includes('SQL analysis'))).toBe(true)
+  for (const privateText of ['UNSHARED_PERSONA', 'PRIVATE_USER_SENTINEL', 'PRIVATE_MEMORY_SENTINEL', 'PRIVATE_SKILL_IMPLEMENTATION']) {
+    expect(controllerPrompts.some(prompt => prompt.includes(privateText))).toBe(false)
+  }
 })
 
 it('pauses partial errored work without marking it complete or asking a replacement to repeat it', async () => {

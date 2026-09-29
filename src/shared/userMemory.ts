@@ -1,3 +1,5 @@
+/** The one local person this desktop belongs to. Not an account. */
+export const LOCAL_USER_ID = 'local'
 export type UserMemoryScope = 'shared' | 'agent' | 'group'
 export interface UserMemoryFact {
   kind?: 'profile' | 'memory'
@@ -11,14 +13,8 @@ export interface UserMemoryFact {
   memoryKey?: string
 }
 export interface UserMemoryDocument {
-  /** Main-process group audience token; prevents stale writes after sharing a group. */
-  audienceId?: string
   /** Explicit settings action; not persisted in the document. */
   clearHistory?: boolean
-  /** Local Markdown source, assigned by the main process. */
-  filePath?: string
-  memoryFilePath?: string
-  historyDirectory?: string
   memoryNotes?: string
   userId: string
   agentId?: string

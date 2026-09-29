@@ -1,10 +1,11 @@
+import { openAtFile } from './testSupport'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 import { zipSync, strToU8, type Zippable } from 'fflate'
 import { parseSkillArchive } from './skillArchive'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 import { agentCustomizationPrompt, validateAgentSkills, MAX_SKILL_BYTES } from '../shared/agentCustomization'
 const manifest = (name = 'review') => strToU8(`---\nname: ${name}\ndescription: >-\n  Review code\n  carefully\n---\nRead references/guide.md and run scripts/check.sh.`)
 const archive = (files: Zippable) => zipSync(files)
@@ -50,14 +51,14 @@ it('rejects oversized declared output before extracting it', async () => {
 it('saves resources, preserves them across restart, and exposes their directory only for enabled skills', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-skills-'))
   const database = join(directory, 'test.db')
-  let store = new DouchatStore(database, { seedDemo: true })
+  let store = openAtFile(database, { seedDemo: true })
   try {
     const skills = await parseSkillArchive(archive({ 'SKILL.md': manifest(), 'references/guide.md': strToU8('saved guide'), 'scripts/check.sh': strToU8('echo okay') }))
     store.updateAgent('dobi', { skills })
     const saved = store.agent('dobi')!.skills![0]
     expect(readFileSync(join(saved.directory!, 'references/guide.md'), 'utf8')).toBe('saved guide')
     expect(agentCustomizationPrompt(store.agent('dobi')!)).toContain(saved.directory)
-    store.close(); store = new DouchatStore(database, { seedDemo: true })
+    store.close(); store = openAtFile(database, { seedDemo: true })
     expect(readFileSync(join(store.agent('dobi')!.skills![0].directory!, 'scripts/check.sh'), 'utf8')).toBe('echo okay')
     store.updateAgent('dobi', { skills: [{ ...saved, enabled: false }] })
     expect(agentCustomizationPrompt(store.agent('dobi')!)).not.toContain(saved.directory)

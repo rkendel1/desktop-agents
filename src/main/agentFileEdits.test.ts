@@ -1,8 +1,9 @@
+import { openAtFile } from './testSupport'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { DouchatStore } from './store'
+import { DesktopRepository } from './desktopRepository'
 import { DouchatRuntime } from './runtime'
 import { runLocalAgent } from './localAgentRuntime'
 import { FILE_EDIT_OPEN, FILE_EDIT_CLOSE, localAgentFileEdits } from '../shared/agentFileEdits'
@@ -13,8 +14,7 @@ afterEach(() => { cleanup.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); v
 function setup() {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-self-edit-'))
   const path = join(directory, 'test.db')
-  const store = new DouchatStore(path)
-  store.setCurrentAccountId('owner')
+  const store = openAtFile(path)
   const agent = store.createAgent({ name: 'Reader', role: '', instructions: '', provider: 'local', model: 'default', localAgentId: 'codex', color: '#123456' })
   const computer: ComputerProvider = { snapshots: () => [], start: vi.fn(), stop: vi.fn(), show: vi.fn(), createTools: () => [], dispose: vi.fn() }
   const runtime = new DouchatRuntime(store, computer, () => {})
@@ -39,15 +39,17 @@ it('applies local identity changes, emits a receipt, and uses persisted files on
   vi.mocked(runLocalAgent).mockResolvedValueOnce({ text: 'Ready', images: [] })
   await runtime.sendMessage(`direct-${agent.id}`, 'Hello')
   expect(vi.mocked(runLocalAgent).mock.calls.at(-1)![1]).toContain('# Identity\nReading assistant')
-  const reopened = new DouchatStore(path)
-  try { expect(reopened.agent(agent.id)?.systemFiles).toEqual(store.agent(agent.id)?.systemFiles) } finally { reopened.close() }
+  const saved = store.agent(agent.id)?.systemFiles
+  store.close()
+  const reopened = openAtFile(path)
+  try { expect(reopened.agent(agent.id)?.systemFiles).toEqual(saved) } finally { reopened.close() }
 })
 
 it('cloud tools read current files and reject stale batches atomically, foreign files and fabricated evidence', async () => {
   const { store, agent, internal } = setup()
   const key = `direct:direct-${agent.id}:topic`
   const [read, update] = internal.agentFileTools(key)
-  await expect(read.execute('outside', {})).rejects.toThrow('active owner')
+  await expect(read.execute('outside', {})).rejects.toThrow('active private')
   const abort = new AbortController()
   internal.memoryTurns.set(key, { userId: 'owner', agentId: agent.id, humanText: evidence, signal: abort.signal })
   expect(JSON.parse((await read.execute('read', {})).content[0].text)['SOUL.md']).toBe('')
@@ -59,11 +61,8 @@ it('cloud tools read current files and reject stale batches atomically, foreign 
   await expect(update.execute('memory', { evidence, changes: [{ file: 'USER.md', previous: '', content: 'private' }] })).rejects.toThrow('Invalid identity')
   await update.execute('valid', { evidence, changes: [{ file: 'IDENTITY.md', previous: '', content: 'Reading assistant' }] })
   expect(store.agent(agent.id)?.systemFiles?.['SOUL.md']).toBe('Stay concise')
-  store.setCurrentAccountId('other')
-  await expect(update.execute('wrong-account', edit)).rejects.toThrow('Account')
-  store.setCurrentAccountId('owner')
   internal.memoryTurns.set(key, { userId: 'owner', agentId: agent.id, humanText: evidence, signal: abort.signal, groupId: 'group' })
-  await expect(update.execute('group', edit)).rejects.toThrow('active owner')
+  await expect(update.execute('group', edit)).rejects.toThrow('active private')
   internal.memoryTurns.set(key, { userId: 'owner', agentId: agent.id, humanText: evidence, signal: abort.signal })
   abort.abort()
   await expect(update.execute('cancelled', edit)).rejects.toThrow()
@@ -79,7 +78,7 @@ it('injects hosted editing guidance only in owner private turns and removes acce
   const options = { config: { ...agent, localAgentId: undefined }, sessionKey: key, context: 'direct', prompt: evidence, memoryRequest: evidence, conversationId: `direct-${agent.id}`, topicId: 'topic' }
   await internal.performReply(options)
   expect(state.systemPrompt).toContain('read_agent_files and update_agent_files')
-  await expect(tool.execute('late', edit)).rejects.toThrow('active owner')
+  await expect(tool.execute('late', edit)).rejects.toThrow('active private')
   session.prompt.mockImplementation(async () => {})
   await internal.performReply({ ...options, context: 'group' })
   expect(state.systemPrompt).not.toContain('read_agent_files and update_agent_files')

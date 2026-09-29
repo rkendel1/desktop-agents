@@ -53,5 +53,5 @@ export interface AgentExecutor {
   run(config: AgentConfig, prompt: string, signal?: AbortSignal, images?: LocalAgentImage[], options?: LocalRunOptions): Promise<LocalAgentReply>
   releaseIdleConnections?(conversationId: string, directAgentIds?: string[]): void
   disposeAgent(agentId: string): void
-  resetConversation(conversationId: string, topicId?: string, directAgentIds?: string[], ownerId?: string): void
+  resetConversation(conversationId: string, topicId?: string, directAgentIds?: string[]): Promise<void>
 }

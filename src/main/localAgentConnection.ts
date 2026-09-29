@@ -55,13 +55,14 @@ export class LocalAgentConnection {
   get hasHistory(): boolean { return this.turnCount > 0 }
   get thread(): string | undefined { return this.threadId }
 
-  async connect(path: string, cwd: string, env: NodeJS.ProcessEnv, model?: string, discoveryOnly = false, resume?: { thread?: string; remember: (thread?: string) => void }, toolApprovals = false, extraArgs: string[] = [], thinking?: ThinkingLevel): Promise<void> {
+  async connect(path: string, cwd: string, env: NodeJS.ProcessEnv, model?: string, discoveryOnly = false, resume?: { thread?: string; remember: (thread?: string) => Promise<void> }, toolApprovals = false, extraArgs: string[] = [], thinking?: ThinkingLevel): Promise<void> {
     const command = await executableCommand(path)
     if (this.failure) throw this.failure
     const args = this.kind === 'codex'
       ? ['app-server']
       : ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', ...(resume ? resume.thread ? ['--resume', resume.thread] : [] : ['--no-session-persistence']), '--allowedTools', 'WebSearch,WebFetch', ...(toolApprovals ? ['--permission-prompt-tool', 'stdio'] : ['--permission-mode', 'dontAsk'])]
-    this.rememberThread = resume?.remember
+    // Learning a native thread id is a durable write; keep them in order and let `turn` wait for the last one.
+    this.rememberThread = resume ? thread => { this.persisted = this.persisted.then(() => resume.remember(thread)).catch(() => undefined) } : undefined
     if (this.kind === 'claude' && resume?.thread) { this.threadId = resume.thread; this.turnCount = 1 }
     this.child = spawn(command.file, [...command.prefix, ...appendLocalAgentArguments(this.kind === 'claude' ? withLocalModel('claude', withLocalThinking('claude', args, thinking), model) : args, extraArgs)], {
       cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe']
@@ -98,17 +99,18 @@ export class LocalAgentConnection {
           this.turnCount = response.thread?.turns?.length ? 1 : 0
         } catch (error) {
           if (!/not found|no rollout|does not exist/i.test(String(error))) throw error
-          resume.remember(undefined)
+          await resume.remember(undefined)
         }
       }
       response ??= await this.request('thread/start', { ...params, ephemeral: !resume })
       if (typeof response.thread?.id !== 'string') throw new Error('Codex did not return a thread ID')
       this.threadId = response.thread.id
-      resume?.remember(this.threadId)
+      await resume?.remember(this.threadId)
     }
   }
 
   private rememberThread?: (thread?: string) => void
+  private persisted: Promise<void> = Promise.resolve()
 
   private async approveComputerUse(packet: Packet): Promise<void> {
     if (this.approvals.has(packet.id)) { this.close(new Error('Duplicate local agent approval request')); return }
@@ -284,6 +286,10 @@ export class LocalAgentConnection {
   }
 
   async turn(prompt: string, signal: AbortSignal | undefined, progress?: ProgressListener, onApproval?: LocalApprovalHandler): Promise<string> {
+    try { return await this.runTurn(prompt, signal, progress, onApproval) } finally { await this.persisted }
+  }
+
+  private async runTurn(prompt: string, signal: AbortSignal | undefined, progress?: ProgressListener, onApproval?: LocalApprovalHandler): Promise<string> {
     signal?.throwIfAborted()
     if (this.failure) throw this.failure
     if (this.turnInProgress) throw new Error('This local agent session is already working')

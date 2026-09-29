@@ -8,7 +8,7 @@ vi.mock('./NativeDialog', () => ({ NativeDialog: ({ children }: { children: Reac
 import { LocalModelDialog } from './LocalModelDialog'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 const agent = { id: 'a', name: 'OpenCode', localAgentId: 'opencode', model: 'default' } as AgentConfig
-it('uses creation model selection for cloud agents and switches to a saved custom provider', async () => {
+it('uses model-API selection for a non-CLI agent and saves the chosen provider', async () => {
   const localLoad = vi.fn()
   Object.defineProperty(window, 'douchat', { configurable: true, value: {
     listLocalAgentModels: localLoad,
@@ -17,14 +17,9 @@ it('uses creation model selection for cloud agents and switches to a saved custo
   const host = document.createElement('div'); const root = createRoot(host)
   const save = vi.fn().mockResolvedValue(undefined); const close = vi.fn()
   try {
-    await act(async () => root.render(<LocalModelDialog agent={{ ...agent, localAgentId: undefined, provider: 'gateway', model: 'default' }} onSave={save} onClose={close} />))
+    await act(async () => root.render(<LocalModelDialog agent={{ ...agent, localAgentId: undefined, provider: 'custom:mine', model: 'org/model' }} onSave={save} onClose={close} />))
     expect(localLoad).not.toHaveBeenCalled()
     expect(host.querySelector('.local-model-search')).toBeNull()
-    expect(host.textContent).toContain('Douchat Cloud')
-    await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
-    expect(save).toHaveBeenLastCalledWith('douchat-default', 'cloud', 'default')
-    const provider = host.querySelector<HTMLSelectElement>('[aria-label="Model source"]')!
-    await act(async () => { provider.value = 'custom'; provider.dispatchEvent(new Event('change', { bubbles: true })) })
     const model = host.querySelector<HTMLSelectElement>('[aria-label="Custom model"]')!
     await act(async () => { model.value = JSON.stringify(['mine', 'org/model']); model.dispatchEvent(new Event('change', { bubbles: true })) })
     expect(host.textContent).toContain('mine/org/model')
