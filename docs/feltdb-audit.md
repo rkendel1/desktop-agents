@@ -6,7 +6,7 @@ and the promise lint rules in `eslint.config.js`.
 
 Result: **no production path uses `FileJsDb`, a `Table`, a per-write `emit()`, a
 synchronous repository read, or a direct database mutation outside the
-repository.** Two in-memory working sets are documented deviations (below).
+repository.** Two in-memory working sets and one configuration file are documented deviations (below).
 
 ## Searched terms
 
@@ -35,6 +35,7 @@ repository.** Two in-memory working sets are documented deviations (below).
 | Projection change batches | `projection.ts` | transient | Change ids waiting for the next microtask flush; emptied on flush, values re-read from FeltDB. |
 | Renderer `snapshot` state | `App.tsx` | projection | Rebuilt from `getSnapshot` + deltas; discarded on restart. |
 | **IM channel working set** | `imChannels.ts` `records` | **documented deviation** | Loaded from FeltDB/vault at activation and kept beside the live workers. Every change awaits `storage.save(...)` before it is acknowledged, and the manager is the only writer, so it cannot diverge — but it is a copy, and `save` rewrites the whole set. Follow-up: move it to per-record repository calls. |
+| **Custom local agent registry** | `localAgents.ts` → `userData/local-agents.json` | **documented deviation** | The list of user-registered agent CLIs (name, command, arguments) is a JSON file written outside FeltDB. It is configuration, not chat/session state, and nothing else caches it, but it is a second durable store for that configuration. Follow-up: move to a FeltDB collection. |
 | **Skill file directories** | `desktopRepository.ts` (`writeFileSync` on agent update) | derived materialization | The skill's content and files are stored in the agent's FeltDB record; the directories are regenerated copies a local CLI can read. Losing them loses no data. |
 
 ## Sync filesystem access

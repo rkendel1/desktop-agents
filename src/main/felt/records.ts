@@ -1,4 +1,4 @@
-import type { AgentConfig, ExecutionEventKind, ChatMessage, Conversation, PrivateMessage, RunEvent, Routine, TaskRun, Topic } from '../../shared/types'
+import type { CodingSession, Project, AgentConfig, ExecutionEventKind, ChatMessage, Conversation, PrivateMessage, RunEvent, Routine, TaskRun, Topic } from '../../shared/types'
 
 /** The stored shapes declared in desktop.flow, and the domain types they compose. */
 
@@ -21,7 +21,13 @@ export interface TopicRecord {
 }
 export interface GroupRecord { id: string; sessionId: string; name: string; description?: string; leadAgentId?: string; autoNamed?: boolean }
 export interface GroupMemberRecord { id: string; groupId: string; agentId: string; position: number }
-export interface WorkspaceRecord { id: string; path: string; createdAt: number }
+/** A folder on this computer. With a `name` it is a registered project. */
+export interface WorkspaceRecord { id: string; path: string; createdAt: number; name?: string; isGit?: boolean; testCommand?: string[]; updatedAt?: number }
+export interface CodingSessionRecord {
+  id: string; workspaceId: string; agentId: string; sessionId: string; topicId: string; cwd: string; task: string; status: string
+  createdAt: number; startedAt?: number; finishedAt?: number; runId?: string; error?: string; result?: string
+  baseline?: unknown; changes?: unknown; commands?: unknown
+}
 export interface MessageRecord {
   id: string; sessionId: string; topicId: string; role: 'user' | 'assistant' | 'system'
   authorId: string; authorName: string; content: string; kind: string; timestamp: number
@@ -217,4 +223,26 @@ export function eventFromRecord(record: ExecutionEventRecord): RunEvent {
     ...(record.detail !== undefined ? { detail: record.detail } : {}),
     ...(record.status ? { status: record.status as RunEvent['status'] } : {}), createdAt: record.timestamp
   }
+}
+
+export function projectFromRecord(record: WorkspaceRecord): Project {
+  return { id: record.id, name: record.name ?? record.path, path: record.path, isGit: record.isGit === true,
+    ...(record.testCommand ? { testCommand: record.testCommand } : {}), createdAt: record.createdAt, updatedAt: record.updatedAt ?? record.createdAt }
+}
+
+export function codingSessionToRecord(session: CodingSession): CodingSessionRecord {
+  return { id: session.id, workspaceId: session.projectId, agentId: session.agentId, sessionId: session.conversationId, topicId: session.topicId,
+    cwd: session.workingDirectory, task: session.task, status: session.status, createdAt: session.createdAt,
+    ...(session.startedAt !== undefined ? { startedAt: session.startedAt } : {}), ...(session.finishedAt !== undefined ? { finishedAt: session.finishedAt } : {}),
+    ...(session.runId ? { runId: session.runId } : {}), ...(session.error ? { error: session.error } : {}), ...(session.result ? { result: session.result } : {}),
+    baseline: session.baseline, changes: session.changes, commands: session.commands }
+}
+
+export function codingSessionFromRecord(record: CodingSessionRecord): CodingSession {
+  return { id: record.id, projectId: record.workspaceId, agentId: record.agentId, conversationId: record.sessionId, topicId: record.topicId,
+    workingDirectory: record.cwd, task: record.task, status: record.status as CodingSession['status'], createdAt: record.createdAt,
+    ...(record.startedAt !== undefined ? { startedAt: record.startedAt } : {}), ...(record.finishedAt !== undefined ? { finishedAt: record.finishedAt } : {}),
+    ...(record.runId ? { runId: record.runId } : {}), ...(record.error ? { error: record.error } : {}), ...(record.result ? { result: record.result } : {}),
+    baseline: (record.baseline as CodingSession['baseline']) ?? { changes: [] }, changes: (record.changes as CodingSession['changes']) ?? [],
+    commands: (record.commands as CodingSession['commands']) ?? [] }
 }

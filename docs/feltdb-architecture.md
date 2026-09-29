@@ -21,6 +21,17 @@ Douchat UI ──IPC──▶ DesktopRepository (async) ──transactions──
      └──── deltas ◀── DesktopProjection ◀── change announcements ◀──┘
 ```
 
+## Coding invariant
+
+> **A coding agent operates against an explicit project working directory. The
+> repository filesystem is the authority for source code; FeltDB is the authority
+> for application/session state.**
+
+Projects and coding sessions are FeltDB records (`Workspace`, `CodingSession`);
+the code, its Git state and any generated files stay on disk, and the agent and
+its commands are OS processes that are never persisted. See
+[coding-execution-path.md](coding-execution-path.md).
+
 ## The rules
 
 1. **The repository is asynchronous.** Every `DesktopRepository` method returns a

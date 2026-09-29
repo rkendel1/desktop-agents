@@ -609,4 +609,91 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   onUpdateState: (listener: (state: UpdateState) => void) => () => void
   /** Each durable or live change, as a small delta. A renderer reads `getSnapshot` once, then applies deltas whose sequence is newer. */
   onProjection: (listener: (delta: ProjectionDelta) => void) => () => void
+  listProjects: () => Promise<Project[]>
+  /** Opens a folder picker; resolves with the project, or undefined if cancelled. */
+  chooseProject: () => Promise<Project | undefined>
+  removeProject: (id: string) => Promise<boolean>
+  projectGitStatus: (id: string) => Promise<GitState>
+  projectGitDiff: (id: string, path?: string) => Promise<{ diff: string; truncated: boolean }>
+  listCodingSessions: (projectId?: string) => Promise<CodingSession[]>
+  startCodingSession: (input: { projectId: string; agentId: string; task: string }) => Promise<CodingSession>
+  cancelCodingSession: (id: string) => Promise<void>
+}
+
+/**
+ * A folder on this computer that agents may work in. The repository at `path` is
+ * the authority for source code; Douchat stores only that the project exists.
+ */
+export interface Project {
+  /** Stable for a path: the same folder is the same project. */
+  id: string
+  name: string
+  /** Absolute, resolved. */
+  path: string
+  isGit: boolean
+  /** Owner-chosen check to run in the project, as an argument vector (never a shell string). */
+  testCommand?: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+/** One path's state in `git status --porcelain`. No file contents are ever stored. */
+export interface GitChange {
+  path: string
+  /** Porcelain XY code, e.g. ' M', 'M ', '??', 'A ', ' D'. */
+  code: string
+  /** Original path for a rename or copy. */
+  from?: string
+}
+
+export interface GitState {
+  /** Current branch, or undefined when detached or unborn. */
+  branch?: string
+  head?: string
+  changes: GitChange[]
+}
+
+export interface CommandResult {
+  argv: string[]
+  /** null when the process was stopped by a signal. */
+  exitCode: number | null
+  signal?: string
+  cancelled?: boolean
+  timedOut?: boolean
+  startedAt: number
+  durationMs: number
+  /** The end of each stream, bounded. */
+  stdout: string
+  stderr: string
+}
+
+export type CodingSessionStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+
+/**
+ * An agent working on a project: which project, which agent, the explicit
+ * working directory, the chat that carries the conversation and its events, and
+ * the outcome. The OS process is not part of it and does not survive a restart.
+ */
+export interface CodingSession {
+  id: string
+  projectId: string
+  agentId: string
+  /** The conversation (and topic) holding the messages and run events of this session. */
+  conversationId: string
+  topicId: string
+  workingDirectory: string
+  task: string
+  status: CodingSessionStatus
+  error?: string
+  createdAt: number
+  startedAt?: number
+  finishedAt?: number
+  runId?: string
+  /** The agent's final reply. */
+  result?: string
+  /** Repository state when the session began, and what changed by the end. */
+  baseline: GitState
+  changes: GitChange[]
+  /** Checks Douchat ran in the project for this session. */
+  commands: CommandResult[]
 }
