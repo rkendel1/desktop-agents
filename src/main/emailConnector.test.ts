@@ -1,24 +1,17 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-
-vi.mock('electron', () => ({
-  safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (value: string) => Buffer.from(value),
-    decryptString: (value: Buffer) => value.toString('utf8')
-  }
-}))
+import { CredentialVault } from './credentialVault'
+import { createTestDesktop, disposeTestDesktops } from './testSupport'
 
 import type { EmailConnectorAccount } from '../shared/types'
 import { EmailConnectorManager } from './emailConnector'
-import { DouchatStore } from './store'
 
 const directories: string[] = []
 
-afterEach(() => {
+afterEach(async () => {
+  await disposeTestDesktops()
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
@@ -41,34 +34,23 @@ function mailbox(id: string, agentIds: string[] = []): EmailConnectorAccount {
   }
 }
 
-describe('email connector account isolation', () => {
-  it('lets only the connector owner migrate and decrypt a legacy credential', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'douchat-email-account-'))
+describe('email connector credentials', () => {
+  it('keeps the mailbox password in the credential vault, never in FeltDB, and removes it on disconnect', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'douchat-email-vault-'))
     directories.push(directory)
-    const store = new DouchatStore(join(directory, 'douchat.db'))
-    const first = store.ensureDefaultCloudContact('user-1', { provider: 'gateway', model: 'default' }).agent!
-    store.setConnectors([mailbox('mail-1', [first.id])])
-    store.ensureDefaultCloudContact('user-2', { provider: 'gateway', model: 'default' })
-    const credentialPath = join(directory, 'email-connectors.json')
-    const credential = { username: 'work@example.com', password: 'private-password' }
-    await writeFile(credentialPath, JSON.stringify({
-      'mail-1': Buffer.from(JSON.stringify(credential)).toString('base64')
-    }))
-    const manager = new EmailConnectorManager(store, directory) as unknown as {
-      credential: (connectorId: string) => Promise<typeof credential | undefined>
-    }
-
-    expect(await manager.credential('mail-1')).toBeUndefined()
-    expect(JSON.parse(await readFile(credentialPath, 'utf8'))).toHaveProperty('mail-1')
-
-    store.setCurrentAccountId('user-1')
-    await expect(manager.credential('mail-1')).resolves.toEqual(credential)
-    const migrated = JSON.parse(await readFile(credentialPath, 'utf8')) as Record<string, string>
-    expect(migrated['user-1:mail-1']).toBeTruthy()
-    expect(migrated['mail-1']).toBeUndefined()
-
-    store.setCurrentAccountId('user-2')
-    store.setConnectors([mailbox('mail-1')])
-    expect(await manager.credential('mail-1')).toBeUndefined()
+    const desktop = await createTestDesktop()
+    const vault = new CredentialVault(directory, { available: () => true, encrypt: value => Buffer.from(value).toString('base64'), decrypt: value => Buffer.from(value, 'base64').toString() })
+    const manager = new EmailConnectorManager(desktop.repository, vault)
+    vi.spyOn(manager, 'test').mockResolvedValue({ ok: true, imap: { ok: true }, smtp: { ok: true } })
+    const agent = await desktop.repository.createAgent({ name: 'Mail', role: '', instructions: '', color: '#123456', provider: 'anthropic', model: 'claude-sonnet-4-5' })
+    const { agentIds: _agentIds, id: _id, ...input } = mailbox('mail-1', [agent.id])
+    const saved = await manager.save({ ...input, agentIds: [agent.id], password: 'private-password' })
+    expect(vault.has(`email:${saved.id}`)).toBe(true)
+    expect(JSON.stringify((await manager.snapshot()))).not.toContain('private-password')
+    const feltDirectory = join(desktop.root, 'felt')
+    for (const entry of readdirSync(feltDirectory, { withFileTypes: true })) if (entry.isFile()) expect(readFileSync(join(feltDirectory, entry.name), 'utf8')).not.toContain('private-password')
+    await manager.disconnect(saved.id)
+    expect(vault.has(`email:${saved.id}`)).toBe(false)
+    expect((await manager.snapshot())).toEqual([])
   })
 })

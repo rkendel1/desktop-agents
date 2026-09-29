@@ -27,11 +27,13 @@
     "release:mac": "npm run build && electron-builder --mac dmg zip --x64 --arm64 --publish never",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "vitest run src"
+    "test": "vitest run src",
+    "lint": "eslint src"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.84.2",
     "@earendil-works/pi-ai": "^0.84.2",
+    "@feltdb/core": "0.11.9",
     "@larksuiteoapi/node-sdk": "^1.74.0",
     "@sinclair/typebox": "^0.34.41",
     "dotenv": "^17.2.1",
@@ -50,6 +52,7 @@
     "yauzl": "3.4.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@streamdown/cjk": "^1.0.3",
     "@streamdown/mermaid": "^1.0.2",
     "@types/mailparser": "^3.4.6",
@@ -64,12 +67,14 @@
     "electron": "43.7.3",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "eslint": "^9.39.5",
     "jsdom": "^27.3.0",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "streamdown": "^2.6.0",
     "typescript": "^5.9.2",
+    "typescript-eslint": "^8.71.0",
     "vite": "^7.1.2",
     "vitest": "^3.2.4"
   },
@@ -98,14 +103,6 @@
       "zh_CN"
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "protocols": [
-      {
-        "name": "Douchat sign-in",
-        "schemes": [
-          "douchat"
-        ]
-      }
-    ],
     "publish": [
       {
         "provider": "generic",
@@ -168,11 +165,6 @@
       "category": "Utility",
       "maintainer": "ThinkAny, LLC <support@thinkany.ai>",
       "syncDesktopName": true,
-      "desktop": {
-        "entry": {
-          "MimeType": "x-scheme-handler/douchat;"
-        }
-      },
       "target": [
         {
           "target": "AppImage",

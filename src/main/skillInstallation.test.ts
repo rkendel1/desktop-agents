@@ -4,11 +4,11 @@ import type { AgentConfig } from '../shared/types'
 const content = '---\nname: ppt\ndescription: Make slides\n---\n# Slides\nFollow this workflow.'
 const files = [{ path: 'SKILL.md', content }, { path: 'references/layout.md', content: 'Use readable titles' }]
 function setup() {
-  let actor = { id: 'actor', ownerId: 'owner', name: 'Claude', skills: [] } as unknown as AgentConfig
-  let target = { id: 'target', ownerId: 'owner', name: 'Musk', skills: [] } as unknown as AgentConfig
+  let actor = { id: 'actor', name: 'Claude', skills: [] } as unknown as AgentConfig
+  let target = { id: 'target', name: 'Musk', skills: [] } as unknown as AgentConfig
   const authorize = vi.fn(async (_target: AgentConfig, _details: string, _signal?: AbortSignal) => {})
   const save = vi.fn((a, skills) => { if (a.id === actor.id) actor = { ...a, skills }; else target = { ...a, skills } })
-  const tools = createSkillInstallationTools({ current: () => actor, targets: () => [actor, target, { id: 'foreign', ownerId: 'other' } as AgentConfig], authorize, save })
+  const tools = createSkillInstallationTools({ current: () => actor, targets: () => [actor, target], authorize, save })
   return { call: (name: string, args: object) => tools.find(t => t.name === name)!.execute('test', args), authorize, save, target: () => target }
 }
 it('creates for another owned agent only after approval, retaining resources and unrelated skills', async () => {
@@ -25,11 +25,11 @@ it('creates for another owned agent only after approval, retaining resources and
   await host.call('create_skill', { files, targetAgentId: 'target', replace: true })
   expect(host.target().skills![0].id).toBe(id)
 })
-it('denial, foreign targets and malformed paths never write configuration', async () => {
+it('denial, unknown targets and malformed paths never write configuration', async () => {
   const host = setup()
   host.authorize.mockRejectedValue(new Error('Denied'))
   await expect(host.call('create_skill', { files })).rejects.toThrow('Denied')
-  await expect(host.call('create_skill', { files, targetAgentId: 'foreign' })).rejects.toThrow('current owner')
+  await expect(host.call('create_skill', { files, targetAgentId: 'missing' })).rejects.toThrow('not found')
   await expect(host.call('create_skill', { files: [...files, { path: '../bad', content: '' }] })).rejects.toThrow('path')
   await expect(host.call('install_skill', { source: '/private/nonexistent' })).rejects.toThrow('Denied')
   expect(host.save).not.toHaveBeenCalled()

@@ -17,32 +17,6 @@ vi.mock('./common', () => ({
 }))
 import { BotInbox } from './BotInbox'
 
-it('shows human DMs alongside agent chats, ordered by latest message, and opens the selected room', async () => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-  const host = document.createElement('div')
-  document.body.appendChild(host)
-  const root = createRoot(host)
-  const onSelect = vi.fn()
-  const snapshot = { agents: [], userName: 'Alice', messages: [{ id: 'm', conversationId: 'dm', topicId: 'main', authorId: 'user', authorName: 'Alice', text: 'Hello Bob', kind: 'message', createdAt: Date.parse('2026-09-21T12:48:00Z') }], conversations: [
-    { id: 'dm', name: 'Bob', type: 'direct', person: { id: 'bob', name: 'Bob', email: 'bob@example.com', image: 'latest-avatar.png' }, remoteRoomId: 'remote-dm', agentIds: [], createdAt: 2, unread: 1 },
-    { id: 'agent', name: 'Agent', type: 'direct', agentIds: [], createdAt: 1, unread: 0 }
-  ] } as unknown as AppSnapshot
-  try {
-    await act(async () => root.render(<BotInbox snapshot={snapshot} activeId="dm" workingIds={new Set()} onSelect={onSelect}
-      onCreateBot={vi.fn()} onAddFriend={vi.fn()} onCreateGroup={vi.fn()} onEdit={vi.fn()} onTogglePin={vi.fn()} onDelete={vi.fn()} onUpdate={vi.fn()} onOpenWindow={vi.fn()} onMarkAllRead={vi.fn()}
- />))
-    const rows = host.querySelectorAll<HTMLButtonElement>('.conversation-item')
-    expect(rows).toHaveLength(2)
-    expect(rows[0].textContent).toContain('Bob')
-    expect(rows[0].querySelector('.conversation-preview')?.textContent).toBe('Hello Bob')
-    expect(rows[0].querySelector('[data-avatar="Bob"]')?.getAttribute('data-src')).toBe('latest-avatar.png')
-    expect(rows[0].classList.contains('active')).toBe(true)
-    expect(rows[0].querySelector('[data-avatar="Bob"]')).not.toBeNull()
-    await act(async () => rows[0].click())
-    expect(onSelect).toHaveBeenCalledWith('dm')
-  } finally { await act(async () => root.unmount()); host.remove() }
-})
-
 it('filters human and agent DMs, local and shared groups, unread chats and search together', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const host = document.createElement('div')
@@ -60,7 +34,7 @@ it('filters human and agent DMs, local and shared groups, unread chats and searc
     render()
   })
   const render = (): void => root.render(<BotInbox snapshot={snapshot} activeId="human" workingIds={new Set()} onSelect={vi.fn()}
-    onCreateBot={vi.fn()} onAddFriend={vi.fn()} onCreateGroup={vi.fn()} onEdit={vi.fn()} onTogglePin={vi.fn()} onDelete={vi.fn()} onUpdate={vi.fn()} onOpenWindow={vi.fn()} onMarkAllRead={onMarkAllRead} />)
+    onCreateBot={vi.fn()} onCreateGroup={vi.fn()} onEdit={vi.fn()} onTogglePin={vi.fn()} onDelete={vi.fn()} onUpdate={vi.fn()} onOpenWindow={vi.fn()} onMarkAllRead={onMarkAllRead} />)
   const trigger = (): HTMLButtonElement => host.querySelector('.inbox-filter-trigger')!
   const addButton = (): HTMLButtonElement => host.querySelector('.sidebar-add')!
   const openFilter = async (): Promise<void> => {

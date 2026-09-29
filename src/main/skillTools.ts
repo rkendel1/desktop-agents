@@ -3,9 +3,9 @@ import { Type } from '@earendil-works/pi-ai'
 import { isSafeSkillPath, type AgentSkill } from '../shared/agentCustomization'
 
 /** Read the validated package snapshot, never arbitrary paths on the host. */
-export function createSkillTools(currentSkills: () => AgentSkill[]): AgentTool[] {
-  const find = (id: string) => {
-    const skill = currentSkills().find(item => item.id === id && item.enabled)
+export function createSkillTools(currentSkills: () => AgentSkill[] | Promise<AgentSkill[]>): AgentTool[] {
+  const find = async (id: string) => {
+    const skill = (await currentSkills()).find(item => item.id === id && item.enabled)
     if (!skill) throw new Error('Enabled skill not found for this agent. Call list_skill_files for current IDs.')
     return skill
   }
@@ -20,8 +20,8 @@ export function createSkillTools(currentSkills: () => AgentSkill[]): AgentTool[]
     parameters: listParameters,
     execute: async (_id, args, signal) => {
       signal?.throwIfAborted()
-      if (!args.skillId) return result({ skills: currentSkills().filter(item => item.enabled).map(({ id, name, description }) => ({ id, name, description })) })
-      const skill = find(args.skillId)
+      if (!args.skillId) return result({ skills: (await currentSkills()).filter(item => item.enabled).map(({ id, name, description }) => ({ id, name, description })) })
+      const skill = await find(args.skillId)
       const paths = ['SKILL.md', ...(skill.files ?? []).map(file => file.path)]
       const offset = args.offset ?? 0
       if (!Number.isSafeInteger(offset) || offset < 0 || offset > paths.length) throw new Error('Invalid file offset')
@@ -40,7 +40,7 @@ export function createSkillTools(currentSkills: () => AgentSkill[]): AgentTool[]
     parameters: readParameters,
     execute: async (_id, args, signal) => {
       signal?.throwIfAborted()
-      const skill = find(args.skillId)
+      const skill = await find(args.skillId)
       if (typeof args.path !== 'string' || !isSafeSkillPath(args.path)) throw new Error('Invalid skill file path')
       let content = skill.content
       if (args.path !== 'SKILL.md') {

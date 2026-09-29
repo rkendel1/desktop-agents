@@ -1,12 +1,9 @@
-import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { createProvider, type Provider, type Model } from '@earendil-works/pi-ai'
 import * as openai from '@earendil-works/pi-ai/api/openai-completions'
 import * as anthropic from '@earendil-works/pi-ai/api/anthropic-messages'
+import type { DesktopRepository, ProviderRecord } from './desktopRepository'
+import type { CredentialVault } from './credentialVault'
 import { CUSTOM_PROVIDER_PREFIX, customEndpoint, type CustomProviderInput, type CustomModelConfig, type CustomModelTest } from '../shared/customModels'
-interface SecretCodec { encrypt(value: string): string; decrypt(value: string): string }
-interface Stored { providers: Array<Omit<CustomProviderInput, 'apiKey'> & { secret: string }>; defaultModel: string }
 export interface CustomProviderRecord extends CustomProviderInput { apiKey: string }
 export function validateCustomProvider(input: CustomProviderInput): CustomProviderInput {
   if (!input || typeof input.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(input.id)) throw new Error("Invalid provider ID.")
@@ -21,47 +18,52 @@ export function validateCustomProvider(input: CustomProviderInput): CustomProvid
   const reasoningModels = Array.isArray(input.reasoningModels) ? models.filter(model => input.reasoningModels!.includes(model)) : []
   return { id: input.id, name: input.name.trim(), kind: input.kind, apiBase: input.apiBase.trim(), apiKey: input.apiKey?.trim(), models, ...(Object.keys(modelLabels).length ? { modelLabels } : {}), ...(reasoningModels.length ? { reasoningModels } : {}) }
 }
+/**
+ * Provider configuration. FeltDB holds the non-secret record (endpoint, models,
+ * a `credentialRef`); the API key lives only in the OS-backed credential vault.
+ */
 export class CustomModelStore {
-  constructor(private directory: string, private codec: SecretCodec) {}
-  private file(account: string): string {
-    if (!account) throw new Error("Sign in first.")
-    return join(this.directory, `${createHash('sha256').update(account).digest('hex')}.json`)
+  constructor(private repository: DesktopRepository, private vault: CredentialVault) {}
+  private reference(id: string): string { return `provider:${id}` }
+  private secret(id: string): string | undefined { return this.vault.get(this.reference(id)) }
+  async list(): Promise<CustomModelConfig> {
+    return {
+      defaultModel: (await this.repository.setting<string>('defaultModel')) ?? '',
+      providers: (await this.repository.providers()).map(record => ({ id: record.id, name: record.name, kind: record.kind, ...record.config, hasKey: this.vault.has(record.credentialRef ?? this.reference(record.id)) }))
+    }
   }
-  private read(account: string): Stored {
-    const file = this.file(account)
-    return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : { providers: [], defaultModel: '' }
-  }
-  list(account: string): CustomModelConfig {
-    const data = this.read(account)
-    return { defaultModel: data.defaultModel, providers: data.providers.map(({ secret, ...provider }) => ({ ...provider, hasKey: Boolean(secret) })) }
-  }
-  records(account: string): CustomProviderRecord[] { return this.read(account).providers.map(({ secret, ...p }) => ({ ...p, apiKey: this.codec.decrypt(secret) })) }
-  save(account: string, inputs: CustomProviderInput[], defaultModel: string): CustomModelConfig {
-    if (!Array.isArray(inputs) || inputs.length > 30 || typeof defaultModel !== 'string') throw new Error("Invalid model configuration.")
-    const old = this.read(account)
-    const providers = inputs.map(validateCustomProvider).map(({ apiKey, ...p }) => {
-      const previous = old.providers.find(item => item.id === p.id)
-      // Never forward a stored key to a changed endpoint without explicit re-entry.
-      if (!apiKey && previous && (customEndpoint(previous.apiBase, previous.kind) !== customEndpoint(p.apiBase, p.kind))) throw new Error("The API URL changed. Enter the API key again.")
-      const secret = apiKey ? this.codec.encrypt(apiKey) : previous?.secret
-      if (!secret) throw new Error("Enter an API key.")
-      return { ...p, secret }
+  async records(): Promise<CustomProviderRecord[]> {
+    return (await this.repository.providers()).flatMap(record => {
+      const apiKey = this.secret(record.id)
+      return apiKey ? [{ id: record.id, name: record.name, kind: record.kind, ...record.config, apiKey }] : []
     })
-    if (new Set(providers.map(p => p.id)).size !== providers.length) throw new Error("Duplicate provider IDs.")
-    const choices = providers.flatMap(p => p.models.map(m => `${p.id}/${m}`))
-    const next = { providers, defaultModel: choices.includes(defaultModel) ? defaultModel : choices[0] ?? '' }
-    mkdirSync(this.directory, { recursive: true, mode: 0o700 })
-    const file = this.file(account)
-    writeFileSync(file + '.tmp', JSON.stringify(next), { mode: 0o600 })
-    renameSync(file + '.tmp', file)
-    return this.list(account)
   }
-  async test(account: string, input: CustomModelTest): Promise<{ ok: boolean; error?: string; model?: string }> {
+  async save(inputs: CustomProviderInput[], defaultModel: string): Promise<CustomModelConfig> {
+    if (!Array.isArray(inputs) || inputs.length > 30 || typeof defaultModel !== 'string') throw new Error("Invalid model configuration.")
+    const old = new Map((await this.repository.providers()).map(record => [record.id, record]))
+    const staged: { record: ProviderRecord; apiKey?: string }[] = inputs.map(validateCustomProvider).map(({ apiKey, ...p }) => {
+      const previous = old.get(p.id)
+      // Never forward a stored key to a changed endpoint without explicit re-entry.
+      if (!apiKey && previous && (customEndpoint(previous.config.apiBase, previous.kind) !== customEndpoint(p.apiBase, p.kind))) throw new Error("The API URL changed. Enter the API key again.")
+      if (!apiKey && !this.vault.has(this.reference(p.id))) throw new Error("Enter an API key.")
+      const { id, name, kind, ...config } = p
+      return { apiKey, record: { id, name, kind, config, credentialRef: this.reference(id), updatedAt: Date.now() } }
+    })
+    if (new Set(staged.map(item => item.record.id)).size !== staged.length) throw new Error("Duplicate provider IDs.")
+    const choices = staged.flatMap(item => item.record.config.models.map(m => `${item.record.id}/${m}`))
+    // Secrets first: a record must never reference a credential that was not stored.
+    for (const item of staged) if (item.apiKey) this.vault.set(item.record.credentialRef!, item.apiKey)
+    // The providers and the default model commit together.
+    await this.repository.replaceProviders(staged.map(item => item.record), choices.includes(defaultModel) ? defaultModel : choices[0] ?? '')
+    for (const id of old.keys()) if (!staged.some(item => item.record.id === id)) this.vault.delete(this.reference(id))
+    return this.list()
+  }
+  async test(input: CustomModelTest): Promise<{ ok: boolean; error?: string; model?: string }> {
     const p = validateCustomProvider(input.provider)
     if (!p.models.includes(input.model)) throw new Error("Select a model from the configuration.")
-    const saved = this.read(account).providers.find(item => item.id === p.id)
-    const canReuse = saved && customEndpoint(saved.apiBase, saved.kind) === customEndpoint(p.apiBase, p.kind)
-    const key = p.apiKey || (canReuse ? this.codec.decrypt(saved.secret) : '')
+    const saved = (await this.repository.providers()).find(item => item.id === p.id)
+    const canReuse = saved && customEndpoint(saved.config.apiBase, saved.kind) === customEndpoint(p.apiBase, p.kind)
+    const key = p.apiKey || (canReuse ? this.secret(p.id) ?? '' : '')
     if (!key) return { ok: false, error: '请输入 API 密钥；地址修改后需要重新输入。' }
     try {
       const res = await fetch(customEndpoint(p.apiBase, p.kind), {

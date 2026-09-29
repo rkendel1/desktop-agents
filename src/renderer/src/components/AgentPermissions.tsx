@@ -3,7 +3,6 @@ import { useContext, useState, type ReactElement } from 'react'
 import { agentPermissions, permissionLabels, sensitiveCapabilities, type AgentPermissions, type PermissionApproval, type PermissionDecision, type PermissionRequest } from '../../../shared/agentPermissions'
 import type { AgentConfig } from '../../../shared/types'
 import { t } from '../preferences'
-import type { SocialSnapshot } from '../../../shared/social'
 import { AgentAvatar, agentDisplayName, UserAvatar } from './common'
 
 export function AgentPermissionsDialog({ agent, onClose, onSave }: {
@@ -47,8 +46,8 @@ export function AgentPermissionsDialog({ agent, onClose, onSave }: {
   </NativeDialog>
 }
 
-export function AgentPermissionPrompt({ request, agent, social, onResolve }: { request: PermissionRequest; agent?: AgentConfig; social?: SocialSnapshot; onResolve: (allow: PermissionApproval) => Promise<void> }): ReactElement {
-  const contact = agent?.id === request.agentId && agent.ownerId === request.ownerId ? agent : undefined
+export function AgentPermissionPrompt({ request, agent, onResolve }: { request: PermissionRequest; agent?: AgentConfig; onResolve: (allow: PermissionApproval) => Promise<void> }): ReactElement {
+  const contact = agent?.id === request.agentId ? agent : undefined
   let native: { tool?: string; input?: { command?: string }; arguments?: { command?: string; app?: string } } | undefined
   try { native = JSON.parse(request.details) } catch { /* Plain-text requests remain visible. */ }
   const nativeLabels: Record<string, string> = {
@@ -61,10 +60,7 @@ export function AgentPermissionPrompt({ request, agent, social, onResolve }: { r
   const command = nativeTool === 'Bash' ? native?.input?.command ?? native?.arguments?.command : undefined
   const desktopApp = request.nativeApp?.name || (['get_app_state', 'launch_app'].includes(nativeTool ?? '') && typeof native?.arguments?.app === 'string'
     ? native.arguments.app : undefined)
-  const people = social?.userId === request.ownerId && request.requesterKind !== 'agent' ? social : undefined
-  const person = people?.rooms.flatMap(room => room.members).find(member => member.id === request.requesterId)
-    ?? people?.friendships.find(friend => friend.person.id === request.requesterId)?.person
-  const requesterName = person?.name || request.requester
+  const requesterName = request.requester
   const selfRequest = request.requesterKind === 'agent' && request.requesterId === request.agentId
   const room = request.context === 'group' || request.context !== 'direct' && request.roomName !== request.agentName && request.roomName !== requesterName ? request.roomName : undefined
   const [busy, setBusy] = useState(false)
@@ -79,7 +75,7 @@ export function AgentPermissionPrompt({ request, agent, social, onResolve }: { r
           <span>{t(actionLabel ?? (request.capability === 'otherTools' ? 'Run requested operation' : permissionLabels[request.capability]))}</span></span>
       </div>
       {!selfRequest && (request.requesterKind !== 'agent' ? <div className="permission-requester">
-        <UserAvatar src={person?.image || ''} name={requesterName} size={32} />
+        <UserAvatar src="" name={requesterName} size={32} />
         <span className="permission-requester-copy"><small className="muted">{t('Requested by')}</small><strong>{requesterName}</strong></span>
       </div> : <p className="muted" title={request.requesterId}>{t('Requested by')}: {requesterName} · {t('Agent')}</p>)}
       {room && <p className="muted">{t('Group')}: {room}</p>}

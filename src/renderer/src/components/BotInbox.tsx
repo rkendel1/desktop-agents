@@ -45,7 +45,6 @@ export function BotInbox({
   workingIds,
   onSelect,
   onCreateBot,
-  onAddFriend,
   onCreateGroup,
   onEdit,
   onTogglePin,
@@ -59,7 +58,6 @@ export function BotInbox({
   workingIds: Set<string>
   onSelect: (conversationId: string) => void
   onCreateBot: () => void
-  onAddFriend: () => void
   onCreateGroup: () => void
   onEdit: (conversation: Conversation) => void
   onTogglePin: (conversation: Conversation) => void
@@ -171,7 +169,6 @@ export function BotInbox({
   const menuTarget = snapshot.conversations.find((conversation) => conversation.id === contextMenu?.id)
 
   const row = (conversation: Conversation): ReactElement => {
-    const person = conversation.person
     const displayName = conversationDisplayName(conversation, snapshot.agents)
     const messages = messagesByConversation.get(conversation.id) ?? []
     const working = workingIds.has(conversation.id)
@@ -185,11 +182,11 @@ export function BotInbox({
       }))
     )
     const last = messages[messages.length - 1]
-    const previewText = last?.attachments?.length && !last.text ? t('Image') : person ? last?.text || t('Start a conversation') : last?.authorId === 'user'
+    const previewText = last?.attachments?.length && !last.text ? t('Image') : last?.authorId === 'user'
         ? tr('You: {message}', { message: last.text })
         : preview
           ? conversation.type === 'group'
-            ? `${preview.authorName === 'Dr. Dou' ? t('Dr. Dou') : preview.authorName}: ${preview.text}`
+            ? `${preview.authorName}: ${preview.text}`
             : preview.text
           : t('Start a conversation')
 
@@ -210,7 +207,7 @@ export function BotInbox({
         }}
       >
         <span className="conversation-avatar">
-          <>{person ? <UserAvatar name={person.name} src={person.image || ''} size={36} /> : <ConversationAvatar conversation={conversation} agents={snapshot.agents} userName={snapshot.userName} userAvatar={snapshot.userAvatar} size={36} />}</>
+          <ConversationAvatar conversation={conversation} agents={snapshot.agents} userName={snapshot.userName} userAvatar={snapshot.userAvatar} size={36} />
           {!working && conversation.unread > 0 && <span className={`unread-badge ${conversation.muted ? 'muted' : ''}`}>{conversation.unread > 99 ? '99+' : conversation.unread}</span>}
           {working && <span className="conversation-loading" role="status" aria-label={t('Working…')}><LoaderCircle size={13} /></span>}
         </span>
@@ -218,7 +215,7 @@ export function BotInbox({
           <span className="conversation-line">
             <strong>
               {displayName || 'New chat'}
-              <ContactKindBadge human={Boolean(person)} local={conversation.type === 'direct' && Boolean(snapshot.agents.find((agent) => agent.id === conversation.agentIds[0])?.localAgentId)} />
+              <ContactKindBadge local={conversation.type === 'direct' && Boolean(snapshot.agents.find((agent) => agent.id === conversation.agentIds[0])?.localAgentId)} />
               {conversation.pinned && <Pin size={11} className="pin-mark" />}
             </strong>
             <time>{new Date(lastMessageAt(conversation)).toDateString() === new Date(now).toDateString() ? formatTime(lastMessageAt(conversation)) : relativeTime(lastMessageAt(conversation), now)}</time>
@@ -263,9 +260,6 @@ export function BotInbox({
                 </button>
                 <button role="menuitem" onClick={() => { setCreateOpen(false); onCreateBot() }}>
                   <Bot size={14} /><span>{t('Create agent')}</span>
-                </button>
-                <button role="menuitem" onClick={() => { setCreateOpen(false); onAddFriend() }}>
-                  <UserPlus size={14} /><span>{t('Add friend')}</span>
                 </button>
                 <div className="dropdown-separator" role="separator" />
                 <div className="inbox-filter-anchor" ref={filterRef}
@@ -345,7 +339,7 @@ export function BotInbox({
           <div className="dropdown-separator" />
           <button role="menuitem" onClick={() => { setContextMenu(null); onOpenWindow(menuTarget) }}>{t('Open in separate window')}</button>
           <button role="menuitem" onClick={() => { setContextMenu(null); onUpdate(menuTarget, { hidden: true }) }}>{t('Hide chat')}</button>
-          <button role="menuitem" onClick={() => { setContextMenu(null); onEdit(menuTarget) }}>{t(menuTarget.person ? 'Contact details' : 'Edit')}</button>
+          <button role="menuitem" onClick={() => { setContextMenu(null); onEdit(menuTarget) }}>{t('Edit')}</button>
           <div className="dropdown-separator" />
           <button role="menuitem" className="danger" onClick={() => { setContextMenu(null); onDelete(menuTarget) }}>{t('Delete')}</button>
         </div>

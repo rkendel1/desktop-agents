@@ -1,12 +1,3 @@
-export const CLOUD_DECISION_PROVIDER_ID = 'douchat:cloud'
-
-export interface CloudDecisionModel {
-  id: string
-  name: string
-  protocol: 'jev'
-  creditsPerRequest: number
-}
-
 export interface DecisionSettings {
   healthCheckIntervalSeconds?: number
   mode: 'leader' | 'model' | 'llm' | 'jev'
@@ -15,7 +6,7 @@ export interface DecisionSettings {
 }
 
 export const DEFAULT_DECISION_SETTINGS: DecisionSettings = {
-  mode: 'model', providerId: CLOUD_DECISION_PROVIDER_ID, model: ''
+  mode: 'leader', providerId: '', model: ''
 }
 
 export function validateDecisionSettings(value: DecisionSettings): DecisionSettings {
@@ -23,16 +14,10 @@ export function validateDecisionSettings(value: DecisionSettings): DecisionSetti
     || value.healthCheckIntervalSeconds < 30 || value.healthCheckIntervalSeconds > 3600)) throw new Error('Health check interval must be between 30 and 3600 seconds.')
   if (!value || !['leader', 'model', 'llm', 'jev'].includes(value.mode)
     || typeof value.providerId !== 'string' || typeof value.model !== 'string') throw new Error('Invalid group decision settings.')
-  if (value.mode !== 'leader' && ((value.providerId !== CLOUD_DECISION_PROVIDER_ID && !/^[a-zA-Z0-9-]{1,80}$/.test(value.providerId))
-    || (value.providerId !== CLOUD_DECISION_PROVIDER_ID && !value.model.trim()) || value.model.length > 200)) throw new Error('Select a decision provider and enter a model ID.')
+  if (value.mode !== 'leader' && (!/^[a-zA-Z0-9-]{1,80}$/.test(value.providerId)
+    || !value.model.trim() || value.model.length > 200)) throw new Error('Select a decision provider and enter a model ID.')
   return { mode: value.mode === 'leader' ? 'leader' : 'model', providerId: value.providerId, model: value.model.trim(),
     ...(value.healthCheckIntervalSeconds !== undefined ? { healthCheckIntervalSeconds: value.healthCheckIntervalSeconds } : {}) }
-}
-
-/** Do not turn a legacy self-funded model into paid cloud usage implicitly. */
-export function desktopDecisionSettings(value: DecisionSettings): DecisionSettings {
-  const cloud = value.mode !== 'leader' && value.providerId === CLOUD_DECISION_PROVIDER_ID
-  return { ...value, mode: cloud ? 'model' : 'leader', providerId: cloud ? CLOUD_DECISION_PROVIDER_ID : '', model: '' }
 }
 
 /** Both current UI and legacy modes use the protocol of the configured model. */

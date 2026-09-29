@@ -1,13 +1,14 @@
 import type { SelectedMention } from './bot/mentions'
 import type { DesktopDeviceApi } from './deviceApi'
-import type { AccountDataApi } from './accountData'
+import type { DesktopDataApi } from './desktopData'
 import type { CustomModelConfig, CustomProviderInput, CustomModelTest } from './customModels'
 import type { ThinkingLevel } from './thinkingLevels'
 import type { AgentPermissions, PermissionRequest } from './agentPermissions'
-import type { SocialAction, SocialResult, SocialSnapshot } from './social'
+import type { ProjectionDelta, ProjectionSnapshot } from './projection'
 export type AgentStatus = 'idle' | 'thinking' | 'offline'
 export type ComputerStatus = 'stopped' | 'starting' | 'ready' | 'working' | 'error'
-export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+/** `interrupted`: the app stopped while the run was queued or running, so its outcome is unknown. */
+export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 export type RunTrigger = 'chat' | 'manual' | 'schedule'
 
 export interface LocalAgent {
@@ -43,31 +44,18 @@ export interface CustomLocalAgentInput {
 }
 
 export interface AgentConfig {
-  /** Local record version; absent only before migration. Not a sync cursor. */
+  /** Local record version. Not a sync cursor. */
   revision?: number
-  systemFilesDirectory?: string
   systemFiles?: import('./agentCustomization').AgentFiles
   skills?: import('./agentCustomization').AgentSkill[]
   followDefaultModel?: boolean
   permissions?: AgentPermissions
-  /** Account ownership used for shared group execution. */
-  ownerId?: string
   localAgentId?: string
   /** Snapshot of a custom local runtime's display name for durable contact labels. */
   localAgentName?: string
 
   id: string
   name: string
-  /** First-party account authority. User-created agents never receive this. */
-  systemRole?: 'admin'
-  /** Stable identity and policy supplied by the Douchat service. */
-  systemKey?: string
-  cloudAgentId?: string
-  templateVersion?: number
-  modelRoute?: string
-  capabilities?: BuiltInAgentCapability[]
-  /** User-owned presentation/personality fields layered over cloud defaults. */
-  userOverrides?: BuiltInAgentUserOverrides
   /** Optional user-selected picture, stored locally as a compact data URL. */
   avatar?: string
   /** Optional single-grapheme emoji avatar; mutually exclusive with avatar. */
@@ -86,42 +74,6 @@ export interface AgentConfig {
   createdAt: number
 }
 
-export type BuiltInAgentCapability = 'manage_agents'
-
-export interface BuiltInAgentUserOverrides {
-  /** Explicit model selection, validated and resolved by the main process. */
-  modelBinding?: Pick<AgentConfig, 'provider' | 'model'>
-  role?: string
-  thinkingLevel?: ThinkingLevel
-  name?: string
-  avatar?: string
-  avatarEmoji?: string
-  instructions?: string
-  labels?: string
-}
-
-export type BuiltInAgentLocalization = Pick<BuiltInAgentDefinition, 'role' | 'instructions' | 'labels'>
-
-export interface BuiltInAgentDefinition {
-  localizations?: Partial<Record<'en' | 'zh-CN', BuiltInAgentLocalization>>
-  id: string
-  systemKey: string
-  systemRole: 'admin'
-  capabilities: BuiltInAgentCapability[]
-  templateVersion: number
-  name: string
-  role: string
-  instructions: string
-  labels?: string
-  color: string
-  modelRoute: string
-}
-
-export interface BuiltInAgentManifest {
-  version: number
-  agents: BuiltInAgentDefinition[]
-}
-
 export interface Topic {
   contextReset?: { id: string; at: number }
   id: string
@@ -131,18 +83,12 @@ export interface Topic {
 }
 
 export interface Conversation {
-  /** Local record version; absent only before migration. Not a sync cursor. */
+  /** Local record version. Not a sync cursor. */
   revision?: number
   /** Only unnamed groups follow member names; legacy and explicitly named groups keep their names. */
   autoNamed?: boolean
   avatar?: string
   avatarEmoji?: string
-  /** Human direct conversations use the same local inbox, with a remote delivery address. */
-  person?: import('./social').SocialPerson
-  remoteRoomId?: string
-  socialRoom?: import('./social').SocialRoom
-  /** Account that owns this local conversation. Missing only on legacy data awaiting migration. */
-  ownerId?: string
   id: string
   type: 'group' | 'direct'
   name: string
@@ -274,7 +220,6 @@ export interface ChatMessage {
   contextVersion?: string
   /** Localizable application notice; user and agent text never carry this. */
   localization?: import('./groupText').GroupNotice
-  socialTasks?: { id: string; agentId: string; agentName: string; status: string }[]
   deliveryState?: 'sending' | 'confirming' | 'failed'
   id: string
   conversationId: string
@@ -326,27 +271,6 @@ export interface PrivateMessage {
 export interface RuntimeStatus {
   mode: 'live' | 'offline'
   label: string
-  /** The OpenAI-compatible endpoint backing live models, when configured. */
-  endpoint?: string
-  error?: string
-}
-
-export interface EndpointSettings {
-  baseUrl: string
-  /** The key itself never leaves the main process. */
-  hasApiKey: boolean
-  source: 'account' | 'settings' | 'env' | 'none'
-}
-
-export interface EndpointInput {
-  baseUrl: string
-  /** Omit to keep the saved key. */
-  apiKey?: string
-}
-
-export interface EndpointTestResult {
-  ok: boolean
-  models: number
   error?: string
 }
 
@@ -409,8 +333,6 @@ export type RoutineSchedule =
     }
 
 export interface Routine {
-  /** Account that created and is allowed to execute this local automation. */
-  ownerId?: string
   id: string
   name: string
   agentId: string
@@ -436,8 +358,6 @@ export interface CreateRoutineInput {
 }
 
 export interface TaskRun {
-  /** Account that owns the conversation/task which produced this run. */
-  ownerId?: string
   id: string
   agentId: string
   conversationId: string
@@ -454,17 +374,46 @@ export interface TaskRun {
   finishedAt?: number
 }
 
+/** The execution lifecycle FeltDB records for every run. */
+export type ExecutionEventKind = 'queued' | 'running' | 'tool_call' | 'tool_result' | 'message_delta' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+
 export interface RunEvent {
   id: string
   runId: string
+  /** How the UI groups the event; `kind` is the durable lifecycle stage. */
   type: 'status' | 'tool'
+  kind?: ExecutionEventKind
   label: string
   detail?: string
   status?: RunStatus
   createdAt: number
 }
 
+/** Something the desktop is holding for the person to look at, such as a run that was cut short. */
+export interface AttentionItem {
+  id: string
+  kind: 'interrupted-run' | 'provider-setup' | 'migration'
+  title: string
+  detail?: string
+  sessionId?: string
+  runId?: string
+  createdAt: number
+  resolvedAt?: number
+}
+
+/** Facts about the local desktop itself. */
+export interface DesktopInfo {
+  /** The welcome screen is optional; once dismissed or completed it stays away. */
+  onboardingCompleted: boolean
+  /** FeltDB's durable state directory. */
+  databaseDirectory: string
+  migration?: { status: 'complete' | 'not-needed' | 'failed'; imported: Record<string, number>; skipped: Record<string, number>; error?: string }
+}
+
 export interface AppSnapshot {
+  desktop?: DesktopInfo
+  /** Unresolved attention items, newest first. */
+  attention?: AttentionItem[]
   groupMemberHealth?: Record<string, Record<string, { status: 'healthy' | 'unknown' | 'unavailable'; checkedAt: number }>>
   groupGames?: import('./groupGame').GameView[]
   groupWorkflows?: import('./groupWorkflow').GroupWorkflowView[]
@@ -480,11 +429,8 @@ export interface AppSnapshot {
   runs: TaskRun[]
   runEvents: RunEvent[]
   runtime: RuntimeStatus
-  endpoint: EndpointSettings
   models: ModelOption[]
   connectors: EmailConnectorAccount[]
-  /** The signed-in account's system-admin chat, when it currently exists. */
-  defaultConversationId?: string
   userName: string
   /** The picture the user chose, already downscaled, as a data URL. */
   userAvatar: string
@@ -494,7 +440,6 @@ export interface CreateAgentInput {
   systemFiles?: import('./agentCustomization').AgentFiles
   thinkingLevel?: ThinkingLevel | 'default'
   customModel?: { providerId: string; model: string }
-  cloudModel?: { model: string }
   localAgentId?: string
   localAgentName?: string
 
@@ -521,7 +466,6 @@ export interface UpdateAgentInput {
   skills?: import('./agentCustomization').AgentSkill[]
   followDefaultModel?: boolean
   customModel?: { providerId: string; model: string }
-  cloudModel?: { model: string }
   permissions?: AgentPermissions
   localAgentId?: string
   localAgentName?: string
@@ -559,30 +503,11 @@ export interface UpdateConversationInput {
   leadAgentId?: string
 }
 
-export interface DesktopAuthUser {
-  id: string
-  name: string
-  email: string
-  image?: string
-}
-
-export interface UpdateDesktopProfileInput {
+export interface UpdateProfileInput {
   name?: string
+  /** A downscaled picture as a data URL. */
   image?: string
 }
-
-export interface UsageSummary {
-  planName: string
-  status: string
-  credits: number
-}
-
-export type DesktopAuthState =
-  | { status: 'checking' }
-  | { status: 'signed-out' }
-  | { status: 'waiting' }
-  | { status: 'error'; error: string }
-  | { status: 'signed-in'; user: DesktopAuthUser }
 
 export type UpdateStatus =
   | 'disabled'
@@ -608,7 +533,7 @@ export interface UpdateState {
   error?: string
 }
 
-export interface DouchatApi extends AccountDataApi, DesktopDeviceApi {
+export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   listIMChannels(agentId: string): Promise<import('./imChannels').IMChannel[]>
   connectIMChannel(agentId: string, input: import('./imChannels').IMConnectInput): Promise<void>
   disconnectIMChannel(agentId: string, provider: import('./imChannels').IMProvider): Promise<void>
@@ -616,20 +541,10 @@ export interface DouchatApi extends AccountDataApi, DesktopDeviceApi {
   cancelIMLogin(agentId: string, sessionId: string): Promise<void>
   pollIMLogin(agentId: string, sessionId: string): Promise<import('./imChannels').IMLoginStatus>
 
-  getSocialSnapshot: () => Promise<SocialSnapshot>
-  socialAction: (input: SocialAction) => Promise<SocialResult>
   setInterfaceLanguage: (language: string) => Promise<void>
-  getAuthState: () => Promise<DesktopAuthState>
-  startLogin: () => Promise<DesktopAuthState>
-  cancelLogin: () => Promise<DesktopAuthState>
-  retryAuth: () => Promise<DesktopAuthState>
-  signOut: () => Promise<DesktopAuthState>
-  refreshProfile: () => Promise<DesktopAuthState>
-  updateProfile: (input: UpdateDesktopProfileInput) => Promise<DesktopAuthState>
-  getUsageSummary: () => Promise<UsageSummary>
-  consumeCreditsReturn: () => Promise<boolean>
-  openSubscriptionPlans: () => Promise<void>
-  openBillingPortal: () => Promise<void>
+  updateProfile: (input: UpdateProfileInput) => Promise<void>
+  completeOnboarding: () => Promise<void>
+  resolveAttention: (id: string) => Promise<void>
   getUpdateState: () => Promise<UpdateState>
   checkForUpdates: () => Promise<UpdateState>
   installUpdate: () => Promise<UpdateState>
@@ -643,61 +558,55 @@ export interface DouchatApi extends AccountDataApi, DesktopDeviceApi {
   cancelLocalAgentTest: () => Promise<void>
   removeCustomLocalAgent: (id: string) => Promise<LocalAgent[]>
   getAttachmentData: (attachmentId: string) => Promise<string>
-  getSnapshot: () => Promise<AppSnapshot>
+  getSnapshot: () => Promise<ProjectionSnapshot>
   authorizeTokenDance: () => Promise<string>
   cancelTokenDanceAuthorization: () => Promise<void>
   getCustomModels: () => Promise<CustomModelConfig>
   getDecisionSettings: () => Promise<import('./groupDecision').DecisionSettings>
-  getCloudDecisionModels: () => Promise<import('./groupDecision').CloudDecisionModel[]>
   saveDecisionSettings: (settings: import('./groupDecision').DecisionSettings) => Promise<import('./groupDecision').DecisionSettings>
   testDecisionSettings: (settings: import('./groupDecision').DecisionSettings) => Promise<{ ok: boolean; error?: string }>
   saveCustomModels: (providers: CustomProviderInput[], defaultModel: string) => Promise<CustomModelConfig>
   testCustomModel: (input: CustomModelTest) => Promise<{ ok: boolean; error?: string; model?: string }>
-  createAgent: (input: CreateAgentInput) => Promise<AppSnapshot>
-  resolveAgentPermission: (id: string, allow: import('./agentPermissions').PermissionApproval) => Promise<AppSnapshot>
+  createAgent: (input: CreateAgentInput) => Promise<{ agentId: string; conversationId?: string }>
+  resolveAgentPermission: (id: string, allow: import('./agentPermissions').PermissionApproval) => Promise<void>
   exportAgentArchive: (agentId: string) => Promise<boolean>
   parseAgentArchive: (data: Uint8Array, root?: string) => Promise<import('./agentArchive').AgentArchivePreview>
   parseSkillArchive: (data: Uint8Array) => Promise<import('./agentCustomization').AgentSkill[]>
-  updateAgent: (agentId: string, input: UpdateAgentInput) => Promise<AppSnapshot>
-  deleteAgent: (agentId: string) => Promise<AppSnapshot>
-  startDirectChat: (agentId: string) => Promise<{ snapshot: AppSnapshot; conversationId: string }>
-  createGroup: (input: CreateGroupInput) => Promise<AppSnapshot>
-  updateConversation: (conversationId: string, input: UpdateConversationInput) => Promise<AppSnapshot>
+  updateAgent: (agentId: string, input: UpdateAgentInput) => Promise<void>
+  deleteAgent: (agentId: string) => Promise<void>
+  startDirectChat: (agentId: string) => Promise<{ conversationId: string }>
+  createGroup: (input: CreateGroupInput) => Promise<{ conversationId: string }>
+  updateConversation: (conversationId: string, input: UpdateConversationInput) => Promise<void>
   /** Opens a folder picker; resolves unchanged if cancelled. */
   openConversationWorkspace: (conversationId: string) => Promise<void>
-  chooseConversationWorkspace: (conversationId: string) => Promise<AppSnapshot>
-  clearConversationWorkspace: (conversationId: string) => Promise<AppSnapshot>
+  chooseConversationWorkspace: (conversationId: string) => Promise<void>
+  clearConversationWorkspace: (conversationId: string) => Promise<void>
   openCodeArtifact: (input: CodeArtifactInput) => Promise<void>
   getCodeArtifact: (artifactId: string) => Promise<CodeArtifactInput | null>
-  connanyCommand: (command: import('./connany').ConnectorCommand) => Promise<unknown>
-  connanySelect: (selection: import('./connany').ConnectorSelection) => Promise<void>
   testEmailConnector: (input: EmailConnectorInput) => Promise<EmailConnectionTestResult>
-  saveEmailConnector: (input: EmailConnectorInput) => Promise<AppSnapshot>
-  disconnectEmailConnector: (connectorId: string) => Promise<AppSnapshot>
+  saveEmailConnector: (input: EmailConnectorInput) => Promise<void>
+  disconnectEmailConnector: (connectorId: string) => Promise<void>
   deleteMessage: (conversationId: string, messageId: string) => Promise<boolean>
-  deleteConversation: (conversationId: string) => Promise<AppSnapshot>
-  setConversationPinned: (conversationId: string, pinned: boolean) => Promise<AppSnapshot>
-  markConversationRead: (conversationId: string) => Promise<AppSnapshot>
-  markAllConversationsRead: () => Promise<AppSnapshot>
-  createTopic: (conversationId: string) => Promise<AppSnapshot>
-  renameTopic: (conversationId: string, topicId: string, title: string) => Promise<AppSnapshot>
-  deleteTopic: (conversationId: string, topicId: string) => Promise<AppSnapshot>
-  setActiveTopic: (conversationId: string, topicId: string) => Promise<AppSnapshot>
+  deleteConversation: (conversationId: string) => Promise<void>
+  setConversationPinned: (conversationId: string, pinned: boolean) => Promise<void>
+  markConversationRead: (conversationId: string) => Promise<void>
+  markAllConversationsRead: () => Promise<void>
+  createTopic: (conversationId: string) => Promise<void>
+  renameTopic: (conversationId: string, topicId: string, title: string) => Promise<void>
+  deleteTopic: (conversationId: string, topicId: string) => Promise<void>
+  setActiveTopic: (conversationId: string, topicId: string) => Promise<void>
   sendMessage: (conversationId: string, text: string, images?: MessageImageInput[], files?: MessageFileInput[], mentions?: SelectedMention[]) => Promise<void>
   stopConversation: (conversationId: string) => Promise<void>
-  clearConversation: (conversationId: string) => Promise<AppSnapshot>
-  resetConversationContext: (conversationId: string) => Promise<AppSnapshot>
-  setEndpoint: (input: EndpointInput) => Promise<AppSnapshot>
-  testEndpoint: (input: EndpointInput) => Promise<EndpointTestResult>
-  createRoutine: (input: CreateRoutineInput) => Promise<AppSnapshot>
-  deleteRoutine: (routineId: string) => Promise<AppSnapshot>
-  setRoutineEnabled: (routineId: string, enabled: boolean) => Promise<AppSnapshot>
+  clearConversation: (conversationId: string) => Promise<void>
+  resetConversationContext: (conversationId: string) => Promise<void>
+  createRoutine: (input: CreateRoutineInput) => Promise<void>
+  deleteRoutine: (routineId: string) => Promise<void>
+  setRoutineEnabled: (routineId: string, enabled: boolean) => Promise<void>
   runRoutineNow: (routineId: string) => Promise<void>
-  startComputer: (agentId: string) => Promise<AppSnapshot>
-  stopComputer: (agentId: string) => Promise<AppSnapshot>
+  startComputer: (agentId: string) => Promise<void>
+  stopComputer: (agentId: string) => Promise<void>
   showComputer: (agentId: string) => Promise<void>
-  onAuthState: (listener: (state: DesktopAuthState) => void) => () => void
-  onCreditsUpdated: (listener: () => void) => () => void
   onUpdateState: (listener: (state: UpdateState) => void) => () => void
-  onSnapshot: (listener: (snapshot: AppSnapshot) => void) => () => void
+  /** Each durable or live change, as a small delta. A renderer reads `getSnapshot` once, then applies deltas whose sequence is newer. */
+  onProjection: (listener: (delta: ProjectionDelta) => void) => () => void
 }

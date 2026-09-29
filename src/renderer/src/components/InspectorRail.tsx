@@ -1,8 +1,6 @@
 import { NativeDialog } from './NativeDialog'
-import { GroupInviteDialog } from './GroupInviteDialog'
 import { ContactKindBadge } from './ContactKindBadge'
 import { ConversationWorkspaceSetting } from './ConversationWorkspaceSetting'
-import type { SocialPerson } from '../../../shared/social'
 import type { ProfileAnchor } from './MemberProfilePopover'
 import { t } from '../preferences'
 import { CalendarClock, ChevronRight, Minus, Pause, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react'
@@ -13,8 +11,6 @@ import { AgentAvatar, UserAvatar, agentDisplayName, agentDisplayRole } from './c
 
 export function InspectorRail({
   snapshot,
-  person,
-  onSelectPerson,
   searchMessages,
   conversation,
   members,
@@ -27,8 +23,6 @@ export function InspectorRail({
   onSetRoutineEnabled,
   onRunRoutineNow
 }: {
-  person?: SocialPerson
-  onSelectPerson?: (anchor: ProfileAnchor, personId?: string) => void
   searchMessages?: (query: string) => Promise<ChatMessage[]>
   snapshot: Pick<AppSnapshot, 'groupMemberHealth' | 'messages' | 'agents' | 'userName' | 'userAvatar' | 'agentStatuses' | 'routines' | 'runs'>
   conversation?: Conversation
@@ -43,12 +37,7 @@ export function InspectorRail({
   onRunRoutineNow?: (routineId: string) => Promise<void>
 }): ReactElement {
   const [memberQuery, setMemberQuery] = useState('')
-  const [confirmLeave, setConfirmLeave] = useState(false)
-  const canLeave = conversation?.type === 'group' && Boolean(conversation.remoteRoomId)
-    && Boolean(conversation.socialRoom?.members[0]?.id) && Boolean(conversation.ownerId)
-    && conversation.socialRoom!.members[0].id !== conversation.ownerId
-  useEffect(() => { setConfirmLeave(false) }, [conversation?.id])
-  const [recordsDialog, setRecordsDialog] = useState<'history' | 'routines' | 'invite' | null>(null)
+  const [recordsDialog, setRecordsDialog] = useState<'history' | 'routines' | null>(null)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ChatMessage[]>([])
   const [busy, setBusy] = useState(false)
@@ -122,11 +111,10 @@ export function InspectorRail({
               {currentUserMatches && <button type="button" onClick={(event) => onSelectUser(event.currentTarget.getBoundingClientRect())} aria-label={`${currentUserName} · ${t('You')}`}><UserAvatar src={snapshot.userAvatar} name={currentUserName} size={40} /><span><strong>{highlight(currentUserName)}</strong></span></button>}
               {!matchingMembers.length && !currentUserMatches && <p>{t('No matching agents')}</p>}
             </div> : <div className="member-grid">
-              {person && <button type="button" className="member-tile" onClick={(event) => onSelectPerson?.(event.currentTarget.getBoundingClientRect())} title={person.name}><div className="member-avatar-wrap"><UserAvatar src={person.image || ''} name={person.name} size={40} /><ContactKindBadge human /></div><span className="member-name-label"><span className="member-name-text">{person.name}</span></span></button>}
               {orderedMembers.map((member) => (
                 <button
                   key={member.id}
-                  style={{ order: conversation.socialRoom?.agents.find((agent) => agent.id === member.id)?.order ?? members.indexOf(member) + 1 }}
+                  style={{ order: members.indexOf(member) + 1 }}
                   className={`member-tile ${member.id === agent?.id ? 'active' : ''}`}
                   onClick={(event) => onSelectAgent(member.id, (event.currentTarget.querySelector('.agent-avatar') ?? event.currentTarget).getBoundingClientRect())}
                   title={`${agentDisplayName(member)} · ${agentDisplayRole(member)}`}
@@ -136,8 +124,7 @@ export function InspectorRail({
                   <span className={`member-state ${snapshot.agentStatuses[member.id] ?? 'idle'}`} />
                 </button>
               ))}
-              {conversation.socialRoom?.members.filter((person) => person.id !== conversation.ownerId).map((person) => <button key={person.id} style={{ order: conversation.socialRoom?.members[0]?.id === person.id ? 0 : person.order ?? members.length + 1 }} type="button" className="member-tile" onClick={(event) => onSelectPerson?.(event.currentTarget.getBoundingClientRect(), person.id)} title={person.name}><div className="member-avatar-wrap"><UserAvatar src={person.image || ''} name={person.name} size={40} /><ContactKindBadge human /></div><span className="member-name-label"><span className="member-name-text">{person.name}</span></span></button>)}
-              {conversation.type === 'group' && <button type="button" className="member-tile" style={{ order: !conversation.socialRoom || conversation.socialRoom.members[0]?.id === conversation.ownerId ? 0 : conversation.socialRoom.members.find((person) => person.id === conversation.ownerId)?.order ?? members.length + 2 }} onClick={(event) => onSelectUser(event.currentTarget.getBoundingClientRect())} aria-label={`${currentUserName} · ${t('You')}`} title={`${currentUserName} · ${t('You')}`}>
+              {conversation.type === 'group' && <button type="button" className="member-tile" style={{ order: 0 }} onClick={(event) => onSelectUser(event.currentTarget.getBoundingClientRect())} aria-label={`${currentUserName} · ${t('You')}`} title={`${currentUserName} · ${t('You')}`}>
                 <div className="member-avatar-wrap"><UserAvatar src={snapshot.userAvatar} name={currentUserName} size={40} /><ContactKindBadge human /></div>
                 <span className="member-name-label"><span className="member-name-text">{currentUserName}</span></span>
               </button>}
@@ -168,8 +155,7 @@ export function InspectorRail({
                   <span>{conversation.name}</span><Pencil size={15} />
                 </button>}
               </section>
-              <ConversationWorkspaceSetting conversation={conversation} agents={snapshot.agents} />
-              <button className="detail-search-button" onClick={() => setRecordsDialog('invite')}>{t('Invite to group')} <ChevronRight size={16} /></button>
+              <ConversationWorkspaceSetting conversation={conversation} />
               <div className="detail-toggles">
                 <label>{t('Save to contacts')}<button type="button" className="detail-switch" role="switch" aria-label={t('Save to contacts')} aria-checked={!!conversation.savedToContacts} disabled={busy} onClick={() => void update(() => window.douchat.updateConversation(conversation.id, { savedToContacts: !conversation.savedToContacts }))} /></label>
                 <label>{t('Mute notifications')}<button type="button" className="detail-switch" role="switch" aria-label={t('Mute notifications')} aria-checked={!!conversation.muted} disabled={busy} onClick={() => void update(() => window.douchat.updateConversation(conversation.id, { muted: !conversation.muted }))} /></label>
@@ -177,7 +163,7 @@ export function InspectorRail({
               </div>
             </div>}
             {conversation.type === 'direct' ? <div className="direct-chat-options">
-              <ConversationWorkspaceSetting conversation={conversation} agents={snapshot.agents} />
+              <ConversationWorkspaceSetting conversation={conversation} />
               <button className="detail-search-button" onClick={() => { setError(''); setQuery(''); setRecordsDialog('history') }}>{t('Search chat history')} <ChevronRight size={16} /></button>
               <button className="detail-search-button" onClick={() => { setError(''); setRecordsDialog('routines') }}>{t('View scheduled tasks')} <ChevronRight size={16} /></button>
               <div className="detail-toggles">
@@ -190,17 +176,9 @@ export function InspectorRail({
                 {confirmClear ? <div className="detail-clear-confirm"><p>{t('Clear all messages in this chat? This cannot be undone.')}</p><button disabled={busy} onClick={() => setConfirmClear(false)}>{t('Cancel')}</button><button className="danger" disabled={busy} onClick={() => void update(() => window.douchat.clearConversation(conversation.id))}>{t('Clear chat history')}</button></div> : <button className="detail-clear" disabled={busy} onClick={() => { setConfirmClear(true); setConfirmReset(false) }}>{t('Clear chat history')}</button>}
               </div>
               <div className="detail-history-action">
-                {confirmReset ? <div className="detail-clear-confirm"><p>{t(conversation.remoteRoomId
-                  ? 'Reset context for your future requests? Chat history will be kept. Other members will not be affected.'
-                  : 'Reset context? The current reply will stop and future replies will start fresh. Chat history will be kept.')}</p><button disabled={busy} onClick={() => setConfirmReset(false)}>{t('Cancel')}</button><button className="danger" disabled={busy} onClick={() => void update(() => window.douchat.resetConversationContext(conversation.id))}>{t('Reset context')}</button></div>
+                {confirmReset ? <div className="detail-clear-confirm"><p>{t('Reset context? The current reply will stop and future replies will start fresh. Chat history will be kept.')}</p><button disabled={busy} onClick={() => setConfirmReset(false)}>{t('Cancel')}</button><button className="danger" disabled={busy} onClick={() => void update(() => window.douchat.resetConversationContext(conversation.id))}>{t('Reset context')}</button></div>
                   : <button className="detail-clear" disabled={busy} onClick={() => { setConfirmReset(true); setConfirmClear(false) }}>{t('Reset context')}</button>}
               </div>
-            </div>}
-            {canLeave && !memberQuery.trim() && <div className="detail-history-actions detail-history-action">
-              {confirmLeave ? <div className="detail-clear-confirm"><p>{t('Leave this group? Your agents will also leave.')}</p>
-                <button disabled={busy} onClick={() => setConfirmLeave(false)}>{t('Cancel')}</button>
-                <button className="danger" disabled={busy} onClick={() => void update(async () => { await window.douchat.socialAction({ action: 'leave-room', roomId: conversation.remoteRoomId! }); setConfirmLeave(false) })}>{t('Leave group')}</button>
-              </div> : <button className="detail-clear" disabled={busy} onClick={() => { setConfirmLeave(true); setConfirmClear(false); setConfirmReset(false) }}>{t('Leave group')}</button>}
             </div>}
             {error && <p role="alert">{t(error)}</p>}
 
@@ -209,7 +187,6 @@ export function InspectorRail({
 
       </div>
     </aside>
-    {conversation && recordsDialog === 'invite' && createPortal(<GroupInviteDialog key={conversation.id} conversation={conversation} agents={snapshot.agents} userName={snapshot.userName} userAvatar={snapshot.userAvatar} onClose={() => setRecordsDialog(null)} />, document.body)}
     {conversation && recordsDialog === 'history' && createPortal(<ChatHistoryDialog
       conversation={conversation}
       messages={results}
@@ -261,7 +238,7 @@ function ChatHistoryDialog({ conversation, messages, agents, userName, userAvata
           return <article className="history-record" key={message.id}>
             {agent
               ? <AgentAvatar agent={agent} size={34} />
-              : <UserAvatar src={message.authorId === 'user' ? userAvatar : conversation.person?.image || ''} name={message.authorId === 'user' ? userName : message.authorName} size={34} />}
+              : <UserAvatar src={message.authorId === 'user' ? userAvatar : ''} name={message.authorId === 'user' ? userName : message.authorName} size={34} />}
             <div><header><strong>{message.authorName}</strong><time>{new Date(message.createdAt).toLocaleString()}</time></header><p>{message.text}</p></div>
           </article>
         })}

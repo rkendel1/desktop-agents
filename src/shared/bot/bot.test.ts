@@ -13,7 +13,7 @@ import { parsePrivateReply, privateReplyDeliveries } from './privateMessages'
 import { a2aReplyMessages } from './a2a'
 import { latestAssistantPreview, markdownPreview } from './preview'
 import { contactSection, contactSections, matchesContactQuery } from './contacts'
-import { isDouchatCreditError, isRetryableRuntimeError, summarizeRuntimeError } from './errors'
+import { isRetryableRuntimeError, summarizeRuntimeError } from './errors'
 
 const members = [
   { id: 'a', name: 'Ann' },
@@ -361,16 +361,6 @@ describe('summarizeRuntimeError', () => {
       title: 'Claude Code does not have enough credit',
       guidance: 'Open Claude Code in Terminal and add credit or switch to an account with available usage, then return to Douchat and try again.',
       action: { kind: 'open-local-agent-terminal', agentId: 'claude', label: 'Open Claude Code' }
-    })
-  })
-
-  it('turns a Douchat credit failure into the top-up recovery path', () => {
-    expect(isDouchatCreditError('429: {"message":"Douchat credit balance is insufficient"}')).toBe(true)
-    expect(isDouchatCreditError('Douchat 点数不足，暂时无法完成此请求。')).toBe(true)
-    expect(summarizeRuntimeError('429: {"message":"Douchat credit balance is insufficient"}')).toMatchObject({
-      title: 'Douchat does not have enough credits',
-      guidance: 'Top up credits to continue.',
-      action: { kind: 'open-douchat-credits', label: 'Top up credits' }
     })
   })
 

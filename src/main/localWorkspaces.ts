@@ -1,12 +1,25 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, realpathSync, renameSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, parse, relative, sep } from 'node:path'
 import type { AgentConfig } from '../shared/types'
+import { LOCAL_USER_ID } from '../shared/userMemory'
 
 let root: string | undefined
 let dataRoot: string | undefined
-export function configureLocalWorkspaces(userData?: string): void { dataRoot = userData; root = userData ? join(userData, 'local-workspaces') : undefined }
+/** Where a local agent's native-session bindings are recorded — FeltDB, in the desktop. */
+export interface WorkspaceBindings {
+  get(id: string): Promise<BindingRecord | undefined>
+  put(record: BindingRecord & { id: string }): Promise<void>
+  all(): Promise<(BindingRecord & { id: string })[]>
+}
+let bindings: WorkspaceBindings | undefined
+/** `userData` roots the working folders agents write into; `store` records which native session belongs to which chat. */
+export function configureLocalWorkspaces(userData?: string, store?: WorkspaceBindings): void {
+  dataRoot = userData
+  root = userData ? join(userData, 'local-workspaces') : undefined
+  bindings = store
+}
 
 const inside = (child: string, parent: string): boolean => {
   const path = relative(parent, child)
@@ -48,37 +61,25 @@ export function resolveSavedWorkspace(path: string, options?: Parameters<typeof 
   }
 }
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
-interface RecordData { owner: string; agent: string; sessionKey: string; generation: string; fingerprint: string; thread?: string; claudeAccountLogin?: boolean }
-function read(file: string): RecordData | undefined {
-  try { return JSON.parse(readFileSync(file, 'utf8')) } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return
-    throw error
-  }
-}
-function save(file: string, value: RecordData): void {
-  const temporary = file + '.' + randomUUID() + '.tmp'
-  writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 })
-  renameSync(temporary, file)
-}
-export function localWorkspace(config: AgentConfig, sessionKey?: string, customDirectory?: string) {
+interface RecordData { owner: string; agent: string; sessionKey: string; generation: string; fingerprint: string; thread?: string; claudeAccountLogin?: boolean; updatedAt?: number }
+export type BindingRecord = RecordData
+async function read(id: string): Promise<RecordData | undefined> { return bindings?.get(id) }
+async function save(id: string, value: RecordData): Promise<void> { await bindings?.put({ ...value, updatedAt: Date.now(), id }) }
+export async function localWorkspace(config: AgentConfig, sessionKey?: string, customDirectory?: string) {
   if (!root) return undefined
-  if (!config.ownerId) throw new Error('A local workspace requires an account.')
   const key = sessionKey || `agent:${config.id}`
-  const id = hash(JSON.stringify([config.ownerId, config.id, key]))
-  const records = join(root, 'sessions')
-  mkdirSync(records, { recursive: true, mode: 0o700 })
-  const file = join(records, id + '.json')
+  const id = hash(JSON.stringify([LOCAL_USER_ID, config.id, key]))
   // The folder is part of the binding: a native thread must not resume against other files.
   const fingerprint = hash(JSON.stringify([config.localAgentId, config.instructions, config.role, config.name, config.model, ...(config.thinkingLevel ? [config.thinkingLevel] : []), ...(customDirectory ? [{ folder: customDirectory }] : [])]))
-  const old = read(file)
-  const record: RecordData = { owner: config.ownerId, agent: config.id, sessionKey: key,
+  const old = await read(id)
+  const record: RecordData = { owner: LOCAL_USER_ID, agent: config.id, sessionKey: key,
     generation: old?.generation && /^[a-f0-9-]{36}$/.test(old.generation) ? old.generation : randomUUID(), fingerprint,
     ...(old?.fingerprint === fingerprint && old.thread ? { thread: old.thread } : {}),
     ...(config.localAgentId === 'claude' && old?.claudeAccountLogin === true ? { claudeAccountLogin: true } : {}) }
-  save(file, record)
+  await save(id, record)
   let directory = customDirectory
   if (!directory) {
-    const legacyDirectory = join(root, 'files', hash(config.ownerId), hash(config.id), id, record.generation)
+    const legacyDirectory = join(root, 'files', hash(LOCAL_USER_ID), hash(config.id), id, record.generation)
     // Cursor flattens the entire workspace path into one directory name for its
     // trust marker (NAME_MAX = 255). The session hash already isolates owner,
     // agent and topic, so the extra owner/agent hashes are redundant here.
@@ -90,42 +91,35 @@ export function localWorkspace(config: AgentConfig, sessionKey?: string, customD
     }
     mkdirSync(directory, { recursive: true, mode: 0o700 })
   }
-  return { directory, custom: Boolean(customDirectory), thread: record.thread, claudeAccountLogin: record.claudeAccountLogin, rememberAccountLogin() {
-    const current = read(file)
+  return { directory, custom: Boolean(customDirectory), thread: record.thread, claudeAccountLogin: record.claudeAccountLogin, async rememberAccountLogin(): Promise<void> {
+    const current = await read(id)
     if (current?.generation !== record.generation || current.fingerprint !== fingerprint) return
-    save(file, { ...current, claudeAccountLogin: true })
-  }, remember(thread?: string) {
+    await save(id, { ...current, claudeAccountLogin: true })
+  }, async remember(thread?: string): Promise<void> {
     // A late completion must never restore a session invalidated by Clear chat.
-    const current = read(file)
+    const current = await read(id)
     if (current?.generation !== record.generation || current.fingerprint !== fingerprint) return
-    save(file, { ...current, thread })
+    await save(id, { ...current, thread })
   } }
 }
-export function resetLocalWorkspaces(owner: string, matches: (sessionKey: string, agentId: string) => boolean): void {
-  if (!root || !existsSync(join(root, 'sessions'))) return
-  for (const name of readdirSync(join(root, 'sessions'))) {
-    if (!/^[a-f0-9]{64}\.json$/.test(name)) continue
-    const file = join(root, 'sessions', name)
-    const record = read(file)
-    if (record?.owner === owner && matches(record.sessionKey, record.agent)) {
-      save(file, { ...record, generation: randomUUID(), thread: undefined })
+export async function resetLocalWorkspaces(matches: (sessionKey: string, agentId: string) => boolean): Promise<void> {
+  for (const record of await bindings?.all() ?? []) {
+    if (record.owner === LOCAL_USER_ID && matches(record.sessionKey, record.agent)) {
+      await save(record.id, { ...record, generation: randomUUID(), thread: undefined })
     }
   }
 }
 
 
 /** Resolve existing workspaces without rewriting fingerprints or native thread bindings. */
-export function openableWorkspace(config: AgentConfig, sessionKey: string, includeChildSessions = false): { directory: string; modified: number } | undefined {
-  if (!root || !config.ownerId) return undefined
-  const records = join(root, 'sessions')
-  const candidates = existsSync(records) ? readdirSync(records).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).flatMap(name => {
-    const file = join(records, name), record = read(file)
-    if (!record || record.owner !== config.ownerId || record.agent !== config.id || !(record.sessionKey === sessionKey || includeChildSessions && record.sessionKey.startsWith(sessionKey + ':')) || !/^[a-f0-9-]{36}$/.test(record.generation)) return []
-    const id = name.slice(0, -5)
-    const compact = join(root!, 'cursor', id, record.generation)
-    const directory = config.localAgentId === 'cursor' || existsSync(compact) ? compact : join(root!, 'files', hash(config.ownerId!), hash(config.id), id, record.generation)
-    return [{ directory, modified: statSync(file).mtimeMs }]
-  }) : []
+export async function openableWorkspace(config: AgentConfig, sessionKey: string, includeChildSessions = false): Promise<{ directory: string; modified: number } | undefined> {
+  if (!root) return undefined
+  const candidates = ((await bindings?.all()) ?? []).flatMap(record => {
+    if (record.owner !== LOCAL_USER_ID || record.agent !== config.id || !(record.sessionKey === sessionKey || includeChildSessions && record.sessionKey.startsWith(sessionKey + ':')) || !/^[a-f0-9-]{36}$/.test(record.generation)) return []
+    const compact = join(root!, 'cursor', record.id, record.generation)
+    const directory = config.localAgentId === 'cursor' || existsSync(compact) ? compact : join(root!, 'files', hash(LOCAL_USER_ID), hash(config.id), record.id, record.generation)
+    return [{ directory, modified: record.updatedAt ?? 0 }]
+  })
   const latest = candidates.sort((a, b) => b.modified - a.modified)[0]
   if (latest) { mkdirSync(latest.directory, { recursive: true, mode: 0o700 }); return latest }
   return undefined

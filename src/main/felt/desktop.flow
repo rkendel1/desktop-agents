@@ -1,0 +1,242 @@
+flow_version 1
+
+app desktop {
+  collection Desktop {
+    id: text
+    schemaVersion: integer
+    createdAt: integer
+    userName: text?
+    userAvatar: text?
+    migration: json?
+  }
+
+  collection Setting {
+    id: text
+    value: json
+    updatedAt: integer
+  }
+
+  collection Provider {
+    id: text
+    kind: text
+    name: text
+    config: json?
+    credentialRef: text?
+    updatedAt: integer
+  }
+
+  collection Agent {
+    id: text
+    name: text
+    provider: text
+    model: text
+    createdAt: integer
+    revision: integer?
+    localAgentId: text?
+    config: json?
+  }
+
+  collection AgentProfile {
+    id: text
+    agentId: text
+    files: json?
+    updatedAt: integer
+    index by_agent using index agentId
+  }
+
+  collection Workspace {
+    id: text
+    path: text
+    createdAt: integer
+    index by_path using index path
+  }
+
+  collection RuntimeBinding {
+    id: text
+    agentId: text
+    sessionKey: text
+    generation: text
+    fingerprint: text
+    thread: text?
+    claudeAccountLogin: boolean?
+    updatedAt: integer
+    index by_agent using index agentId
+  }
+
+  collection Session {
+    id: text
+    kind: text
+    title: text
+    status: text
+    agentId: text?
+    workspaceId: text?
+    provider: text?
+    model: text?
+    activeTopicId: text
+    createdAt: integer
+    updatedAt: integer
+    revision: integer?
+    meta: json?
+    index by_agent using index agentId
+  }
+
+  collection Topic {
+    id: text
+    topicId: text
+    sessionId: text
+    title: text
+    createdAt: integer
+    updatedAt: integer
+    contextResetId: text?
+    contextResetAt: integer?
+    index by_session using index sessionId
+  }
+
+  collection Group {
+    id: text
+    sessionId: text
+    name: text
+    description: text?
+    leadAgentId: text?
+    autoNamed: boolean?
+  }
+
+  collection GroupMember {
+    id: text
+    groupId: text
+    agentId: text
+    position: integer
+    index by_group using index groupId
+    index by_agent using index agentId
+  }
+
+  collection Message {
+    id: text
+    sessionId: text
+    topicId: text
+    role: text
+    authorId: text
+    authorName: text
+    content: text
+    kind: text
+    timestamp: integer
+    metadata: json?
+    index by_topic using index sessionId,topicId
+    index by_session using index sessionId
+  }
+
+  collection PrivateMessage {
+    id: text
+    sessionId: text
+    topicId: text
+    senderId: text
+    recipientId: text
+    content: text
+    timestamp: integer
+    metadata: json?
+    index by_topic using index sessionId,topicId
+    index by_agent_sender using index senderId
+    index by_agent_recipient using index recipientId
+  }
+
+  collection Run {
+    id: text
+    agentId: text
+    sessionId: text
+    scheduleId: text?
+    status: text
+    title: text
+    createdAt: integer
+    startedAt: integer?
+    finishedAt: integer?
+    metadata: json?
+    index by_agent using index agentId
+    index by_schedule using index scheduleId
+    index by_session using index sessionId
+  }
+
+  collection ExecutionEvent {
+    id: text
+    runId: text
+    sessionId: text?
+    type: text
+    label: text
+    status: text?
+    detail: text?
+    timestamp: integer
+    index by_run using index runId
+  }
+
+  collection ToolExecution {
+    id: text
+    runId: text?
+    sessionId: text
+    messageId: text?
+    tool: text
+    status: text
+    target: text?
+    startedAt: integer
+    finishedAt: integer?
+    index by_session using index sessionId
+    index by_run using index runId
+  }
+
+  collection Memory {
+    id: text
+    scope: text
+    agentId: text?
+    groupId: text?
+    revision: integer
+    updatedAt: integer
+    document: json
+    index by_agent using index agentId
+    index by_group using index groupId
+  }
+
+  collection Schedule {
+    id: text
+    agentId: text
+    sessionId: text
+    name: text
+    enabled: boolean
+    nextRunAt: integer
+    createdAt: integer
+    updatedAt: integer
+    definition: json
+    index by_agent using index agentId
+    index by_session using index sessionId
+  }
+
+  collection Attachment {
+    id: text
+    kind: text
+    name: text
+    size: integer
+    mimeType: text?
+    blob: text
+    createdAt: integer
+  }
+
+  collection AttentionItem {
+    id: text
+    kind: text
+    title: text
+    sessionId: text?
+    runId: text?
+    createdAt: integer
+    resolvedAt: integer?
+    detail: text?
+    index by_session using index sessionId
+  }
+
+  collection GroupState {
+    id: text
+    sessionId: text
+    topicId: text
+    kind: text
+    revision: integer?
+    document: json
+    index by_session using index sessionId
+    index by_topic using index sessionId,topicId
+  }
+}

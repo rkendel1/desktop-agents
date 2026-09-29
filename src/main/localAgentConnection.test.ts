@@ -1,3 +1,4 @@
+import { memoryBindings } from './testSupport'
 import { mkdtemp, writeFile, rm, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -9,12 +10,13 @@ import { validateLocalAgent } from './localAgents'
 import { configureLocalWorkspaces } from './localWorkspaces'
 import { changedLocalAgentSettings } from './localAgentSettingsVersion'
 import type { AgentConfig } from '../shared/types'
+const bindings = memoryBindings()
 vi.mock('./localAgents', () => ({ validateLocalAgent: vi.fn() }))
 vi.mock('./shellPath', () => ({ spawnEnvironment: async () => ({ ...process.env, ANTHROPIC_API_KEY: 'test-conflict' }) }))
 vi.mock('./windowsCommand', () => ({ executableCommand: async (file: string) => ({ file: process.execPath, prefix: [file] }) }))
 let directory: string
 let script: string
-const config: AgentConfig = { id: 'pooled-test', ownerId: 'account-one', name: 'Test', role: '', instructions: '', color: '', provider: 'local', model: 'default', localAgentId: 'codex', createdAt: 0 }
+const config: AgentConfig = { id: 'pooled-test', name: 'Test', role: '', instructions: '', color: '', provider: 'local', model: 'default', localAgentId: 'codex', createdAt: 0 }
 const children: LocalAgentConnection[] = []
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'douchat-protocol-test-'))
@@ -74,7 +76,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   vi.mocked(validateLocalAgent).mockImplementation(async (id) => ({ id, ...(id.startsWith('custom:') ? { custom: true } : {}), name: 'Test', path: script, command: script, installed: true, discovered: true, chatSupported: true, status: 'ready', authentication: 'unchecked' }))
 })
 afterEach(async () => {
-  configureLocalWorkspaces()
+  configureLocalWorkspaces(); bindings.clear()
   vi.useRealTimers()
   disposeLocalAgentSessions(config.id)
   for (const child of children.splice(0)) { child.close(); await child.disposed() }
@@ -227,7 +229,7 @@ describe('persistent local agent connections', () => {
     expect(approvalSignal?.aborted).toBe(true)
   })
   it.each(['codex', 'claude'])('resumes a saved %s thread after process disposal and preserves the workspace', async (kind) => {
-    configureLocalWorkspaces(join(directory, 'persistent-profile-' + kind))
+    configureLocalWorkspaces(join(directory, 'persistent-profile-' + kind), bindings)
     const agentConfig = { ...config, localAgentId: kind }
     const first = JSON.parse((await runLocalAgent(agentConfig, 'full history', undefined, [], options)).text)
     await writeFile(join(first.cwd, 'memory.md'), 'saved memory')
@@ -236,7 +238,7 @@ describe('persistent local agent connections', () => {
     expect(second.pid).not.toBe(first.pid)
     expect(second).toMatchObject({ count: 2, prompt: 'next turn', cwd: first.cwd })
     expect(await readdir(first.cwd)).toContain('memory.md')
-    resetLocalAgentConversation('conversation', 'topic', [], config.ownerId)
+    await resetLocalAgentConversation('conversation', 'topic', [])
     const cleared = JSON.parse((await runLocalAgent(agentConfig, 'new topic', undefined, [], options)).text)
     expect(cleared.count).toBe(1)
     expect(cleared.cwd).not.toBe(first.cwd)
@@ -280,18 +282,18 @@ describe('persistent local agent connections', () => {
   })
   it('persists successful Claude account authentication across connection recreation', async () => {
     const profile = join(directory, 'claude-auth-persistence')
-    configureLocalWorkspaces(profile)
+    configureLocalWorkspaces(profile, bindings)
     const claude = { ...config, localAgentId: 'claude' }
     await runLocalAgent(claude, 'no-credit', undefined, [], options)
     disposeLocalAgentSessions(config.id)
-    configureLocalWorkspaces(profile)
+    configureLocalWorkspaces(profile, bindings)
     // No continuation override: the fake CLI rejects this prompt whenever an API key is inherited.
     const result = JSON.parse((await runLocalAgent(claude, 'no-credit', undefined, [], { sessionKey: options.sessionKey })).text)
     expect(result.args).toContain('--resume')
     expect(result.count).toBe(2)
   })
   it('recovers a legacy resumed Claude conversation on an initial authentication failure', async () => {
-    configureLocalWorkspaces(join(directory, 'claude-auth-legacy'))
+    configureLocalWorkspaces(join(directory, 'claude-auth-legacy'), bindings)
     const claude = { ...config, localAgentId: 'claude' }
     await runLocalAgent(claude, 'hello', undefined, [], options)
     disposeLocalAgentSessions(config.id)
@@ -322,12 +324,11 @@ describe('persistent local agent connections', () => {
       expect(child.thread).toBeUndefined()
     } finally { child.close(); await child.disposed() }
   })
-  it('isolates accounts and topics, and resets cleared conversations', async () => {
+  it('isolates topics, and resets cleared conversations', async () => {
     const a = JSON.parse((await runLocalAgent(config, 'hello', undefined, [], options)).text)
     const b = JSON.parse((await runLocalAgent(config, 'hello', undefined, [], { sessionKey: 'direct:conversation:other' })).text)
-    const c = JSON.parse((await runLocalAgent({ ...config, ownerId: 'account-two' }, 'hello', undefined, [], options)).text)
-    expect(new Set([a.pid, b.pid, c.pid]).size).toBe(3)
-    resetLocalAgentConversation('conversation', 'topic')
+    expect(new Set([a.pid, b.pid]).size).toBe(2)
+    await resetLocalAgentConversation('conversation', 'topic')
     const d = JSON.parse((await runLocalAgent(config, 'new history', undefined, [], options)).text)
     expect(d.pid).not.toBe(a.pid)
     expect(d.count).toBe(1)
@@ -407,7 +408,7 @@ describe('persistent local agent connections', () => {
     }
   })
   it('keeps only two idle processes and resumes the evicted thread on demand', async () => {
-    configureLocalWorkspaces(join(directory, 'idle-cap-profile'))
+    configureLocalWorkspaces(join(directory, 'idle-cap-profile'), bindings)
     const first = JSON.parse((await runLocalAgent(config, 'hello', undefined, [], { sessionKey: 'idle:first' })).text)
     const second = JSON.parse((await runLocalAgent(config, 'hello', undefined, [], { sessionKey: 'idle:second' })).text)
     const third = JSON.parse((await runLocalAgent(config, 'hello', undefined, [], { sessionKey: 'idle:third' })).text)
@@ -442,7 +443,7 @@ describe('persistent local agent connections', () => {
   })
   it('cleans temporary controller workspaces and processes immediately without creating persistent records', async () => {
     const root = join(directory, 'transient-test')
-    configureLocalWorkspaces(root)
+    configureLocalWorkspaces(root, bindings)
     const reply = JSON.parse((await runLocalAgent(config, 'hello', undefined, [], {
       sessionKey: 'controller:unique-task', transient: true
     })).text)

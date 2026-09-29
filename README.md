@@ -17,10 +17,9 @@
 </p>
 
 Douchat is an Electron desktop workspace where independent AI agents can work
-alone or collaborate in a shared conversation. You sign in with a
-[douchat.ai](https://douchat.ai) account; cloud agents run on Douchat's hosted
-models, and local agents use supported command-line tools already installed on
-your computer.
+alone or collaborate in a shared conversation. There is no account: everything
+lives on your computer. Agents use models you configure with your own API keys,
+or supported command-line tools already installed on your machine.
 
 <p align="center">
   <img src="docs/screenshots/chat.png" alt="Chatting with Dr. Dou, who creates an English tutor agent and a study group" width="880">
@@ -135,14 +134,13 @@ agents. Billing stays with your provider.
 ## Download
 
 Signed macOS builds for Apple Silicon and Intel are available from
-[douchat.ai](https://douchat.ai). Installed apps update themselves automatically.
+[douchat.ai](https://douchat.ai). Installed apps check for updates only when you ask them to.
 To build from source instead, follow the quick start below.
 
 ## Requirements
 
 - Node.js 22.12 or newer
 - npm 10 or newer
-- A [douchat.ai](https://douchat.ai) account — signing in is required to open the app
 - Optional: a supported local agent CLI (see [Local agents](#local-agents))
 
 ## Quick start
@@ -155,12 +153,9 @@ cp .env.example .env
 npm run dev
 ```
 
-Click **Get started** and sign in with a [douchat.ai](https://douchat.ai) account
-in your browser; the app returns automatically. Development builds use
-`https://douchat.ai` by default, so no local server is needed. To develop against
-your own Douchat service instead, set `DOUCHAT_SERVICE_URL` in `.env` (for
-example `http://localhost:3000`). The desktop client derives the Chat API URL by
-appending `/v1` to that origin.
+The app opens straight to your local desktop. Add a model provider under
+**Settings → Models**, or create an agent from a local CLI (see
+[Local agents](#local-agents)).
 
 ## Configuration
 
@@ -170,64 +165,43 @@ details.
 
 | Variable | Purpose | Required |
 | --- | --- | --- |
-| `DOUCHAT_SERVICE_URL` | Development login and Cloud Chat origin | No; defaults to `https://douchat.ai` |
-| `DOUCHAT_WEB_URL` | Backwards-compatible alias for `DOUCHAT_SERVICE_URL` | No |
-| `GATEWAY_BASE_URL` | OpenAI-compatible endpoint for tests or signed-out scripted runtimes | No |
-| `GATEWAY_API_KEY` | Credential for the optional gateway | Only with an authenticated gateway |
-| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY` | Optional direct provider credentials | No |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY` | Optional direct provider credentials for development | No |
 
-Packaged builds always use `https://douchat.ai`; development environment overrides
-cannot redirect production account tokens. A signed-in desktop client uses its
-first-party Douchat session even if generic gateway variables are present.
+Provider keys entered in the app are stored in the operating system's credential
+store (Electron `safeStorage`), never in the database. Do not put real
+credentials in documentation, fixtures, screenshots or issue reports. If a
+secret is exposed, revoke it first, remove it from the entire Git history and
+then issue a replacement.
 
-To exercise a compatible gateway end to end, set the variables in your shell and
-run the live suite. It is skipped when either value is missing:
+## Data and safety
 
-```bash
-GATEWAY_BASE_URL=https://gateway.example/v1 \
-GATEWAY_API_KEY=replace-with-a-local-secret \
-npx vitest run src/main/gateway.live.test.ts
-```
-
-Do not put real credentials in documentation, fixtures, screenshots or issue
-reports. If a secret is exposed, revoke it first, remove it from the entire Git
-history and then issue a replacement.
-
-## Authentication and data safety
-
-Browser sign-in uses an authorization-code flow. The access token is encrypted
-with Electron `safeStorage`, remains in the main process and is never sent to the
-renderer or copied into generic endpoint settings. Cloud models are loaded from
-`GET /v1/models`, and replies stream through `POST /v1/chat/completions`.
-
-The first time an account signs in on a local profile, Douchat creates the Cloud
-contact **Dr. Dou** (豆博士), opens its private chat by default, and asks it to
-send a short welcome after Cloud Chat connects. The account is marked as onboarded,
-so later sign-ins do not create duplicates and deleting the contact is respected.
+Douchat keeps one durable store: an embedded [FeltDB](https://www.npmjs.com/package/@feltdb/core)
+database. **FeltDB is the single durable authority for Desktop state;
+`DesktopRepository` is the asynchronous boundary over it; the renderer is a
+projection of FeltDB state, not a store.** See
+[docs/feltdb-architecture.md](docs/feltdb-architecture.md).
 
 Renderer windows use context isolation, sandboxing and no Node.js integration.
 User-selected avatars are stored as local data URLs, and message attachments are
 served to the renderer through IPC rather than exposing arbitrary file paths.
 
-Local file tools are restricted to Downloads, Desktop and Documents. Moves do not
-overwrite existing files, and deletion is not exposed. Local-agent permissions
-are not bypassed: each CLI continues to enforce its own login and approval model.
+Local file tools are restricted to Downloads, Desktop and Documents unless you
+authorize a folder for a conversation. Moves do not overwrite existing files, and
+deletion is not exposed. Local-agent permissions are not bypassed: each CLI
+continues to enforce its own login and approval model.
 
 ## Where data is stored
 
 | Data | Location |
 | --- | --- |
-| Agent chats, local groups, topics, memories, skills and agent settings | This computer only |
-| Friends, shared group chats and their messages | Douchat service, synced to each member's device |
-| Account profile and credits | Douchat service |
-| Login token | This computer, encrypted with `safeStorage` |
+| Agents, chats, groups, topics, messages, routines, memories, settings | FeltDB, in `felt/` under the app-data folder — this computer only |
+| Provider and mailbox secrets | OS credential store, encrypted in `credentials/`; never in FeltDB |
+| Logs | `logs/` under the app-data folder, openable from **Settings → About** |
 
-Local data lives in `~/Library/Application Support/douchat` on macOS
-(`douchat-dev` for development builds). Deleting that folder resets the local
-profile, but friends and shared groups sync back after the next sign-in.
-Clearing a friend or shared-group chat hides its messages on this device only;
-the service keeps them for the other members. Logs are in the `logs`
-subfolder and can be opened from **Settings → About**.
+The app-data folder is `~/Library/Application Support/douchat` on macOS
+(`douchat-dev` for development builds). Deleting it resets the local profile.
+Data from earlier releases (`douchat.db`) is imported once, read-only, on first
+launch. Updates are checked only when you ask for them.
 
 ## Agent collaboration
 

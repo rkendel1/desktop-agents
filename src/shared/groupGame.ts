@@ -12,7 +12,6 @@ export interface GameState {
   id: string
   conversationId: string
   topicId: string
-  ownerId: string
   kind: GameKind
   status: 'running' | 'waiting' | 'paused' | 'finished' | 'cancelled'
   phase: GamePhase
@@ -130,7 +129,7 @@ function settle(state: GameState): void {
 }
 
 export function createGame(input: {
-  id: string; conversationId: string; topicId: string; ownerId: string; kind: GameKind
+  id: string; conversationId: string; topicId: string; kind: GameKind
   players: { id: string; name: string; human?: boolean }[]; seed: number; now: number; language?: InterfaceLanguage
 }): GameState {
   const locale = input.language ?? 'en'
@@ -138,7 +137,7 @@ export function createGame(input: {
   if (new Set(input.players.map(player => player.id)).size !== count || input.players.some(player => !player.id || !player.name)
     || input.players.filter(player => player.human).length > 1) throw new GameRuleError("Invalid player list. At most one human is supported.", locale)
   if (input.kind === 'undercover' ? count < 4 || count > 8 : count !== 6) throw new GameRuleError(input.kind === 'undercover' ? 'Undercover requires 4–8 players.' : 'Simplified Werewolf requires 6 players: 2 wolves, 1 seer, 3 civilians.', locale)
-  const state: GameState = { version: 1, language: locale, id: input.id, conversationId: input.conversationId, topicId: input.topicId, ownerId: input.ownerId,
+  const state: GameState = { version: 1, language: locale, id: input.id, conversationId: input.conversationId, topicId: input.topicId,
     kind: input.kind, status: 'running', phase: 'describe', round: 1, revision: 0, rng: input.seed || 1,
     players: input.players.map(player => ({ ...player, alive: true, role: 'civilian' })), pending: [], votes: {}, tieCandidates: [], revote: false, events: [], createdAt: input.now }
   const shuffled = [...state.players]

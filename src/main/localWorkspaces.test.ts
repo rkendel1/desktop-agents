@@ -2,87 +2,88 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
+import { memoryBindings } from './testSupport'
 import { configureLocalWorkspaces, localWorkspace, resetLocalWorkspaces, resolveSavedWorkspace, validateWorkspaceFolder } from './localWorkspaces'
 import type { AgentConfig } from '../shared/types'
+const bindings = memoryBindings()
 
-it('retains files and thread IDs across reloads, isolates identities, and invalidates cleared topics', () => {
+it('retains files and thread IDs across reloads, isolates identities, and invalidates cleared topics', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-workspaces-test-'))
-  const config = { id: 'agent/../one', ownerId: 'alice', localAgentId: 'codex', model: 'default', name: 'Agent', role: '', instructions: '' } as AgentConfig
+  const config = { id: 'agent/../one', localAgentId: 'codex', model: 'default', name: 'Agent', role: '', instructions: '' } as AgentConfig
   try {
-    configureLocalWorkspaces(directory)
-    const first = localWorkspace(config, 'direct:chat:topic')!
+    configureLocalWorkspaces(directory, bindings)
+    const first = (await localWorkspace(config, 'direct:chat:topic'))!
     writeFileSync(join(first.directory, 'notes.md'), 'Remember the task')
-    first.remember('thread-one')
-    configureLocalWorkspaces(directory)
-    const restored = localWorkspace(config, 'direct:chat:topic')!
+    await first.remember('thread-one')
+    configureLocalWorkspaces(directory, bindings)
+    const restored = (await localWorkspace(config, 'direct:chat:topic'))!
     expect(restored.directory).toBe(first.directory)
     expect(restored.thread).toBe('thread-one')
     expect(readFileSync(join(restored.directory, 'notes.md'), 'utf8')).toBe('Remember the task')
-    for (const other of [{ ...config, ownerId: 'bob' }, { ...config, id: 'other' }]) {
-      const workspace = localWorkspace(other, 'direct:chat:topic')!
+    for (const other of [{ ...config, id: 'other' }]) {
+      const workspace = (await localWorkspace(other, 'direct:chat:topic'))!
       expect(workspace.directory).not.toBe(first.directory)
       expect(workspace.thread).toBeUndefined()
     }
-    expect(localWorkspace(config, 'direct:chat:other')!.directory).not.toBe(first.directory)
-    const changed = localWorkspace({ ...config, model: 'new-model' }, 'direct:chat:topic')!
+    expect((await localWorkspace(config, 'direct:chat:other'))!.directory).not.toBe(first.directory)
+    const changed = (await localWorkspace({ ...config, model: 'new-model' }, 'direct:chat:topic'))!
     expect(changed.directory).toBe(first.directory)
     expect(changed.thread).toBeUndefined()
-    changed.remember('new-thread')
-    first.remember('stale-thread')
-    expect(localWorkspace({ ...config, model: 'new-model' }, 'direct:chat:topic')!.thread).toBe('new-thread')
-    resetLocalWorkspaces('alice', key => key === 'direct:chat:topic')
-    changed.remember('late-completion')
-    const cleared = localWorkspace(config, 'direct:chat:topic')!
+    await changed.remember('new-thread')
+    await first.remember('stale-thread')
+    expect((await localWorkspace({ ...config, model: 'new-model' }, 'direct:chat:topic'))!.thread).toBe('new-thread')
+    await resetLocalWorkspaces(key => key === 'direct:chat:topic')
+    await changed.remember('late-completion')
+    const cleared = (await localWorkspace(config, 'direct:chat:topic'))!
     expect(cleared.directory).not.toBe(first.directory)
     expect(cleared.thread).toBeUndefined()
     expect(readFileSync(join(first.directory, 'notes.md'), 'utf8')).toBe('Remember the task')
-  } finally { configureLocalWorkspaces(); rmSync(directory, { recursive: true, force: true }) }
+  } finally { configureLocalWorkspaces(); bindings.clear(); rmSync(directory, { recursive: true, force: true }) }
 })
 
-it('migrates Cursor files to a short path while retaining isolation, reloads and topic resets', () => {
+it('migrates Cursor files to a short path while retaining isolation, reloads and topic resets', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-cursor-test-'))
-  const config = { id: 'cursor-agent', ownerId: 'alice', localAgentId: 'cursor', model: 'default', name: 'Cursor', role: '', instructions: '' } as AgentConfig
+  const config = { id: 'cursor-agent', localAgentId: 'cursor', model: 'default', name: 'Cursor', role: '', instructions: '' } as AgentConfig
   try {
-    configureLocalWorkspaces(directory)
+    configureLocalWorkspaces(directory, bindings)
     // Simulate the previous layout without mutating real user workspaces.
-    const legacy = localWorkspace({ ...config, localAgentId: 'codex' }, 'topic')!
+    const legacy = (await localWorkspace({ ...config, localAgentId: 'codex' }, 'topic'))!
     writeFileSync(join(legacy.directory, 'notes.md'), 'Preserve this file')
-    const migrated = localWorkspace(config, 'topic')!
+    const migrated = (await localWorkspace(config, 'topic'))!
     expect(migrated.directory.length).toBeLessThan(255)
     expect(migrated.directory).not.toBe(legacy.directory)
     expect(readFileSync(join(migrated.directory, 'notes.md'), 'utf8')).toBe('Preserve this file')
-    migrated.remember('cursor-thread')
-    expect(localWorkspace(config, 'topic')!.thread).toBe('cursor-thread')
-    expect(localWorkspace({ ...config, ownerId: 'bob' }, 'topic')!.directory).not.toBe(migrated.directory)
-    expect(localWorkspace({ ...config, id: 'another' }, 'topic')!.directory).not.toBe(migrated.directory)
-    expect(localWorkspace(config, 'other-topic')!.directory).not.toBe(migrated.directory)
-    expect(localWorkspace({ ...config, localAgentId: 'codex' }, 'topic')!.directory).toBe(migrated.directory)
-    resetLocalWorkspaces('alice', key => key === 'topic')
-    const reset = localWorkspace(config, 'topic')!
+    await migrated.remember('cursor-thread')
+    expect((await localWorkspace(config, 'topic'))!.thread).toBe('cursor-thread')
+    expect((await localWorkspace({ ...config, id: 'another' }, 'topic'))!.directory).not.toBe(migrated.directory)
+    expect((await localWorkspace(config, 'other-topic'))!.directory).not.toBe(migrated.directory)
+    expect((await localWorkspace({ ...config, localAgentId: 'codex' }, 'topic'))!.directory).toBe(migrated.directory)
+    await resetLocalWorkspaces(key => key === 'topic')
+    const reset = (await localWorkspace(config, 'topic'))!
     expect(reset.directory).not.toBe(migrated.directory)
     expect(reset.thread).toBeUndefined()
     expect(readFileSync(join(migrated.directory, 'notes.md'), 'utf8')).toBe('Preserve this file')
-  } finally { configureLocalWorkspaces(); rmSync(directory, { recursive: true, force: true }) }
+  } finally { configureLocalWorkspaces(); bindings.clear(); rmSync(directory, { recursive: true, force: true }) }
 })
 
-it('uses a custom folder in place and never resumes a thread started in another folder', () => {
+it('uses a custom folder in place and never resumes a thread started in another folder', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-workspaces-custom-'))
   const projectA = join(directory, 'project-a'), projectB = join(directory, 'project-b')
   mkdirSync(projectA); mkdirSync(projectB)
-  const config = { id: 'agent', ownerId: 'alice', localAgentId: 'codex', model: 'default', name: 'Agent', role: '', instructions: '' } as AgentConfig
+  const config = { id: 'agent', localAgentId: 'codex', model: 'default', name: 'Agent', role: '', instructions: '' } as AgentConfig
   try {
-    configureLocalWorkspaces(join(directory, 'user-data'))
-    const managed = localWorkspace(config, 'direct:chat:topic')!
-    managed.remember('managed-thread')
-    const custom = localWorkspace(config, 'direct:chat:topic', projectA)!
+    configureLocalWorkspaces(join(directory, 'user-data'), bindings)
+    const managed = (await localWorkspace(config, 'direct:chat:topic'))!
+    await managed.remember('managed-thread')
+    const custom = (await localWorkspace(config, 'direct:chat:topic', projectA))!
     expect(custom).toMatchObject({ directory: projectA, custom: true, thread: undefined })
-    custom.remember('project-a-thread')
-    expect(localWorkspace(config, 'direct:chat:topic', projectA)!.thread).toBe('project-a-thread')
-    expect(localWorkspace(config, 'direct:chat:topic', projectB)!.thread).toBeUndefined()
-    expect(localWorkspace(config, 'direct:chat:topic')!.thread).toBeUndefined()
-    resetLocalWorkspaces('alice', () => true)
-    expect(localWorkspace(config, 'direct:chat:topic', projectA)!.directory).toBe(projectA)
-  } finally { configureLocalWorkspaces(); rmSync(directory, { recursive: true, force: true }) }
+    await custom.remember('project-a-thread')
+    expect((await localWorkspace(config, 'direct:chat:topic', projectA))!.thread).toBe('project-a-thread')
+    expect((await localWorkspace(config, 'direct:chat:topic', projectB))!.thread).toBeUndefined()
+    expect((await localWorkspace(config, 'direct:chat:topic'))!.thread).toBeUndefined()
+    await resetLocalWorkspaces(() => true)
+    expect((await localWorkspace(config, 'direct:chat:topic', projectA))!.directory).toBe(projectA)
+  } finally { configureLocalWorkspaces(); bindings.clear(); rmSync(directory, { recursive: true, force: true }) }
 })
 
 it('rejects unsafe or missing workspace folders', () => {
@@ -92,7 +93,7 @@ it('rejects unsafe or missing workspace folders', () => {
   writeFileSync(join(directory, 'file.txt'), 'x')
   const options = { home, systemRoots: [system] }
   try {
-    configureLocalWorkspaces(data)
+    configureLocalWorkspaces(data, bindings)
     expect(validateWorkspaceFolder(project, options)).toBe(project)
     expect(validateWorkspaceFolder(join(project, '..', 'app'), options)).toBe(project)
     expect(() => validateWorkspaceFolder('relative/path', options)).toThrow(/absolute/)
@@ -104,5 +105,5 @@ it('rejects unsafe or missing workspace folders', () => {
     expect(() => validateWorkspaceFolder(data, options)).toThrow(/data folder/)
     expect(() => validateWorkspaceFolder(directory, options)).toThrow(/data folder/)
     expect(() => resolveSavedWorkspace(join(directory, 'gone'), options)).toThrow(/unavailable/)
-  } finally { configureLocalWorkspaces(); rmSync(directory, { recursive: true, force: true }) }
+  } finally { configureLocalWorkspaces(); bindings.clear(); rmSync(directory, { recursive: true, force: true }) }
 })

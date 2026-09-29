@@ -76,25 +76,6 @@ describe('chat details rail', () => {
     ))
   }
 
-  it('only offers leaving another user’s shared group and requires confirmation', async () => {
-    const socialAction = vi.fn(async () => ({}))
-    Object.assign(window.douchat, { socialAction })
-    const shared: Conversation = { ...group, ownerId: 'me', remoteRoomId: 'shared', socialRoom: {
-      id: 'shared', kind: 'group', name: 'Team', agents: [], createdAt: '',
-      members: [{ id: 'owner', name: 'Owner', email: '' }, { id: 'me', name: 'Me', email: '' }]
-    } }
-    await renderRail(shared)
-    const leave = () => [...container.querySelectorAll('button')].find(button => button.textContent === 'Leave group')!
-    await act(async () => leave().click())
-    expect(socialAction).not.toHaveBeenCalled()
-    await act(async () => leave().click())
-    expect(socialAction).toHaveBeenCalledWith({ action: 'leave-room', roomId: 'shared' })
-    await renderRail({ ...shared, ownerId: 'owner' })
-    expect(leave()).toBeUndefined()
-    await renderRail(group)
-    expect(leave()).toBeUndefined()
-  })
-
   it.each([direct, group])('requires confirmation to reset $type context without clearing history', async (conversation) => {
     const resetConversationContext = vi.fn(async () => snapshot)
     const clearConversation = vi.fn(async () => snapshot)
@@ -137,15 +118,6 @@ describe('chat details rail', () => {
 
     await act(async () => memberTiles[1].click())
     expect(onSelectUser).toHaveBeenCalledOnce()
-  })
-
-  it('places the creator first in the shared group visual order', async () => {
-    await renderRail({ ...group, ownerId: 'self', socialRoom: {
-      id: 'remote', kind: 'group', name: 'Team', agents: [], createdAt: '',
-      members: [{ id: 'self', name: 'Dobi', email: 'self@test' }, { id: 'friend', name: 'Friend', email: 'friend@test' }]
-    } })
-    const tiles = [...container.querySelectorAll('.member-grid > .member-tile:not(.add)')]
-    expect(tiles.sort((a, b) => Number((a as HTMLElement).style.order) - Number((b as HTMLElement).style.order)).map((tile) => tile.textContent)).toEqual(['Dobi', 'Alpha', 'Friend'])
   })
 
   it.each(['Enter', 'blur'])('renames a group inline on %s', async (trigger) => {

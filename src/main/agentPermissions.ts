@@ -46,16 +46,15 @@ export function toolCapability(name: string): SensitiveCapability {
 
 /** Decisions live in the owner main process, never in model arguments or requester IPC. */
 export class AgentPermissionBroker {
-  private nativeSessions = new Map<string, { ownerId: string; agentId: string; signal: AbortSignal; grants: Set<string>; dispose: () => void }>()
-  private tasks = new Map<string, { ownerId: string; agentId: string; requesterId?: string; grants: Set<string> }>()
+  private nativeSessions = new Map<string, { agentId: string; signal: AbortSignal; grants: Set<string>; dispose: () => void }>()
+  private tasks = new Map<string, { agentId: string; requesterId?: string; grants: Set<string> }>()
   private pending = new Map<string, { sessionId?: string; sessionGrant?: string; taskId?: string; grant?: string; request: PermissionRequest; finish: (result: 'allowed' | 'declined' | 'expired' | 'cancelled') => void }>()
-  constructor(private readonly currentOwner: () => string | undefined, private readonly changed: () => void) {}
-  snapshot(): PermissionRequest[] { return [...this.pending.values()].map((p) => p.request).filter((p) => p.ownerId === this.currentOwner()) }
+  constructor(private readonly changed: () => void) {}
+  snapshot(): PermissionRequest[] { return [...this.pending.values()].map((p) => p.request) }
   hasPending(agentId: string): boolean { return [...this.pending.values()].some((entry) => entry.request.agentId === agentId) }
-  beginTask(ownerId: string, agentId: string, requesterId?: string): string {
-    if (!ownerId || ownerId !== this.currentOwner()) throw new Error('Agent account changed')
+  beginTask(agentId: string, requesterId?: string): string {
     const id = randomUUID()
-    this.tasks.set(id, { ownerId, agentId, requesterId, grants: new Set() })
+    this.tasks.set(id, { agentId, requesterId, grants: new Set() })
     return id
   }
   endTask(id: string): void {
@@ -64,7 +63,7 @@ export class AgentPermissionBroker {
   }
   resolve(id: string, allow: PermissionApproval): void {
     const entry = this.pending.get(id)
-    if (!entry || entry.request.ownerId !== this.currentOwner()) throw new Error('Permission request is no longer available')
+    if (!entry) throw new Error('Permission request is no longer available')
     if (allow !== true && allow !== false && allow !== 'task' && allow !== 'session') throw new Error('Invalid permission approval')
     if (allow === 'session') {
       const session = entry.sessionId ? this.nativeSessions.get(entry.sessionId) : undefined
@@ -85,26 +84,25 @@ export class AgentPermissionBroker {
   }
   async authorize(config: AgentConfig, input: Pick<PermissionRequest, 'requester' | 'requesterId' | 'requesterKind' | 'roomName' | 'capability' | 'operation' | 'details' | 'context'>, signal?: AbortSignal, forceAsk = false, taskId?: string, native?: NativeAppSession): Promise<void> {
     signal?.throwIfAborted()
-    if (!config.ownerId || config.ownerId !== this.currentOwner()) throw new Error('Agent account changed')
     if (input.details.length > 64000) throw new Error('Operation is too large to review; split it into smaller requests')
     const policy = agentPermissions(config.permissions)
     const rule = input.capability === 'groupHumans' || input.capability === 'groupAgents' ? policy[input.capability] : policy.sensitive[input.capability]
     if (rule === 'deny') throw new Error('The owner has disabled this permission')
     if (rule === 'allow' && !forceAsk) return
     const task = taskId ? this.tasks.get(taskId) : undefined
-    if (taskId && (!task || task.ownerId !== config.ownerId || task.agentId !== config.id || task.requesterId !== input.requesterId)) throw new Error('Permission task changed')
+    if (taskId && (!task || task.agentId !== config.id || task.requesterId !== input.requesterId)) throw new Error('Permission task changed')
     let sessionGrant: string | undefined
     if (native) {
       native.signal.throwIfAborted()
       let session = this.nativeSessions.get(native.id)
-      if (session && (session.ownerId !== config.ownerId || session.agentId !== config.id || session.signal !== native.signal)) throw new Error('Native session changed')
+      if (session && (session.agentId !== config.id || session.signal !== native.signal)) throw new Error('Native session changed')
       if (!session) {
         const dispose = (): void => {
           this.nativeSessions.delete(native.id)
           native.signal.removeEventListener('abort', dispose)
           for (const pending of this.pending.values()) if (pending.sessionId === native.id) pending.finish('cancelled')
         }
-        session = { ownerId: config.ownerId, agentId: config.id, signal: native.signal, grants: new Set(), dispose }
+        session = { agentId: config.id, signal: native.signal, grants: new Set(), dispose }
         this.nativeSessions.set(native.id, session)
         native.signal.addEventListener('abort', dispose, { once: true })
       }
@@ -129,13 +127,12 @@ export class AgentPermissionBroker {
       timer = setTimeout(() => finish('expired'), 10 * 60_000)
       this.pending.set(id, { sessionId: native?.id, sessionGrant, taskId, grant, request: { ...input, ...(scope ? { taskScope: scope } : {}),
         ...(native ? { sessionScope: native.appName, nativeApp: { id: native.appId, name: native.appName } } : {}),
-        id, ownerId: config.ownerId!, agentId: config.id, agentName: config.name, createdAt: Date.now(), details: input.details }, finish })
+        id, agentId: config.id, agentName: config.name, createdAt: Date.now(), details: input.details }, finish })
       signal?.addEventListener('abort', abort, { once: true })
       if (signal?.aborted) abort()
       this.changed()
     })
     signal?.throwIfAborted()
-    if (config.ownerId !== this.currentOwner()) throw new Error('Agent account changed')
     if (result === 'declined') throw new Error('The owner declined this request')
     if (result === 'expired') throw new Error('Permission request expired')
     if (result === 'cancelled') throw new Error('Permission request cancelled')

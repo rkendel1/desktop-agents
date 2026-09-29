@@ -1,11 +1,10 @@
 import type { SelectedMention } from '../shared/bot/mentions'
+import type { ProjectionDelta } from '../shared/projection'
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
-  AppSnapshot,
   CodeArtifactInput,
   CreateAgentInput,
   CustomLocalAgentInput,
-  EndpointInput,
   EmailConnectorInput,
   MessageImageInput,
   MessageFileInput,
@@ -13,11 +12,9 @@ import type {
   CreateRoutineInput,
   UpdateAgentInput,
   UpdateConversationInput,
-  UpdateDesktopProfileInput,
-  UsageSummary,
+  UpdateProfileInput,
   UpdateState,
-  DouchatApi,
-  DesktopAuthState
+  DouchatApi
 } from '../shared/types'
 
 const api: DouchatApi = {
@@ -36,25 +33,15 @@ const api: DouchatApi = {
   openDiagnosticLogs: () => ipcRenderer.invoke('douchat:open-diagnostic-logs'),
   copyText: (text) => ipcRenderer.invoke('douchat:copy-text', text),
   copyAttachment: (id) => ipcRenderer.invoke('douchat:copy-attachment', id),
-  getSocialSnapshot: () => ipcRenderer.invoke('douchat:social-snapshot'),
-  socialAction: (input) => ipcRenderer.invoke('douchat:social-action', input),
   platform: process.platform,
   microphonePermissionOwner: 'Douchat',
   windowAction: (action) => ipcRenderer.send('douchat:window-action', action),
   requestMicrophoneAccess: () => ipcRenderer.invoke('douchat:request-microphone-access'),
   openMicrophoneSettings: () => ipcRenderer.invoke('douchat:open-microphone-settings'),
   setInterfaceLanguage: (language: string) => ipcRenderer.invoke('douchat:set-interface-language', language),
-  getAuthState: () => ipcRenderer.invoke('douchat:get-auth-state'),
-  startLogin: () => ipcRenderer.invoke('douchat:start-login'),
-  cancelLogin: () => ipcRenderer.invoke('douchat:cancel-login'),
-  retryAuth: () => ipcRenderer.invoke('douchat:retry-auth'),
-  signOut: () => ipcRenderer.invoke('douchat:sign-out'),
-  refreshProfile: () => ipcRenderer.invoke('douchat:refresh-profile'),
-  updateProfile: (input: UpdateDesktopProfileInput) => ipcRenderer.invoke('douchat:update-profile', input),
-  getUsageSummary: (): Promise<UsageSummary> => ipcRenderer.invoke('douchat:get-usage-summary'),
-  consumeCreditsReturn: (): Promise<boolean> => ipcRenderer.invoke('douchat:consume-credits-return'),
-  openSubscriptionPlans: () => ipcRenderer.invoke('douchat:open-subscription-plans'),
-  openBillingPortal: () => ipcRenderer.invoke('douchat:open-billing-portal'),
+  updateProfile: (input: UpdateProfileInput) => ipcRenderer.invoke('douchat:update-profile', input),
+  completeOnboarding: () => ipcRenderer.invoke('douchat:complete-onboarding'),
+  resolveAttention: (id: string) => ipcRenderer.invoke('douchat:resolve-attention', id),
   getUpdateState: () => ipcRenderer.invoke('douchat:get-update-state'),
   checkForUpdates: () => ipcRenderer.invoke('douchat:check-for-updates'),
   installUpdate: () => ipcRenderer.invoke('douchat:install-update'),
@@ -76,7 +63,6 @@ const api: DouchatApi = {
   cancelTokenDanceAuthorization: () => ipcRenderer.invoke('douchat:cancel-tokendance'),
   getCustomModels: () => ipcRenderer.invoke('douchat:custom-models'),
   getDecisionSettings: () => ipcRenderer.invoke('douchat:decision-settings'),
-  getCloudDecisionModels: () => ipcRenderer.invoke('douchat:cloud-decision-models'),
   saveDecisionSettings: (settings) => ipcRenderer.invoke('douchat:save-decision-settings', settings),
   testDecisionSettings: (settings) => ipcRenderer.invoke('douchat:test-decision-settings', settings),
   saveCustomModels: (providers, defaultModel) => ipcRenderer.invoke('douchat:save-custom-models', providers, defaultModel),
@@ -98,8 +84,6 @@ const api: DouchatApi = {
   openConversationWindow: (conversationId: string) => ipcRenderer.invoke('douchat:open-conversation-window', conversationId),
   openCodeArtifact: (input: CodeArtifactInput) => ipcRenderer.invoke('douchat:open-code-artifact', input),
   getCodeArtifact: (artifactId: string) => ipcRenderer.invoke('douchat:get-code-artifact', artifactId),
-  connanyCommand: (command) => ipcRenderer.invoke('douchat:connany', command),
-  connanySelect: (selection) => ipcRenderer.invoke('douchat:connany-select', selection),
   testEmailConnector: (input: EmailConnectorInput) => ipcRenderer.invoke('douchat:test-email-connector', input),
   saveEmailConnector: (input: EmailConnectorInput) => ipcRenderer.invoke('douchat:save-email-connector', input),
   disconnectEmailConnector: (connectorId: string) => ipcRenderer.invoke('douchat:disconnect-email-connector', connectorId),
@@ -121,8 +105,6 @@ const api: DouchatApi = {
   stopConversation: (conversationId: string) => ipcRenderer.invoke('douchat:stop-conversation', conversationId),
   clearConversation: (conversationId: string) => ipcRenderer.invoke('douchat:clear-conversation', conversationId),
   resetConversationContext: (conversationId: string) => ipcRenderer.invoke('douchat:reset-conversation-context', conversationId),
-  setEndpoint: (input: EndpointInput) => ipcRenderer.invoke('douchat:set-endpoint', input),
-  testEndpoint: (input: EndpointInput) => ipcRenderer.invoke('douchat:test-endpoint', input),
   createRoutine: (input: CreateRoutineInput) => ipcRenderer.invoke('douchat:create-routine', input),
   deleteRoutine: (routineId: string) => ipcRenderer.invoke('douchat:delete-routine', routineId),
   setRoutineEnabled: (routineId: string, enabled: boolean) =>
@@ -131,25 +113,15 @@ const api: DouchatApi = {
   startComputer: (agentId: string) => ipcRenderer.invoke('douchat:start-computer', agentId),
   stopComputer: (agentId: string) => ipcRenderer.invoke('douchat:stop-computer', agentId),
   showComputer: (agentId: string) => ipcRenderer.invoke('douchat:show-computer', agentId),
-  onAuthState: (listener: (state: DesktopAuthState) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, state: DesktopAuthState): void => listener(state)
-    ipcRenderer.on('douchat:auth-state', handler)
-    return () => ipcRenderer.removeListener('douchat:auth-state', handler)
-  },
-  onCreditsUpdated: (listener: () => void) => {
-    const handler = (): void => listener()
-    ipcRenderer.on('douchat:credits-updated', handler)
-    return () => ipcRenderer.removeListener('douchat:credits-updated', handler)
-  },
   onUpdateState: (listener: (state: UpdateState) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: UpdateState): void => listener(state)
     ipcRenderer.on('douchat:update-state', handler)
     return () => ipcRenderer.removeListener('douchat:update-state', handler)
   },
-  onSnapshot: (listener: (snapshot: AppSnapshot) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot): void => listener(snapshot)
-    ipcRenderer.on('douchat:snapshot', handler)
-    return () => ipcRenderer.removeListener('douchat:snapshot', handler)
+  onProjection: (listener: (delta: ProjectionDelta) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, delta: ProjectionDelta): void => listener(delta)
+    ipcRenderer.on('douchat:projection', handler)
+    return () => ipcRenderer.removeListener('douchat:projection', handler)
   }
 }
 

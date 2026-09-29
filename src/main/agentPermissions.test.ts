@@ -2,21 +2,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentPermissionBroker, nativeReadPermission, toolCapability } from './agentPermissions'
 import { agentPermissions } from '../shared/agentPermissions'
 import type { AgentConfig } from '../shared/types'
-const config = { id: 'agent', ownerId: 'owner', name: 'Agent' } as AgentConfig
+const config = { id: 'agent', name: 'Agent' } as AgentConfig
 const input = { requester: 'Friend', roomName: 'Group', capability: 'filesRead' as const, operation: 'read', details: '/private/file' }
 afterEach(() => vi.useRealTimers())
 describe('agent permission boundary', () => {
   it('reuses native app access across tasks only for the same live session, app and requester', async () => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
+    const broker = new AgentPermissionBroker(vi.fn())
     const lifetime = new AbortController()
     const native = { id: 'session-1', appId: 'com.apple.calculator', appName: 'Calculator', signal: lifetime.signal }
     const request = { ...input, requesterId: 'human', context: 'direct' as const, capability: 'otherTools' as const, details: '{}', operation: 'Use Calculator' }
-    const task = broker.beginTask('owner', config.id, 'human')
+    const task = broker.beginTask(config.id, 'human')
     const first = broker.authorize(config, request, undefined, true, task, native)
     expect(broker.snapshot()[0]).toMatchObject({ sessionScope: 'Calculator', nativeApp: { id: 'com.apple.calculator' } })
     broker.resolve(broker.snapshot()[0].id, 'session'); await first
     broker.endTask(task)
-    const secondTask = broker.beginTask('owner', config.id, 'human')
+    const secondTask = broker.beginTask(config.id, 'human')
     await broker.authorize(config, request, undefined, true, secondTask, native)
     expect(broker.snapshot()).toHaveLength(0)
     for (const [r, scope] of [
@@ -35,7 +35,7 @@ describe('agent permission boundary', () => {
     broker.endTask(secondTask)
   })
   it('does not turn once-only confirmations into session grants, and cancels pending requests on session close', async () => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
+    const broker = new AgentPermissionBroker(vi.fn())
     const lifetime = new AbortController()
     const native = { id: 'session', appId: 'app', appName: 'App', signal: lifetime.signal }
     const once = broker.authorize(config, input, undefined, true, undefined, native)
@@ -56,8 +56,8 @@ describe('agent permission boundary', () => {
     expect(nativeReadPermission('claude', 'Read this file')).toBeUndefined()
   })
   it('shares approved read access across search and read in one mailbox only', async () => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
-    const task = broker.beginTask('owner', config.id)
+    const broker = new AgentPermissionBroker(vi.fn())
+    const task = broker.beginTask(config.id)
     const search = { ...input, capability: 'accountRead' as const, operation: 'email_search', details: '{"accountId":"work","folder":"INBOX"}' }
     const pending = broker.authorize(config, search, undefined, false, task)
     broker.resolve(broker.snapshot()[0].id, 'task'); await pending
@@ -68,8 +68,8 @@ describe('agent permission boundary', () => {
     broker.endTask(task); await cancelled
   })
   it('reuses a website grant only within the same task and revokes it at completion', async () => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
-    const task = broker.beginTask('owner', config.id, 'human')
+    const broker = new AgentPermissionBroker(vi.fn())
+    const task = broker.beginTask(config.id, 'human')
     const web = { ...input, requesterId: 'human', capability: 'network' as const, operation: 'computer_open', details: '{"url":"https://douchat.ai/docs"}' }
     const first = broker.authorize(config, web, undefined, false, task)
     expect(broker.snapshot()[0].taskScope).toBe('https://douchat.ai')
@@ -83,7 +83,7 @@ describe('agent permission boundary', () => {
     await expect(broker.authorize({ ...config, permissions }, web, undefined, false, task)).rejects.toThrow('disabled')
     await expect(broker.authorize(config, { ...web, requesterId: 'outsider' }, undefined, false, task)).rejects.toThrow('task changed')
     broker.endTask(task)
-    const nextTask = broker.beginTask('owner', config.id, 'human')
+    const nextTask = broker.beginTask(config.id, 'human')
     const next = broker.authorize(config, web, undefined, false, nextTask)
     const cancelled = expect(next).rejects.toThrow('cancelled')
     expect(broker.snapshot()).toHaveLength(1)
@@ -91,8 +91,8 @@ describe('agent permission boundary', () => {
   })
 
   it('coalesces matching parallel requests only when the owner chooses task approval', async () => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
-    const task = broker.beginTask('owner', config.id)
+    const broker = new AgentPermissionBroker(vi.fn())
+    const task = broker.beginTask(config.id)
     const read = { ...input, operation: 'computer_list_files', details: '{"path":"/tmp/allowed"}' }
     const pending = [broker.authorize(config, read, undefined, false, task), broker.authorize(config, read, undefined, false, task)]
     broker.resolve(broker.snapshot()[0].id, 'task')
@@ -104,8 +104,8 @@ describe('agent permission boundary', () => {
   })
 
   it.each(['email_send', 'computer_move_file', 'computer_click', 'create_routine', 'native command'])('never grants task-wide access to %s', async operation => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
-    const task = broker.beginTask('owner', config.id)
+    const broker = new AgentPermissionBroker(vi.fn())
+    const task = broker.beginTask(config.id)
     const pending = broker.authorize(config, { ...input, capability: toolCapability(operation), operation, details: '{}' }, undefined, false, task)
     expect(broker.snapshot()[0].taskScope).toBeUndefined()
     expect(() => broker.resolve(broker.snapshot()[0].id, 'task')).toThrow('unavailable')
@@ -113,7 +113,7 @@ describe('agent permission boundary', () => {
     broker.endTask(task)
   })
   it('requires a fresh native-tool confirmation even with broad allow, while preserving deny', async () => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
+    const broker = new AgentPermissionBroker(vi.fn())
     const permissions = agentPermissions()
     permissions.sensitive.filesRead = 'allow'
     const work = broker.authorize({ ...config, permissions }, input, undefined, true)
@@ -129,7 +129,7 @@ describe('agent permission boundary', () => {
     expect(agentPermissions({ groupHumans: 'bogus', sensitive: { filesRead: true } })).toMatchObject({ groupHumans: 'deny', sensitive: { filesRead: 'deny' } })
   })
   it('does not execute until the owner approves, and approval is single use', async () => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
+    const broker = new AgentPermissionBroker(vi.fn())
     const execute = vi.fn()
     const work = broker.authorize(config, input).then(execute)
     expect(execute).not.toHaveBeenCalled()
@@ -144,21 +144,9 @@ describe('agent permission boundary', () => {
     broker.resolve(broker.snapshot()[0].id, false)
     await denied
   })
-  it('cannot approve from a different signed-in account', async () => {
-    let owner = 'owner'
-    const broker = new AgentPermissionBroker(() => owner, vi.fn())
-    const work = broker.authorize(config, input)
-    const rejected = expect(work).rejects.toThrow('account changed')
-    const id = broker.snapshot()[0].id
-    owner = 'outsider'
-    expect(broker.snapshot()).toEqual([])
-    expect(() => broker.resolve(id, true)).toThrow('no longer')
-    broker.cancelAgent(config.id)
-    await rejected
-  })
   it('honors deny without prompting and expires unanswered requests', async () => {
     vi.useFakeTimers()
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
+    const broker = new AgentPermissionBroker(vi.fn())
     const permissions = agentPermissions()
     permissions.sensitive.filesRead = 'deny'
     await expect(broker.authorize({ ...config, permissions }, input)).rejects.toThrow('disabled')
@@ -170,7 +158,7 @@ describe('agent permission boundary', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
   it('aborts pending approvals without leaking listeners or requests', async () => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
+    const broker = new AgentPermissionBroker(vi.fn())
     const signal = new AbortController()
     const work = expect(broker.authorize(config, input, signal.signal)).rejects.toThrow(/abort/i)
     signal.abort()
@@ -187,7 +175,7 @@ describe('agent permission boundary', () => {
   })
 
   it('distinguishes a cancelled request from an owner declining it', async () => {
-    const broker = new AgentPermissionBroker(() => 'owner', vi.fn())
+    const broker = new AgentPermissionBroker(vi.fn())
     const work = expect(broker.authorize(config, input)).rejects.toThrow('Permission request cancelled')
     broker.cancelAgent(config.id)
     await work

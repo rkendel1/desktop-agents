@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom'
 import { legacyGroupNotice } from '../../../shared/groupText'
 import { messageSendError, type QueuedMessage } from '../messageQueue'
 import { mentionableAgents } from './common'
-import type { SocialAgent, SocialPerson } from '../../../shared/social'
 import douchatLogo from '../../../../resources/icons/douchat.png'
 import { t, tr } from '../preferences'
 import { AtSign, FolderOpen, FileText, Check, ChevronDown, Copy, CornerDownRight, LoaderCircle, Lock, Mic, MoreHorizontal, Smile, SquareTerminal, TriangleAlert, Sparkles, Square, Trash2, ListEnd, X } from 'lucide-react'
@@ -26,7 +25,6 @@ import { MessageMarkdown, QuoteMarkdown, FileConversationContext } from './Messa
 import type { ProfileAnchor } from './MemberProfilePopover'
 import { summarizeRuntimeError, type RuntimeErrorSummary } from '../../../shared/bot/errors'
 import { insertMention, mentionQuery, updateSelectedMentions, type MentionQuery } from '../../../shared/bot/mentions'
-import { socialFollowUpTarget } from '../../../shared/socialFollowUp'
 import { AgentAvatar, EmptyAvatar, UserAvatar, agentDisplayName, conversationDisplayName, dayLabel, formatTime, isDifferentDay } from './common'
 import {
   speechRecognitionConstructor,
@@ -491,13 +489,6 @@ export function MessageDeliveries({
                   <div className="bubble-delivery-content">
                     <MessageMarkdown text={delivery.content} />
                   </div>
-                  {delivery.kind === 'group-invitation' && delivery.status && (
-                    <small className="social-task-status" role="status">{t(
-                      delivery.status === 'pending' ? 'Waiting for acceptance' :
-                      delivery.status === 'running' ? 'Processing invitation' :
-                      delivery.status === 'failed' ? 'Invitation failed' : 'Invitation completed'
-                    )}</small>
-                  )}
                   {replies.length ? (
                     <div className="bubble-delivery-replies">
                       {replyGroups.map((replyGroup) => {
@@ -598,8 +589,6 @@ export function MessageSourceCard({
 }
 
 export function MessageGroupRow({
-  person,
-  onOpenPersonProfile,
   messages,
   agent,
   agents,
@@ -609,9 +598,6 @@ export function MessageGroupRow({
   showAuthor,
   onOpenAgentProfile
 }: {
-  socialAgents?: SocialAgent[]
-  person?: SocialPerson
-  onOpenPersonProfile?: (anchor: ProfileAnchor) => void
   messages: ChatMessage[]
   agent?: AgentConfig
   agents: AgentConfig[]
@@ -636,8 +622,6 @@ export function MessageGroupRow({
     return <>{messages.map((message) => (
       <MessageGroupRow
         key={message.id}
-        person={person}
-        onOpenPersonProfile={onOpenPersonProfile}
         messages={[message]}
         agent={agent}
         agents={agents}
@@ -653,7 +637,7 @@ export function MessageGroupRow({
   return (
     <div className="message-row agent-message-row">
       <div className="message-avatar-slot">
-        {person ? <button type="button" className="message-avatar-button" onClick={(event) => onOpenPersonProfile?.(event.currentTarget.getBoundingClientRect())} aria-label={tr('{name} — view profile', { name: person.name })}><UserAvatar src={person.image || ''} name={person.name} size={36} /></button> : agent && onOpenAgentProfile ? (
+        {agent && onOpenAgentProfile ? (
           <button
             type="button"
             className="message-avatar-button"
@@ -726,7 +710,7 @@ export function MessageGroupRow({
 
 /** A failure leads with the specific problem and next step; only the raw
  *  developer diagnostic stays behind a disclosure. */
-export function SystemMessage({ message, onOpenCredits }: { message: ChatMessage; onOpenCredits?: () => void }): ReactElement {
+export function SystemMessage({ message }: { message: ChatMessage }): ReactElement {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [launching, setLaunching] = useState(false)
@@ -764,7 +748,7 @@ export function SystemMessage({ message, onOpenCredits }: { message: ChatMessage
         <TriangleAlert size={13} />
         <div className="system-summary">
           <strong>{t(summary.title)}</strong>
-          {(summary.guidance || summary.action?.kind === 'open-douchat-credits') && (
+          {(summary.guidance || summary.action?.kind === 'update-local-agent') && (
             <div className="system-guidance">
               {summary.guidance ? <span>{t(summary.guidance)}</span> : null}
               {summary.action?.kind === 'update-local-agent' && (
@@ -777,11 +761,6 @@ export function SystemMessage({ message, onOpenCredits }: { message: ChatMessage
                 }}>{t(launching ? 'Opening…' : 'Update Grok')}</button>
               )}
               {summary.action?.kind === 'update-local-agent' && actionError && <span role="alert">{t(actionError)}</span>}
-              {summary.action?.kind === 'open-douchat-credits' && onOpenCredits && (
-                <button className="system-inline-action" type="button" onClick={onOpenCredits}>
-                  {t(summary.action.label)}
-                </button>
-              )}
             </div>
           )}
         </div>
@@ -858,34 +837,7 @@ function UserMessageText({ text, attachments }: { text: string; attachments?: Me
   return <><MessageQuote author={quote[1]} text={quote[2].replace(/^> ?/gm, '').trim()} attachments={attachments} />{/\]\(<douchat-file:/.test(text.slice(quote[0].length)) ? <MessageMarkdown text={text.slice(quote[0].length)} /> : <span>{text.slice(quote[0].length)}</span>}</>
 }
 
-function usePresenceTime(): number {
-  const [time, setTime] = useState(Date.now)
-  useEffect(() => { const timer = setInterval(() => setTime(Date.now()), 5000); return () => clearInterval(timer) }, [])
-  return time
-}
-function AgentPresence({ agent }: { agent?: SocialAgent }): ReactElement | null {
-  const time = usePresenceTime()
-  if (!agent) return null
-  const online = agent.onlineUntil !== undefined && agent.onlineUntil > time
-  const label = agent.onlineUntil === undefined ? '状态未知' : online ? '在线' : '离线'
-  return <span className={`mention-presence${online ? ' is-online' : ''}`} role="img" aria-label={label} title={label} />
-}
-function SocialTaskStatus({ tasks, agents }: { tasks: NonNullable<ChatMessage['socialTasks']>; agents: SocialAgent[] }): ReactElement | null {
-  const time = usePresenceTime()
-  const pending = tasks.filter((task) => task.status === 'pending' || task.status === 'running')
-  if (!pending.length) return null
-  return <div className="social-task-status" role="status">{pending.map((task) => {
-    const agent = agents.find((entry) => entry.id === task.agentId)
-    const offline = agent?.onlineUntil !== undefined && agent.onlineUntil <= time
-    const status = task.status === 'pending' ? offline ? '等待主人设备上线，上线后处理' : '等待接单' : offline ? '设备连接已中断，等待恢复' : agent?.approvalTaskId === task.id ? '等待主人确认' : '处理中'
-    return <small key={task.id}>{task.agentName} · {status}</small>
-  })}</div>
-}
-
 export function MessageRow({
-  socialAgents,
-  person,
-  onOpenPersonProfile,
   messages,
   agent,
   agents,
@@ -894,12 +846,8 @@ export function MessageRow({
   userAvatar,
   showAuthor,
   onOpenAgentProfile,
-  onOpenUserProfile,
-  onOpenCredits
+  onOpenUserProfile
 }: {
-  socialAgents?: SocialAgent[]
-  person?: SocialPerson
-  onOpenPersonProfile?: (anchor: ProfileAnchor) => void
   messages: ChatMessage[]
   agent?: AgentConfig
   agents: AgentConfig[]
@@ -909,7 +857,6 @@ export function MessageRow({
   showAuthor: boolean
   onOpenAgentProfile?: (agentId: string, anchor: ProfileAnchor) => void
   onOpenUserProfile?: (anchor: ProfileAnchor) => void
-  onOpenCredits?: () => void
 }): ReactElement {
   const message = messages[0]
   if (message.kind === 'handoff') {
@@ -924,7 +871,7 @@ export function MessageRow({
       </div>
     )
   }
-  if (message.kind === 'system') return <SystemMessage message={message} onOpenCredits={onOpenCredits} />
+  if (message.kind === 'system') return <SystemMessage message={message} />
   if (message.authorId === 'user') {
     const hasAttachments = Boolean(message.attachments?.length)
     const hasQuote = /^> [^\r\n]+:\r?\n>/.test(message.text)
@@ -943,7 +890,6 @@ export function MessageRow({
         </span>}
         <div className={`message-bubble user-bubble ${hasAttachments ? 'has-attachments' : ''} ${!message.text && hasAttachments ? 'image-only' : ''}`}>
           {message.text && <UserMessageText text={message.text} attachments={quoteImages} />}
-          {message.socialTasks && <SocialTaskStatus tasks={message.socialTasks} agents={socialAgents ?? []} />}
           {message.deliveryState && <small className="message-delivery-state" role="status">{message.deliveryState === 'sending' ? '发送中…' : message.deliveryState === 'confirming' ? '已发送，正在同步接单状态…' : '发送未确认，请在队列中重试'}</small>}
           <MessageAttachments attachments={ownImages} />
         </div>
@@ -975,8 +921,6 @@ export function MessageRow({
   }
   return (
     <MessageGroupRow
-      person={person}
-      onOpenPersonProfile={onOpenPersonProfile}
       messages={messages}
       agent={agent}
       agents={agents}
@@ -993,12 +937,11 @@ export function visibleConversationMessages(
   conversation: Conversation | undefined,
   messages: ChatMessage[]
 ): ChatMessage[] {
-  if (conversation?.socialRoom?.kind === 'group') return groupInvitationMessages(messages)
   if (!conversation || conversation.type !== 'direct') return messages
   const participantIds = new Set(conversation.agentIds)
   const visible = messages.filter((message) =>
     message.kind !== 'handoff' &&
-    (message.authorId === 'user' || message.authorId === 'system' || message.authorId === conversation.person?.id || participantIds.has(message.authorId))
+    (message.authorId === 'user' || message.authorId === 'system' || participantIds.has(message.authorId))
   )
   // Fold only adjacent delivery-only receipts into the next answer by the same
   // agent. Keep stored messages intact and preserve standalone receipts while
@@ -1016,41 +959,6 @@ export function visibleConversationMessages(
     } else folded.push(message)
   }
   return folded
-}
-
-/** Keep public replies in the transcript, and fold internal invitation bodies
- * into the initiating reply. A page without that reply gets a standalone card. */
-function groupInvitationMessages(messages: ChatMessage[]): ChatMessage[] {
-  const byId = new Map(messages.map((message) => [message.id, message]))
-  const invitations = new Map<string, MessageDelivery[]>()
-  const folded = new Set<string>()
-  for (const message of messages) {
-    if (!message.id.endsWith(':delegate')) continue
-    const taskId = message.id.slice(`${message.conversationId}:`.length)
-    const task = message.socialTasks?.find((entry) => entry.id === taskId)
-    if (!task) continue
-    const parentReply = byId.get(`${message.id.slice(0, -':delegate'.length)}:reply`)
-    const recipientReply = byId.get(`${message.id}:reply`)
-    const host = parentReply?.authorId === message.authorId ? parentReply : message
-    const delivery: MessageDelivery = {
-      kind: 'group-invitation', status: task.status,
-      id: message.id, recipientId: task.agentId, recipientName: task.agentName,
-      content: message.text,
-      replies: recipientReply ? [{
-        id: recipientReply.id, senderId: recipientReply.authorId, senderName: recipientReply.authorName,
-        content: recipientReply.text, createdAt: recipientReply.createdAt,
-        attachments: recipientReply.attachments, error: recipientReply.error
-      }] : undefined
-    }
-    invitations.set(host.id, [...(invitations.get(host.id) ?? []), delivery])
-    if (host !== message) folded.add(message.id)
-  }
-  return messages.filter((message) => !folded.has(message.id)).map((message) => {
-    const deliveries = invitations.get(message.id)
-    if (!deliveries) return message
-    return { ...message, text: message.id.endsWith(':delegate') ? '' : message.text,
-      deliveries: [...(message.deliveries ?? []), ...deliveries] }
-  })
 }
 
 export function groupConversationMessages(messages: ChatMessage[]): ChatMessage[][] {
@@ -1077,8 +985,6 @@ export function groupConversationMessages(messages: ChatMessage[]): ChatMessage[
 }
 
 export function ChatPane({
-  person,
-  onOpenPersonProfile,
   loadMessagePage,
   initialHasMore,
   userName,
@@ -1096,16 +1002,12 @@ export function ChatPane({
   onToggleInspector,
   onOpenAgentProfile,
   onOpenUserProfile,
-  onOpenCredits,
   queuedMessages = [],
   onPromoteQueued,
   onRemoveQueued,
   onSend,
   onStop
 }: {
-  socialAgents?: SocialAgent[]
-  person?: SocialPerson
-  onOpenPersonProfile?: (anchor: ProfileAnchor) => void
   loadMessagePage?: (before?: string) => Promise<{ messages: ChatMessage[]; hasMore: boolean }>
   initialHasMore?: boolean
   userName: string
@@ -1123,7 +1025,6 @@ export function ChatPane({
   onToggleInspector: () => void
   onOpenAgentProfile: (agentId: string, anchor: ProfileAnchor) => void
   onOpenUserProfile: (anchor: ProfileAnchor) => void
-  onOpenCredits?: () => void
   queuedMessages?: QueuedMessage[]
   onPromoteQueued?: (id: number) => void
   onRemoveQueued?: (id: number) => void
@@ -1186,8 +1087,6 @@ export function ChatPane({
     draftValue.current = value
     setDraftValue(value)
   }
-  const followUpTime = usePresenceTime()
-  const followUpTarget = socialFollowUpTarget(conversation, messages, draft, Math.max(followUpTime, Date.now()))
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [attachmentError, setAttachmentError] = useState('')
   const [emojiOpen, setEmojiOpen] = useState(false)
@@ -1212,7 +1111,7 @@ export function ChatPane({
   const working = Boolean(activity)
   const fullConversationName = conversation ? conversationDisplayName(conversation, agents) : ''
   const conversationName = conversation ? conversationDisplayName(conversation, agents, true) : ''
-  const timelineMessages = person ? messages : visibleConversationMessages(conversation, messages)
+  const timelineMessages = visibleConversationMessages(conversation, messages)
   const timelineGroups = groupConversationMessages(timelineMessages.filter((message) => !deletedIds.has(message.id)))
 
   useEffect(() => {
@@ -1296,10 +1195,8 @@ export function ChatPane({
     if (!mention || conversation?.type !== 'group') return []
     const needle = mention.query.normalize('NFKC').toLocaleLowerCase()
     return [
-      ...(!conversation.socialRoom || conversation.socialRoom.members[0]?.id === conversation.ownerId
-        ? [{ id: 'all', name: 'all', label: t('Everyone'), agent: undefined as AgentConfig | undefined, person: undefined as SocialPerson | undefined }] : []),
-      ...addressableMembers.map((member) => ({ id: member.id, name: member.name, label: agentDisplayName(member), agent: member, person: undefined as SocialPerson | undefined })),
-      ...(conversation.socialRoom?.members.filter((person) => person.id !== conversation.ownerId).map((person) => ({ id: person.id, name: person.name, label: person.name, agent: undefined as AgentConfig | undefined, person })) ?? [])
+      { id: 'all', name: 'all', label: t('Everyone'), agent: undefined as AgentConfig | undefined },
+      ...addressableMembers.map((member) => ({ id: member.id, name: member.name, label: agentDisplayName(member), agent: member }))
     ].filter((option) => `${option.label} ${option.name}`.normalize('NFKC').toLocaleLowerCase().includes(needle))
   }, [mention, addressableMembers, conversation])
 
@@ -1323,7 +1220,7 @@ export function ChatPane({
       setMention(null)
       return
     }
-    setMention(mentionQuery(value, cursor, [...addressableMembers.map((member) => ({ id: member.id, name: member.name })), ...(conversation.socialRoom?.members.filter((person) => person.id !== conversation.ownerId) ?? [])]))
+    setMention(mentionQuery(value, cursor, addressableMembers.map((member) => ({ id: member.id, name: member.name }))))
   }
 
   const stopVoiceInput = (): void => {
@@ -1595,7 +1492,7 @@ export function ChatPane({
               aria-label={`${t('Chat details')}: ${fullConversationName}`} title={fullConversationName} aria-expanded={inspectorOpen}>
               <strong>
                 {conversationName || 'Douchat'}
-                {conversation?.type === 'group' && conversationName === fullConversationName ? ` (${members.length + (conversation.socialRoom?.members.length ?? 1)})` : ''}
+                {conversation?.type === 'group' && conversationName === fullConversationName ? ` (${members.length + 1})` : ''}
               </strong>
             </button>
           </div>
@@ -1633,9 +1530,6 @@ export function ChatPane({
                   </div>
                 )}
                 <MessageRow
-                  socialAgents={conversation?.socialRoom?.agents}
-                  person={message.authorId !== 'user' ? person || conversation.socialRoom?.members.find((member) => member.id === message.authorId) : undefined}
-                  onOpenPersonProfile={onOpenPersonProfile}
                   messages={messageGroup}
                   agent={agent}
                   agents={agents}
@@ -1645,7 +1539,6 @@ export function ChatPane({
                   showAuthor={conversation?.type === 'group'}
                   onOpenAgentProfile={onOpenAgentProfile}
                   onOpenUserProfile={onOpenUserProfile}
-                  onOpenCredits={onOpenCredits}
                 />
               </div>
             )
@@ -1712,9 +1605,8 @@ export function ChatPane({
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => applyMention(option)}
               >
-                {option.agent ? <AgentAvatar agent={option.agent} size={22} /> : option.person ? <UserAvatar src={option.person.image || ''} name={option.person.name} size={22} /> : <span className="mention-all"><AtSign size={13} /></span>}
-                <span>{option.label}{mentionOptions.filter(other => other.name === option.name).length > 1 && <small className="mention-owner"> · {option.person ? t('User') : conversation.socialRoom?.members.find(person => person.id === conversation.socialRoom?.agents.find(agent => agent.id === option.id)?.ownerId)?.name || option.id.slice(-6)}</small>}</span>
-                {option.agent && <AgentPresence agent={conversation.socialRoom?.agents.find((agent) => agent.id === option.id)} />}
+                {option.agent ? <AgentAvatar agent={option.agent} size={22} /> : <span className="mention-all"><AtSign size={13} /></span>}
+                <span>{option.label}</span>
               </button>
             ))}
           </div>
@@ -1758,7 +1650,7 @@ export function ChatPane({
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder={
-              followUpTarget ? tr('Continue chatting with {name}', { name: followUpTarget.name }) : conversation
+              conversation
                 ? tr(conversation.type === 'group' ? 'Message {name} · @ to mention' : 'Message {name}', { name: conversationName })
                 : t('Create an agent to start chatting')
             }

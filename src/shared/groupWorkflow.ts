@@ -6,7 +6,6 @@ export interface GroupWorkflow {
   decisionSettings?: import('./groupDecision').DecisionSettings
   lastLeaderMemberId?: string
   id: string
-  ownerId: string
   conversationId: string
   topicId: string
   runId: string

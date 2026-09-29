@@ -338,7 +338,7 @@ async function executeLocalAgent(
   const agent = options.agentOverride ?? await validateLocalAgent(config.localAgentId!)
   const env = await spawnEnvironment()
   signal?.throwIfAborted()
-  const workspace = options.sessionKey && !options.transient ? localWorkspace(config, options.sessionKey, options.workspaceDirectory) : undefined
+  const workspace = options.sessionKey && !options.transient ? await localWorkspace(config, options.sessionKey, options.workspaceDirectory) : undefined
   const directory = workspace?.directory ?? await mkdtemp(join(tmpdir(), 'douchat-agent-'))
   // Never leave Douchat's scratch files in a user's project folder.
   const scratch = workspace?.custom ? await mkdtemp(join(tmpdir(), 'douchat-scratch-')) : directory
@@ -505,9 +505,9 @@ export function releaseIdleLocalAgentConnections(conversationId: string, directA
   const matches = conversationMatcher(conversationId, undefined, directAgentIds)
   for (const [key, entry] of connections) if (!entry.busy && matches(entry.sessionKey)) evictConnection(key, entry)
 }
-export function resetLocalAgentConversation(conversationId: string, topicId?: string, directAgentIds: string[] = [], owner = ''): void {
+export async function resetLocalAgentConversation(conversationId: string, topicId?: string, directAgentIds: string[] = []): Promise<void> {
   const matches = conversationMatcher(conversationId, topicId, directAgentIds)
-  resetLocalWorkspaces(owner, (sessionKey) => matches(sessionKey))
+  await resetLocalWorkspaces((sessionKey) => matches(sessionKey))
   for (const run of activeLocalRuns) if (run.sessionKey && matches(run.sessionKey)) run.abort.abort(new Error('Stopped'))
   for (const [key, entry] of connections) if (matches(entry.sessionKey)) evictConnection(key, entry)
 }
@@ -515,13 +515,13 @@ export function resetLocalAgentConversation(conversationId: string, topicId?: st
 async function runConnectedAgent(config: AgentConfig, prompt: string, signal: AbortSignal | undefined,
   images: LocalAgentImage[], options: LocalRunOptions): Promise<LocalAgentReply> {
   signal?.throwIfAborted()
-  const workspace = options.sessionKey && !options.transient ? localWorkspace(config, options.sessionKey, options.workspaceDirectory) : undefined
+  const workspace = options.sessionKey && !options.transient ? await localWorkspace(config, options.sessionKey, options.workspaceDirectory) : undefined
   if (config.localAgentId === 'claude' && workspace?.claudeAccountLogin) options = { ...options, claudeAccountLogin: true }
   const launchSettings = [localAgentSettingsVersion(config.localAgentId!), options.agentOverride?.path, options.agentOverride?.args]
   // Include account and complete configuration: edits cannot inherit old persona or login state.
-  let key = JSON.stringify([launchSettings, config.ownerId, config.id, options.sessionKey, config.localAgentId, config.instructions, config.role, config.name, config.model, config.thinkingLevel, options.claudeAccountLogin, Boolean(options.onApproval), Boolean(options.transient), options.workspaceDirectory ?? null])
+  let key = JSON.stringify([launchSettings, config.id, options.sessionKey, config.localAgentId, config.instructions, config.role, config.name, config.model, config.thinkingLevel, options.claudeAccountLogin, Boolean(options.onApproval), Boolean(options.transient), options.workspaceDirectory ?? null])
   if (config.localAgentId === 'claude' && !connections.has(key) && !options.claudeAccountLogin) {
-    const accountKey = JSON.stringify([launchSettings, config.ownerId, config.id, options.sessionKey, config.localAgentId, config.instructions, config.role, config.name, config.model, config.thinkingLevel, true, Boolean(options.onApproval), Boolean(options.transient), options.workspaceDirectory ?? null])
+    const accountKey = JSON.stringify([launchSettings, config.id, options.sessionKey, config.localAgentId, config.instructions, config.role, config.name, config.model, config.thinkingLevel, true, Boolean(options.onApproval), Boolean(options.transient), options.workspaceDirectory ?? null])
     if (connections.has(accountKey)) { key = accountKey; options = { ...options, claudeAccountLogin: true } }
   }
   let entry = connections.get(key)
@@ -573,7 +573,7 @@ async function runConnectedAgent(config: AgentConfig, prompt: string, signal: Ab
     const effective = paths.length ? `${text}\n\nInspect these attached image files before answering:\n${paths.join('\n')}` : text
     const started = Date.now()
     const reply = await current.connection.turn(effective, signal, options.onProgress, options.onApproval)
-    if (config.localAgentId === 'claude' && options.claudeAccountLogin) workspace?.rememberAccountLogin()
+    if (config.localAgentId === 'claude' && options.claudeAccountLogin) await workspace?.rememberAccountLogin()
     const outputImages = agent.id === 'codex' ? await generatedImages(current.connection.thread, env, started) : []
     return localAgentReply(agent.name, reply, outputImages)
   } catch (error) {
@@ -582,7 +582,7 @@ async function runConnectedAgent(config: AgentConfig, prompt: string, signal: Ab
     evictConnection(key, current)
     if (config.localAgentId === 'claude' && current.persistent && !options.freshSessionRetry
       && /No conversation found with session ID/i.test(String(error))) {
-      localWorkspace(config, options.sessionKey, options.workspaceDirectory)?.remember(undefined)
+      await (await localWorkspace(config, options.sessionKey, options.workspaceDirectory))?.remember(undefined)
       return runConnectedAgent(config, prompt, signal, images, { ...options, freshSessionRetry: true })
     }
     if (config.localAgentId === 'claude' && !options.claudeAccountLogin && !signal?.aborted && current.connection.canRetryAuthentication

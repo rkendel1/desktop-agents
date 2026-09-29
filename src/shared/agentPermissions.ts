@@ -29,7 +29,6 @@ export interface PermissionRequest {
   nativeApp?: { id: string; name: string }
   context?: 'direct' | 'group'
   id: string
-  ownerId: string
   agentId: string
   agentName: string
   requester: string

@@ -16,10 +16,12 @@ give us a reasonable window to release a patch before any public disclosure.
 
 ## Scope notes
 
-- Douchat account tokens are encrypted with Electron `safeStorage`, stay in the
-  main process and are never exposed to the renderer. Optional provider API keys
-  are entered by the user and stored locally; they are never committed to this
-  repository or sent anywhere other than the provider the user configured.
+- Douchat has no account and no cloud service. Desktop state lives in a local
+  FeltDB database. Provider API keys and mailbox passwords are entered by the
+  user and stored only in the operating system's credential store (Electron
+  `safeStorage`), never in FeltDB, never committed to this repository, and never
+  sent anywhere other than the provider the user configured. Reports of secrets
+  reaching FeltDB, logs or the renderer are in scope.
 - Renderer windows run with context isolation, sandboxing and no Node.js
   integration. Reports about the IPC bridge (for example, a renderer reaching
   arbitrary files or processes) are in scope.
