@@ -293,6 +293,7 @@ export class GroupDecisionService {
       method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]),
       headers: provider.cloud ? { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}`, 'Idempotency-Key': randomUUID() } : provider.kind === 'anthropic'
         ? { 'Content-Type': 'application/json', 'x-api-key': provider.apiKey, 'anthropic-version': '2023-06-01' }
+        : provider.kind === 'ollama' ? { 'Content-Type': 'application/json' }
         : { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
       body: JSON.stringify(body)
     })

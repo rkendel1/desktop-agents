@@ -14,6 +14,7 @@ import { localModelId, configurableLocalAgents } from '../shared/localModels'
 import { thinkingLevel } from '../shared/thinkingLevels'
 import { authorizeTokenDance } from './tokenDanceAuth'
 import { CUSTOM_PROVIDER_PREFIX, type CustomProviderInput, type CustomModelTest } from '../shared/customModels'
+import { detectOllama } from './customModels'
 import { configureManagedNode, ensureManagedNode } from './managedNode'
 import { configureNativeDialogWindows, resizeNativeDialog } from './nativeDialogs'
 import { mkdirSync } from 'node:fs'
@@ -645,6 +646,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('douchat:custom-models', async (event) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     return desktop.providers.list()
+  })
+  ipcMain.handle('douchat:detect-ollama', async (event) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    return detectOllama()
   })
   ipcMain.handle('douchat:decision-settings', async (event) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')

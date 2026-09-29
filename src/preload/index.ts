@@ -62,6 +62,7 @@ const api: DouchatApi = {
   authorizeTokenDance: () => ipcRenderer.invoke('douchat:authorize-tokendance'),
   cancelTokenDanceAuthorization: () => ipcRenderer.invoke('douchat:cancel-tokendance'),
   getCustomModels: () => ipcRenderer.invoke('douchat:custom-models'),
+  detectOllama: () => ipcRenderer.invoke('douchat:detect-ollama'),
   getDecisionSettings: () => ipcRenderer.invoke('douchat:decision-settings'),
   saveDecisionSettings: (settings) => ipcRenderer.invoke('douchat:save-decision-settings', settings),
   testDecisionSettings: (settings) => ipcRenderer.invoke('douchat:test-decision-settings', settings),
