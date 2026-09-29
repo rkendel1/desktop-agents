@@ -6,7 +6,6 @@ import { afterEach, expect, it } from 'vitest'
 import type { ComputerProvider } from '../computer'
 import { startDesktop, stopDesktop } from '../desktop'
 import type { SecretCodec } from '../credentialVault'
-import { configureLocalAgentRegistry } from '../localAgents'
 import { DouchatRuntime } from '../runtime'
 import { CodingService } from './service'
 
@@ -37,7 +36,6 @@ it.skipIf(!cli)('a real agent CLI fixes a bug in a real repository through Douch
   writeFileSync(join(path, 'test.js'), "const { add } = require('./src/math')\nif (add(2, 3) !== 5) { console.error('add(2, 3) should be 5'); process.exit(1) }\nconsole.log('ok')\n")
   git('add', '-A'); git('commit', '-q', '-m', 'initial')
 
-  configureLocalAgentRegistry(root)
   const desktop = await startDesktop({ userData: root, codec })
   const runtime = new DouchatRuntime(desktop.repository, idleComputer, () => undefined)
   const coding = new CodingService(desktop.repository, runtime)

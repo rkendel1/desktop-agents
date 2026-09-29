@@ -44,12 +44,20 @@ export function toolCapability(name: string): SensitiveCapability {
   return 'otherTools'
 }
 
+export type PermissionEvent =
+  | { kind: 'requested'; request: PermissionRequest }
+  | { kind: 'settled'; request: PermissionRequest; outcome: 'allowed' | 'declined' | 'expired' | 'cancelled' }
+
 /** Decisions live in the owner main process, never in model arguments or requester IPC. */
 export class AgentPermissionBroker {
   private nativeSessions = new Map<string, { agentId: string; signal: AbortSignal; grants: Set<string>; dispose: () => void }>()
   private tasks = new Map<string, { agentId: string; requesterId?: string; grants: Set<string> }>()
   private pending = new Map<string, { sessionId?: string; sessionGrant?: string; taskId?: string; grant?: string; request: PermissionRequest; finish: (result: 'allowed' | 'declined' | 'expired' | 'cancelled') => void }>()
+  private observer?: (event: PermissionEvent) => void
   constructor(private readonly changed: () => void) {}
+  /** Told when a request appears and how it ends. Memory-only: it never grants or blocks anything. */
+  observe(observer: ((event: PermissionEvent) => void) | undefined): void { this.observer = observer }
+  private notify(event: PermissionEvent): void { try { this.observer?.(event) } catch { /* an observer never affects a decision */ } }
   snapshot(): PermissionRequest[] { return [...this.pending.values()].map((p) => p.request) }
   hasPending(agentId: string): boolean { return [...this.pending.values()].some((entry) => entry.request.agentId === agentId) }
   beginTask(agentId: string, requesterId?: string): string {
@@ -113,6 +121,7 @@ export class AgentPermissionBroker {
     const grant = scope ? JSON.stringify([input.capability, ['email_read', 'email_search'].includes(input.operation) ? 'email_read' : input.operation, scope, input.requesterKind, input.context, input.roomName]) : undefined
     if (grant && task?.grants.has(grant)) return
     if (this.pending.size >= 20) throw new Error('Too many permission requests')
+    let requestRef: PermissionRequest | undefined
     const result = await new Promise<'allowed' | 'declined' | 'expired' | 'cancelled'>((resolve) => {
       const id = randomUUID()
       let timer: ReturnType<typeof setTimeout>
@@ -121,14 +130,19 @@ export class AgentPermissionBroker {
         if (!this.pending.delete(id)) return
         clearTimeout(timer)
         signal?.removeEventListener('abort', abort)
+        const entry = requestRef!
         resolve(result)
+        this.notify({ kind: 'settled', request: entry, outcome: result })
         this.changed()
       }
       timer = setTimeout(() => finish('expired'), 10 * 60_000)
-      this.pending.set(id, { sessionId: native?.id, sessionGrant, taskId, grant, request: { ...input, ...(scope ? { taskScope: scope } : {}),
+      const request: PermissionRequest = { ...input, ...(scope ? { taskScope: scope } : {}),
         ...(native ? { sessionScope: native.appName, nativeApp: { id: native.appId, name: native.appName } } : {}),
-        id, agentId: config.id, agentName: config.name, createdAt: Date.now(), details: input.details }, finish })
+        id, agentId: config.id, agentName: config.name, createdAt: Date.now(), details: input.details }
+      requestRef = request
+      this.pending.set(id, { sessionId: native?.id, sessionGrant, taskId, grant, request, finish })
       signal?.addEventListener('abort', abort, { once: true })
+      this.notify({ kind: 'requested', request })
       if (signal?.aborted) abort()
       this.changed()
     })

@@ -7,7 +7,7 @@ import type { ComputerProvider } from '../computer'
 import { DesktopRepository } from '../desktopRepository'
 import type { SecretCodec } from '../credentialVault'
 import { startDesktop, stopDesktop, type DesktopState } from '../desktop'
-import { addCustomLocalAgent, configureLocalAgentRegistry, detectLocalAgents } from '../localAgents'
+import { addCustomLocalAgent, detectLocalAgents } from '../localAgents'
 import { DouchatRuntime } from '../runtime'
 import { runCommand } from './commands'
 import { gitDiff, gitStatus, parseGitStatus } from './git'
@@ -42,7 +42,6 @@ function repository(): string {
 }
 
 async function boot(root = temporary('coding-desktop-')): Promise<Booted> {
-  configureLocalAgentRegistry(root)
   const desktop = await startDesktop({ userData: root, codec })
   const runtime = new DouchatRuntime(desktop.repository, idleComputer, () => undefined)
   const booted = { root, desktop, runtime, coding: new CodingService(desktop.repository, runtime) }

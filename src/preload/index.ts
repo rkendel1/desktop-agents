@@ -126,6 +126,9 @@ const api: DouchatApi = {
   listCodingSessions: (projectId) => ipcRenderer.invoke('douchat:list-coding-sessions', projectId),
   startCodingSession: (input) => ipcRenderer.invoke('douchat:start-coding-session', input),
   cancelCodingSession: (id) => ipcRenderer.invoke('douchat:cancel-coding-session', id),
+  continueCodingSession: (id, text) => ipcRenderer.invoke('douchat:continue-coding-session', id, text),
+  runCodingChecks: (id) => ipcRenderer.invoke('douchat:run-coding-checks', id),
+  setProjectTestCommand: (id, commandLine) => ipcRenderer.invoke('douchat:set-project-test-command', id, commandLine),
   onProjection: (listener: (delta: ProjectionDelta) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, delta: ProjectionDelta): void => listener(delta)
     ipcRenderer.on('douchat:projection', handler)

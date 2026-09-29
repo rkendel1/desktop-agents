@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { configureLocalAgentRegistry } from './localAgents'
+import { memoryRegistry } from './testSupport'
 import { testLocalAgent } from './localAgentTest'
 import { runLocalAgent } from './localAgentRuntime'
 import { appendLocalAgentArguments } from '../shared/localAgentArguments'
@@ -18,7 +19,7 @@ let command: string
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'douchat-connection-test-'))
   command = join(directory, 'test agent')
-  configureLocalAgentRegistry(directory)
+  configureLocalAgentRegistry(memoryRegistry())
   await writeFile(command, `#!${process.execPath}
 const args = process.argv.slice(2);
 if (args.includes('--fail')) { console.error('Please log in first'); process.exit(1); }

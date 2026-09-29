@@ -73,9 +73,20 @@ app desktop {
     baseline: json?
     changes: json?
     commands: json?
+    events: json?
     index by_workspace using index workspaceId
     index by_agent using index agentId
     index by_session using index sessionId
+  }
+
+  collection LocalAgentDefinition {
+    id: text
+    name: text
+    command: text
+    args: json?
+    avatar: text?
+    position: integer
+    updatedAt: integer
   }
 
   collection RuntimeBinding {

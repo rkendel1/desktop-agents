@@ -4,12 +4,15 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { addCustomLocalAgent, configureLocalAgentRegistry, detectLocalAgents, findDesktopApp, removeCustomLocalAgent, updateLocalAgent, validateLocalAgent } from './localAgents'
 import { resolveExecutable } from './shellPath'
+import { memoryRegistry } from './testSupport'
 vi.mock('./shellPath', () => ({ resolveExecutable: vi.fn() }))
 let registryDirectory = ''
+let registry = memoryRegistry()
 beforeEach(async () => {
   vi.mocked(resolveExecutable).mockReset()
   registryDirectory = await mkdtemp(join(tmpdir(), 'douchat-local-agents-'))
-  configureLocalAgentRegistry(registryDirectory)
+  registry = memoryRegistry()
+  configureLocalAgentRegistry(registry)
 })
 afterEach(async () => {
   configureLocalAgentRegistry()
@@ -66,7 +69,7 @@ describe('local agent discovery', () => {
   })
   it('persists builtin overrides without duplicating or changing its adapter', async () => {
     await updateLocalAgent('codex', { name: 'Work Codex', command: '/tools/codex', args: ['--profile', 'work'], avatar: 'data:image/png;base64,YQ==' })
-    configureLocalAgentRegistry(registryDirectory)
+    configureLocalAgentRegistry(registry)
     vi.mocked(resolveExecutable).mockImplementation(async command => command)
     const agent = await validateLocalAgent('codex')
     expect(agent).toMatchObject({ id: 'codex', name: 'Work Codex', path: '/tools/codex', custom: undefined, args: ['--profile', 'work'], avatar: 'data:image/png;base64,YQ==' })

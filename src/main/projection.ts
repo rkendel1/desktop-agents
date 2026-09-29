@@ -2,11 +2,11 @@ import { gameView, type GameState } from '../shared/groupGame'
 import { workflowView, type GroupWorkflow } from '../shared/groupWorkflow'
 import type { ProjectionChange, ProjectionDelta, ProjectionSnapshot } from '../shared/projection'
 import type { PermissionRequest } from '../shared/agentPermissions'
-import type { AgentStatus, AppSnapshot, ComputerSession, ConversationActivityState, ModelOption, RuntimeStatus } from '../shared/types'
+import type { AgentStatus, AppSnapshot, CodingActivity, ComputerSession, ConversationActivityState, ModelOption, RuntimeStatus } from '../shared/types'
 import type { DesktopRepository, RecordChange } from './desktopRepository'
 import {
   eventFromRecord, messageFromRecord, privateMessageFromRecord, routineFromRecord, runFromRecord,
-  type ExecutionEventRecord, type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord
+  projectFromRecord, codingSessionFromRecord, type CodingSessionRecord, type WorkspaceRecord, type ExecutionEventRecord, type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord
 } from './felt/records'
 
 /** What exists only while the app runs, and so is never in FeltDB. */
@@ -15,6 +15,7 @@ export interface EphemeralState {
   activity: ConversationActivityState[]
   permissionRequests: PermissionRequest[]
   computers: ComputerSession[]
+  codingActivity?: CodingActivity[]
 }
 
 export interface ProjectionSources {
@@ -77,10 +78,10 @@ export class DesktopProjection {
   /** Everything the renderer shows, read from FeltDB, for a renderer that has just connected. */
   async snapshot(): Promise<ProjectionSnapshot> {
     const sequence = this.sequence
-    const [agents, conversations, messages, privateMessages, routines, runs, runEvents, attention, games, workflows, connectors, userName, userAvatar, desktop] = await Promise.all([
+    const [agents, conversations, messages, privateMessages, routines, runs, runEvents, attention, games, workflows, connectors, userName, userAvatar, desktop, projects, codingSessions] = await Promise.all([
       this.repository.agents(), this.repository.conversations(), this.repository.recentMessages(), this.repository.privateMessages(), this.repository.routines(),
       this.repository.runs(), this.repository.runEvents(), this.repository.attentionItems(), this.repository.groupGames(), this.repository.groupWorkflows(),
-      this.sources.connectors(), this.repository.userName(), this.repository.userAvatar(), this.desktopInfo()
+      this.sources.connectors(), this.repository.userName(), this.repository.userAvatar(), this.desktopInfo(), this.repository.projects(), this.repository.codingSessions()
     ])
     const conversationIds = new Set(conversations.map(conversation => conversation.id))
     const shownRuns = [...runs].sort((a, b) => b.createdAt - a.createdAt).slice(0, RUNS_SHOWN)
@@ -105,6 +106,9 @@ export class DesktopProjection {
         runtime: this.sources.runtimeStatus(agents),
         models: this.sources.availableModels(),
         connectors, userName, userAvatar,
+        projects: projects.sort((a, b) => a.name.localeCompare(b.name)),
+        codingSessions: codingSessions.sort((a, b) => b.createdAt - a.createdAt),
+        codingActivity: ephemeral.codingActivity ?? [],
         agentStatuses: Object.fromEntries(agents.map(agent => [agent.id, ephemeral.agentStatuses[agent.id] ?? 'idle'])),
         activity: ephemeral.activity.filter(activity => conversationIds.has(activity.conversationId)),
         permissionRequests: ephemeral.permissionRequests,
@@ -178,6 +182,14 @@ export class DesktopProjection {
         else { this.direct.push({ kind: 'groupGame', id: change.id, value: null }, { kind: 'groupWorkflow', id: change.id, value: null }) }
         break
       }
+      case 'Workspace': {
+        const workspace = record as unknown as WorkspaceRecord | undefined
+        this.direct.push({ kind: 'project', id: change.id, value: workspace && workspace.name !== undefined ? projectFromRecord(workspace) : null })
+        break
+      }
+      case 'CodingSession':
+        this.direct.push({ kind: 'codingSession', id: change.id, value: record ? codingSessionFromRecord(record as unknown as CodingSessionRecord) : null })
+        break
       case 'Setting':
         if (change.id === 'connectors') this.slices.add('connectors')
         else if (change.id === 'onboarding') this.slices.add('desktop')

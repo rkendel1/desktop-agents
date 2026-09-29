@@ -44,9 +44,10 @@ import { LocalComputerProvider } from './computer'
 import { DouchatRuntime } from './runtime'
 import { RoutineScheduler } from './scheduler'
 import { CodingService } from './coding/service'
+import { formatCommandLine, parseCommandLine } from '../shared/coding'
 import { DesktopRepository } from './desktopRepository'
 import { DesktopProjection } from './projection'
-import { addCustomLocalAgent, configureLocalAgentRegistry, detectLocalAgents, removeCustomLocalAgent, updateLocalAgent, validateLocalAgent } from './localAgents'
+import { addCustomLocalAgent, detectLocalAgents, removeCustomLocalAgent, updateLocalAgent, validateLocalAgent } from './localAgents'
 import { checkLocalAgentUpdates } from './localAgentUpdates'
 import { resetShellPath } from './shellPath'
 import { DesktopUpdater, type UpdateDriver } from './updater'
@@ -75,7 +76,6 @@ const appIcon = join(app.getAppPath(), 'resources/icons', development ? 'douchat
  * overwrite a user's installed Douchat data.
  */
 app.setPath('userData', join(app.getPath('appData'), userDataDirectoryName(development)))
-configureLocalAgentRegistry(app.getPath('userData'))
 configureManagedNode(app.getPath('userData'))
 /** Provider secrets go through the operating system's credential store, never into FeltDB. */
 const credentialCodec: SecretCodec = {
@@ -430,7 +430,7 @@ app.whenReady().then(async () => {
   runtime = new DouchatRuntime(store, computer, ephemeralChanged, { snapshot: () => emailConnectors.snapshot(), createTools: id => emailConnectors.createTools(id) })
   // FeltDB announces every durable change; the projection turns each into a small delta for the renderer.
   projection = new DesktopProjection(store, {
-    ephemeral: () => runtime.ephemeralState(),
+    ephemeral: () => ({ ...runtime.ephemeralState(), codingActivity: coding?.activity() ?? [] }),
     runtimeStatus: agents => runtime.runtimeStatus(agents),
     availableModels: () => runtime.availableModels(),
     connectors: () => emailConnectors.snapshot()
@@ -449,7 +449,7 @@ app.whenReady().then(async () => {
   runtime.setInterfaceLanguage(app.getLocale())
   scheduler = new RoutineScheduler(store, runtime)
   runtime.setRoutineCreator((input) => scheduler.createRoutine(input))
-  coding = new CodingService(store, runtime)
+  coding = new CodingService(store, runtime, () => ephemeralChanged())
   const updateDriver = app.isPackaged
     ? electronUpdater.autoUpdater as unknown as UpdateDriver
     : undefined
@@ -975,6 +975,30 @@ app.whenReady().then(async () => {
   ipcMain.handle('douchat:start-coding-session', (event, input: { projectId?: unknown; agentId?: unknown; task?: unknown }) => {
     if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.agentId !== 'string' || typeof input.task !== 'string') throw new Error('Unauthorized')
     return coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task })
+  })
+  ipcMain.handle('douchat:continue-coding-session', (event, id: unknown, text?: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (text !== undefined && typeof text !== 'string')) throw new Error('Unauthorized')
+    return coding.continue(id, text as string | undefined)
+  })
+  ipcMain.handle('douchat:run-coding-checks', (event, id: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
+    return coding.runChecks(id)
+  })
+  // The renderer proposes a command line for a project's check; running it is command execution on this computer,
+  // so the owner confirms it here, in the main process, and it is stored as an argument vector.
+  ipcMain.handle('douchat:set-project-test-command', async (event, id: unknown, commandLine: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || typeof commandLine !== 'string') throw new Error('Unauthorized')
+    const project = await store.project(id)
+    if (!project) throw new Error('Project not found')
+    const argv = parseCommandLine(commandLine)
+    if (!argv.length) return store.setProjectTestCommand(id, undefined)
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options = { type: 'question' as const, message: ui('Run this command as the check for this project?', '将此命令设为该项目的检查命令？'),
+      detail: `${formatCommandLine(argv)}\n\n${ui('It will run on this computer in', '点击“运行检查”时将在此电脑上运行，目录：')} ${project.path}`,
+      buttons: [ui('Cancel', '取消'), ui('Use this command', '使用此命令')], defaultId: 0, cancelId: 0 }
+    const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+    if (result.response !== 1) return project
+    return store.setProjectTestCommand(id, argv)
   })
   ipcMain.handle('douchat:cancel-coding-session', (event, id: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')

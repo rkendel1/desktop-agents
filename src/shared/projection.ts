@@ -1,4 +1,4 @@
-import type { AgentConfig, AppSnapshot, AttentionItem, ChatMessage, Conversation, PrivateMessage, Routine, RunEvent, TaskRun } from './types'
+import type { AgentConfig, AppSnapshot, AttentionItem, ChatMessage, CodingSession, Conversation, PrivateMessage, Project, Routine, RunEvent, TaskRun } from './types'
 import type { GameView } from './groupGame'
 import type { GroupWorkflowView } from './groupWorkflow'
 
@@ -22,6 +22,8 @@ export type ProjectionChange =
   | { kind: 'attention'; id: string; value: AttentionItem | null }
   | { kind: 'groupGame'; id: string; value: GameView | null }
   | { kind: 'groupWorkflow'; id: string; value: GroupWorkflowView | null }
+  | { kind: 'project'; id: string; value: Project | null }
+  | { kind: 'codingSession'; id: string; value: CodingSession | null }
   /** Whole named parts of the snapshot: settings-derived state and what only exists while the app runs. */
   | { kind: 'slice'; value: Partial<AppSnapshot> }
 
@@ -117,6 +119,12 @@ export function applyProjection(snapshot: AppSnapshot, changes: ProjectionChange
         next = { ...next, groupWorkflows: change.value ? [...others, change.value] : others }
         break
       }
+      case 'project':
+        next = { ...next, projects: upsert(next.projects ?? [], change.id, change.value).sort((a, b) => a.name.localeCompare(b.name)) }
+        break
+      case 'codingSession':
+        next = { ...next, codingSessions: upsert(next.codingSessions ?? [], change.id, change.value).sort((a, b) => b.createdAt - a.createdAt) }
+        break
       case 'slice': {
         const { groupMemberHealth, ...rest } = change.value
         next = { ...next, ...rest, ...(groupMemberHealth ? { groupMemberHealth: { ...(next.groupMemberHealth ?? {}), ...groupMemberHealth } } : {}) }

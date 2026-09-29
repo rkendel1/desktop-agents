@@ -418,6 +418,10 @@ export interface AppSnapshot {
   groupGames?: import('./groupGame').GameView[]
   groupWorkflows?: import('./groupWorkflow').GroupWorkflowView[]
   permissionRequests?: PermissionRequest[]
+  projects?: Project[]
+  codingSessions?: CodingSession[]
+  /** Live state of running coding sessions. */
+  codingActivity?: CodingActivity[]
   agents: AgentConfig[]
   agentStatuses: Record<string, AgentStatus>
   conversations: Conversation[]
@@ -618,6 +622,10 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   listCodingSessions: (projectId?: string) => Promise<CodingSession[]>
   startCodingSession: (input: { projectId: string; agentId: string; task: string }) => Promise<CodingSession>
   cancelCodingSession: (id: string) => Promise<void>
+  continueCodingSession: (id: string, text?: string) => Promise<CodingSession>
+  runCodingChecks: (id: string) => Promise<CommandResult | undefined>
+  /** Asks the owner to confirm before saving: the command runs on this computer. */
+  setProjectTestCommand: (id: string, commandLine: string) => Promise<Project | undefined>
 }
 
 /**
@@ -696,4 +704,29 @@ export interface CodingSession {
   changes: GitChange[]
   /** Checks Douchat ran in the project for this session. */
   commands: CommandResult[]
+  /** What happened, in order: meaningful outcomes only (never every progress tick). Bounded. */
+  events: CodingEvent[]
+}
+
+export type CodingEventKind = 'started' | 'continued' | 'approval-requested' | 'approval-allowed' | 'approval-denied' | 'command' | 'checks' | 'changes' | 'finished'
+
+export interface CodingEvent {
+  at: number
+  kind: CodingEventKind
+  label: string
+  detail?: string
+}
+
+/**
+ * What a running session is doing right now. Live state only: it exists while the
+ * app runs and is never stored; the durable outcome is the session and its events.
+ */
+export interface CodingActivity {
+  sessionId: string
+  state: 'running' | 'awaiting-approval'
+  /** What the agent is doing, in words. */
+  label: string
+  since: number
+  /** Present while the session waits for the owner to decide. */
+  approval?: PermissionRequest
 }
