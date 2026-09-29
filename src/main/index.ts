@@ -45,6 +45,12 @@ import { LocalComputerProvider } from './computer'
 import { DouchatRuntime } from './runtime'
 import { RoutineScheduler } from './scheduler'
 import { CodingService } from './coding/service'
+import { CodingApi } from './coding/api'
+import { startAppPortHost, type AppPortHost } from './appport/host'
+import { openDesktopServices } from './appport/services'
+import { connectGitHub, openDesktopGitHub, projectRemote } from './appport/github'
+import type { GitHubIntegration } from '@appport/github'
+import type { AppPortServices } from '@appport/services'
 import { formatCommandLine, parseCommandLine } from '../shared/coding'
 import { DesktopRepository } from './desktopRepository'
 import { DesktopProjection } from './projection'
@@ -196,6 +202,10 @@ let updater: DesktopUpdater
 let emailConnectors: EmailConnectorManager
 let projection: DesktopProjection
 let coding: CodingService
+let codingApi: CodingApi
+let appPort: AppPortHost | undefined
+let appPortServices: AppPortServices | undefined
+let appPortGitHub: GitHubIntegration | undefined
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
@@ -451,6 +461,23 @@ app.whenReady().then(async () => {
   scheduler = new RoutineScheduler(store, runtime)
   runtime.setRoutineCreator((input) => scheduler.createRoutine(input))
   coding = new CodingService(store, runtime, () => ephemeralChanged())
+  // The one place approvals are answered: the desktop prompt and a remote client both end up here.
+  const answerPermission = (id: string, allow: boolean): void => { runtime.resolveAgentPermission(id, allow); ephemeralChanged() }
+  codingApi = new CodingApi(store, coding, answerPermission)
+  coding.announceInterrupted(store.recoveredCodingSessions)
+  // Remote control is off unless the owner turns it on. It listens on loopback only and needs the API key in `appport-api-key`.
+  if (process.env.DOUCHAT_APPPORT === '1') {
+    try {
+      appPortServices = openDesktopServices(desktop.databaseDirectory)
+      const github = openDesktopGitHub(desktop.databaseDirectory, desktop.vault)
+      appPortGitHub = github
+      // A public connection (no credential) exists from the start; a token, if the owner adds one, is kept in the vault and only referenced.
+      if (!(await github.getConnection('douchat-github'))) await connectGitHub(github, desktop.vault)
+      appPort = await startAppPortHost({ api: codingApi, services: appPortServices,
+        remote: async projectId => { const project = await codingApi.getProject(projectId); return projectRemote(github, project, await codingApi.remoteUrl(projectId)) }, directory: app.getPath('userData'), port: Number(process.env.DOUCHAT_APPPORT_PORT) || 0 })
+      diagnostics.write('appport.started', JSON.stringify({ url: appPort.url, keyFile: appPort.keyFile }))
+    } catch (error) { diagnostics.write('appport.failed', error instanceof Error ? error.stack || error.message : String(error)) }
+  }
   const updateDriver = app.isPackaged
     ? electronUpdater.autoUpdater as unknown as UpdateDriver
     : undefined
@@ -1057,6 +1084,9 @@ app.on('before-quit', (event) => {
     cancelLocalModelQueries()
     runtime?.stopAccepting()
     imChannels?.stop()
+    // Remote clients stop being served first; a session they started is cancelled below like any other.
+    await appPort?.close().catch(() => undefined)
+    await appPortServices?.apiKeys.close().catch(() => undefined)
     // Coding sessions first, so each records how it ended before FeltDB closes.
     await coding?.cancelAll().catch(() => undefined)
     runtime?.cancelAll()

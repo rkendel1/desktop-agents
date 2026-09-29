@@ -92,3 +92,11 @@ export async function gitDiff(cwd: string, options: { path?: string; signal?: Ab
   if (result.exitCode !== 0) throw new Error(`git diff failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`)
   return { diff: result.stdout, truncated: result.stdout.startsWith('…') }
 }
+
+/** The URL of `origin` as Git reports it, or undefined when the folder has none. Reads only. */
+export async function gitRemoteUrl(cwd: string): Promise<string | undefined> {
+  try {
+    const result = await git(cwd, ['config', '--get', 'remote.origin.url'])
+    return result.exitCode === 0 ? result.stdout.trim() || undefined : undefined
+  } catch { return undefined }
+}

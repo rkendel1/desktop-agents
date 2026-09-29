@@ -99,6 +99,158 @@ app desktop {
     startedAt: integer
   }
 
+  // ── AppPort Services (capability `api`) ─────────────────────────────────────────────
+  // Declared here, verbatim from AppPort Services' own contract, because Douchat and the AppPort
+  // Services it consumes share this one flow: one FeltDB authority, several owners. Douchat never
+  // reads or writes these collections itself; AppPort Services does, through its capabilities.
+  collection ApiKeys {
+    id: uuid
+    tenant_id: text
+    application_id: text
+    name: text
+    key_prefix: text
+    secret_hash: text
+    scopes: text
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime
+    last_used_at: datetime
+    created_by: text
+    index tenant_idx using hash(tenant_id)
+    index prefix_idx using hash(key_prefix)
+  }
+
+  collection ApiKeyPrefixes {
+    id: text
+    api_key_id: uuid
+    tenant_id: text
+    created_at: datetime
+    index tenant_prefix_idx using hash(tenant_id)
+  }
+
+  collection ApiKeyAuditEvents {
+    id: uuid
+    type: text
+    credential_id: uuid
+    tenant_id: text
+    principal_id: text
+    timestamp: datetime
+    result: text
+    index tenant_timestamp_idx using hash(tenant_id)
+  }
+
+  collection ServiceEffectEvidence {
+    id: uuid
+    application: text
+    tenant_id: text
+    principal_id: text
+    principal_type: text
+    delegation_id: text
+    run_id: text
+    capability: text
+    capability_version: integer
+    resource: text
+    decision: text
+    decision_id: text
+    credential_ref: text
+    service: text
+    provider: text
+    request_id: text
+    started_at: datetime
+    completed_at: datetime
+    outcome: text
+    failure_code: text
+    index tenant_idx using hash(tenant_id)
+    index capability_idx using hash(capability)
+  }
+
+
+  // ── @appport/github ────────────────────────────────────────────────────────────────
+  // The GitHub capability's own collections, verbatim from its feltdb.flow (`await github.flow()`), in
+  // the same flow for the same reason: Douchat, AppPort Services and @appport/github are owners of
+  // different collections in one FeltDB authority. Douchat does not read or write these; the
+  // capability does. Credentials never appear here — a connection holds only a secret *reference*.
+  collection GitHubConnection {
+    credential_reference: json
+    auth_mechanism: text
+    status: text
+    tenant_id: text
+    application_id: text
+    environment: text
+    provider: text
+    created_at: datetime
+    updated_at: datetime
+    index tenant_id using hash(tenant_id)
+    index status using hash(status)
+  }
+
+  collection GitHubInstallation {
+    connection_id: text
+    installation_id: integer
+    account_login: text
+    account_type: text
+    target_type: text
+    created_at: datetime
+    updated_at: datetime
+    index connection_id using hash(connection_id)
+    index installation_id using hash(installation_id)
+  }
+
+  collection GitHubRepository {
+    connection_id: text
+    owner: text
+    name: text
+    node_id: text
+    default_branch: text
+    private: boolean
+    archived: boolean
+    updated_at: datetime
+    index connection_id using hash(connection_id)
+    index owner using hash(owner)
+  }
+
+  collection GitHubWebhookEvent {
+    delivery_id: text
+    event_name: text
+    action: text
+    connection_id: text
+    repository_full_name: text
+    status: text
+    signature_valid: boolean
+    received_at: datetime
+    processed_at: datetime
+    index delivery_id using hash(delivery_id)
+    index event_name using hash(event_name)
+  }
+
+  collection GitHubOperation {
+    capability: text
+    principal_id: text
+    tenant_id: text
+    application_id: text
+    connection_id: text
+    resource_type: text
+    resource_id: text
+    status: text
+    created_at: datetime
+    updated_at: datetime
+    index capability using hash(capability)
+    index connection_id using hash(connection_id)
+  }
+
+  collection GitHubEvidence {
+    operation_id: text
+    capability: text
+    principal_id: text
+    tenant_id: text
+    application_id: text
+    result: text
+    github_resource: json
+    created_at: datetime
+    index operation_id using hash(operation_id)
+  }
+
+
   collection RuntimeBinding {
     id: text
     agentId: text

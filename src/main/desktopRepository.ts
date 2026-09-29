@@ -152,6 +152,8 @@ export class DesktopRepository {
   private readonly codingRows: Records<CodingSessionRecord>
   private readonly localAgentRows: Records<LocalAgentDefinitionRecord>
   private readonly processRows: Records<AgentProcessRow>
+  /** Coding sessions found still `running` when this desktop opened: their process died with the last run. */
+  recoveredCodingSessions: CodingSession[] = []
   private readonly sessions: Records<SessionRecord>
   private readonly topics: Records<TopicRecord>
   private readonly groups: Records<GroupRecord>
@@ -259,7 +261,7 @@ export class DesktopRepository {
     if (!existing) await this.desktop.put({ id: 'local', schemaVersion: DESKTOP_SCHEMA_VERSION, createdAt: Date.now() })
     if (seedDemo && !(await this.setting('demoSeeded'))) await this.seedDemo()
     await this.recoverInterruptedRuns()
-    await this.recoverInterruptedCodingSessions()
+    this.recoveredCodingSessions = await this.recoverInterruptedCodingSessions()
   }
 
   // ───────────────────────────── settings ─────────────────────────────

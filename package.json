@@ -31,6 +31,13 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@appport/authorization": "1.0.2",
+    "@appport/core": "1.0.3",
+    "@appport/github": "1.0.2",
+    "@appport/protocol": "1.0.2",
+    "@appport/schema": "1.0.2",
+    "@appport/server": "1.0.2",
+    "@appport/services": "0.4.6",
     "@earendil-works/pi-agent-core": "^0.84.2",
     "@earendil-works/pi-ai": "^0.84.2",
     "@feltdb/core": "0.11.9",
@@ -52,6 +59,9 @@
     "yauzl": "3.4.0"
   },
   "devDependencies": {
+    "@appport/client": "1.0.2",
+    "@appport/transport-http": "1.0.2",
+    "@appport/transport-inprocess": "1.0.2",
     "@eslint/js": "^9.39.5",
     "@streamdown/cjk": "^1.0.3",
     "@streamdown/mermaid": "^1.0.2",

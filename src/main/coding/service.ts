@@ -1,6 +1,7 @@
 import type { PermissionEvent } from '../agentPermissions'
 import type { CodingActivity, CodingEvent, CodingSession, CommandResult, GitState, Project } from '../../shared/types'
 import { describeApproval, formatCommandLine } from '../../shared/coding'
+import type { CodingNotification } from '../../shared/codingApi'
 import type { DesktopRepository } from '../desktopRepository'
 import { resolveSavedWorkspace, validateWorkspaceFolder } from '../localWorkspaces'
 import type { EphemeralState } from '../projection'
@@ -24,7 +25,7 @@ const RESUME_PROMPT = 'Continue where you left off. Check the repository’s cur
 const INTERRUPTED_PROMPT = 'Your previous turn was interrupted when Douchat closed, so its process is gone. Check the repository’s current state and continue the task.'
 
 /** Live facts about one running session: the process side of it, gone when the app closes. */
-interface Live { sessionId: string; agentId: string; conversationId: string; projectName: string; workingDirectory: string; task: string; since: number }
+interface Live { projectId: string; sessionId: string; agentId: string; conversationId: string; projectName: string; workingDirectory: string; task: string; since: number }
 
 /**
  * Coding sessions: an agent working in a project folder.
@@ -48,10 +49,31 @@ export class CodingService {
   private readonly cancelled = new Set<string>()
   private readonly live = new Map<string, Live>()
   private recording: Promise<void> = Promise.resolve()
+  private readonly listeners = new Set<(notification: CodingNotification) => void>()
 
   constructor(private readonly repository: DesktopRepository, private readonly runtime: CodingRuntime, private readonly onActivityChange: () => void = () => undefined) {
     runtime.setTurnGuard?.(turn => this.guard(turn))
     runtime.observePermissions?.(event => this.permission(event))
+  }
+
+  /**
+   * Live notices about sessions, for whoever is listening now (the desktop, an AppPort host). Nothing is
+   * queued or replayed: a listener that was away reads the session's durable history instead.
+   */
+  subscribe(listener: (notification: CodingNotification) => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+
+  private announce(name: CodingNotification['name'], session: Pick<CodingSession, 'id' | 'projectId'>, payload: CodingNotification['payload'] = {}): void {
+    if (!this.listeners.size) return
+    const notification: CodingNotification = { name, sessionId: session.id, projectId: session.projectId, at: Date.now(), origin: 'douchat', payload }
+    for (const listener of [...this.listeners]) { try { listener(notification) } catch { /* a listener never affects a session */ } }
+  }
+
+  /** Sessions the last run left `running` are `interrupted`; tell whoever is already listening. */
+  announceInterrupted(sessions: readonly CodingSession[]): void {
+    for (const session of sessions) this.announce('session.interrupted', session, { status: 'interrupted' })
   }
 
   // ───────────────────────────── projects ─────────────────────────────
@@ -124,6 +146,7 @@ export class CodingService {
       projectId: project.id, agentId: agent.id, conversationId: conversation.id, topicId: topic.id, workingDirectory: directory,
       task, status: 'running', startedAt: Date.now(), baseline, events: [{ at: Date.now(), kind: 'started', label: 'Agent started', detail: `${task.slice(0, 200)}${baseline.changes.length ? ` — ${baseline.changes.length} file${baseline.changes.length === 1 ? ' was' : 's were'} already modified` : ''}` }]
     })
+    this.announce('session.started', session, { task: task.slice(0, 200), agentId: agent.id, alreadyModified: baseline.changes.length })
     this.turns.set(session.id, this.execute(session, project, directory, task))
     return session
   }
@@ -144,6 +167,7 @@ export class CodingService {
     if (conversation.workspacePath !== directory) await this.repository.setConversationWorkspace(conversation.id, directory)
     const prompt = text?.trim() || (existing.status === 'interrupted' ? INTERRUPTED_PROMPT : RESUME_PROMPT)
     const session = await this.repository.resumeCodingSession(id)
+    this.announce('session.continued', session, { after: existing.status })
     this.turns.set(session.id, this.execute(session, project, directory, prompt))
     return session
   }
@@ -155,7 +179,7 @@ export class CodingService {
 
   private async execute(session: CodingSession, project: Project, directory: string, prompt: string): Promise<CodingSession> {
     const started = session.startedAt ?? Date.now()
-    this.live.set(session.id, { sessionId: session.id, agentId: session.agentId, conversationId: session.conversationId, projectName: project.name, workingDirectory: directory, task: session.task, since: started })
+    this.live.set(session.id, { projectId: session.projectId, sessionId: session.id, agentId: session.agentId, conversationId: session.conversationId, projectName: project.name, workingDirectory: directory, task: session.task, since: started })
     this.onActivityChange()
     let failure: string | undefined
     // Whatever an earlier session was granted or asked is withdrawn: an approval belongs to one running session.
@@ -183,6 +207,7 @@ export class CodingService {
     const during = changes.filter(change => change.origin === 'session').length
     const already = changes.length - during
     const headMoved = finalState?.head !== undefined && session.baseline.head !== undefined && finalState.head !== session.baseline.head
+    this.announce('files.changed', session, { during, alreadyModified: already, cleaned: cleaned.length, headMoved })
     await this.record(session.id, { kind: 'changes', label: during ? `${during} file${during === 1 ? '' : 's'} changed during this session` : 'No files changed during this session',
       detail: [already ? `${already} already modified before it started` : '', cleaned.length ? `${cleaned.length} modified before, clean now` : '', headMoved ? 'HEAD moved to a new commit' : ''].filter(Boolean).join(' · ') || undefined })
     await this.record(session.id, { kind: 'finished', label: status === 'succeeded' ? 'Agent finished' : status === 'cancelled' ? 'Cancelled' : 'Failed', ...(error ? { detail: error.slice(0, 300) } : {}) })
@@ -190,6 +215,7 @@ export class CodingService {
       status, finishedAt: Date.now(), changes, cleaned, ...(finalState?.head ? { finalHead: finalState.head } : {}), ...(run ? { runId: run.id } : {}), ...(reply ? { result: reply.text } : {}), ...(error ? { error } : { error: undefined })
     })
     this.live.delete(session.id)
+    this.announce('session.finished', session, { status, ...(error ? { error: error.slice(0, 300) } : {}) })
     this.onActivityChange()
     return finished ?? session
   }
@@ -219,6 +245,7 @@ export class CodingService {
   async runCommand(id: string, argv: string[], options: { timeoutMs?: number; event?: 'command' | 'checks' } = {}): Promise<CommandResult> {
     const session = await this.repository.codingSession(id)
     if (!session) throw new Error('Coding session not found')
+    this.announce('check.started', session, { command: formatCommandLine(argv), kind: options.event ?? 'command' })
     const controller = new AbortController()
     const set = this.aborts.get(id) ?? new Set<AbortController>()
     set.add(controller); this.aborts.set(id, set)
@@ -230,6 +257,7 @@ export class CodingService {
       const ok = result.exitCode === 0
       await this.record(id, { kind: options.event ?? 'command', label: `${options.event === 'checks' ? 'Tests' : 'Command'} completed ${ok ? '✓' : '✗'}`,
         detail: `${formatCommandLine(argv)} — ${result.cancelled ? 'cancelled' : result.timedOut ? 'timed out' : `exit ${result.exitCode ?? result.signal}`}` })
+      this.announce('check.completed', session, { command: formatCommandLine(argv), kind: options.event ?? 'command', ok, exitCode: result.exitCode, cancelled: result.cancelled === true, timedOut: result.timedOut === true })
       return result
     } finally { set.delete(controller); if (!set.size) this.aborts.delete(id) }
   }
@@ -267,6 +295,9 @@ export class CodingService {
     const live = [...this.live.values()].find(item => item.agentId === event.request.agentId)
     if (!live) return
     const { verb, target } = describeApproval(event.request, live.workingDirectory)
+    const target_ = { id: live.sessionId, projectId: live.projectId }
+    if (event.kind === 'requested') this.announce('approval.requested', target_, { approvalId: event.request.id, action: `${verb} ${target}` })
+    else this.announce('approval.resolved', target_, { approvalId: event.request.id, outcome: event.outcome, action: `${verb} ${target}` })
     if (event.kind === 'requested') void this.record(live.sessionId, { kind: 'approval-requested', label: 'Approval requested', detail: `${verb} ${target}` })
     else if (event.outcome === 'allowed') void this.record(live.sessionId, { kind: 'approval-allowed', label: 'Allowed', detail: `${verb} ${target}` })
     else void this.record(live.sessionId, { kind: 'approval-denied', label: event.outcome === 'declined' ? 'Denied' : `Approval ${event.outcome}`, detail: `${verb} ${target}` })
