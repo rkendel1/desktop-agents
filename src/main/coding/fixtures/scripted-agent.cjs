@@ -16,7 +16,11 @@ const { realpathSync } = require('node:fs')
 
 const prompt = process.argv[process.argv.length - 1]
 const marker = prompt.lastIndexOf('CODING-TASK ')
-const task = marker < 0 ? { action: 'none' } : JSON.parse(prompt.slice(marker + 'CODING-TASK '.length).split('\n')[0])
+const task = (() => {
+  // A continued conversation replays earlier turns in the prompt; a turn with no task of its own just looks around.
+  if (marker < 0) return { action: 'none' }
+  try { return JSON.parse(prompt.slice(marker + 'CODING-TASK '.length).split('\n')[0]) } catch { return { action: 'none' } }
+})()
 const cwd = realpathSync(process.cwd())
 const lines = [`cwd=${cwd}`]
 const run = (file, args) => {

@@ -1,16 +1,17 @@
 import { t, tr } from '../preferences'
-import { Settings, UsersRound, MessageCircle, X, Minus, Maximize2 } from 'lucide-react'
+import { Settings, UsersRound, MessageCircle, FolderGit2, X, Minus, Maximize2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { UpdateStatus } from '../../../shared/types'
 import { UserAvatar } from './common'
 
-export type AppView = 'chats' | 'contacts'
+export type AppView = 'chats' | 'contacts' | 'projects'
 
 export function AppRail({
   view,
   unread,
   friendRequests = 0,
+  codingAttention = 0,
   userName,
   userAvatar,
   settingsOpen,
@@ -20,6 +21,8 @@ export function AppRail({
   view: AppView
   unread: number
   friendRequests?: number
+  /** Coding sessions waiting for the owner's approval. */
+  codingAttention?: number
   userName: string
   userAvatar: string
   settingsOpen: boolean
@@ -63,6 +66,16 @@ export function AppRail({
       >
         <UsersRound size={23} strokeWidth={1.8} />
         {friendRequests > 0 && <span className="rail-badge" aria-label={tr('{count} pending friend requests', { count: friendRequests })}>{friendRequests > 99 ? '99+' : friendRequests}</span>}
+      </button>
+      <button
+        className={`rail-button no-drag ${view === 'projects' ? 'active' : ''}`}
+        onClick={() => onSelect('projects')}
+        aria-label={t('Projects')}
+        aria-current={view === 'projects'}
+        title={t('Projects')}
+      >
+        <FolderGit2 size={23} strokeWidth={1.8} />
+        {codingAttention > 0 && <span className="rail-badge" aria-label={tr('{count} coding sessions need attention', { count: codingAttention })}>{codingAttention}</span>}
       </button>
       <div className="rail-spacer" />
       <button className={`rail-button no-drag ${settingsOpen ? 'active' : ''}`} onClick={() => onOpenSettings()} aria-label={t('Settings')} title={updateReady ? t('Update available') : t('Settings')} aria-current={settingsOpen}><Settings size={23} strokeWidth={1.8} />{updateReady && <span className="rail-update-dot" />}</button>
