@@ -1880,7 +1880,7 @@ export class DouchatRuntime {
           }
           if (memory.invalid) receipts.push(this.interfaceLanguage === 'zh-CN' ? '记忆更新格式有误，未保存。' : 'An invalid memory update was not saved.')
           text = [text, ...new Set(receipts)].filter(Boolean).join('\n\n')
-          return finish({ text, ...(attachments.length ? { attachments } : {}) })
+          return await finish({ text, ...(attachments.length ? { attachments } : {}) })
         } finally {
           releaseWorkspace?.()
           signal?.removeEventListener('abort', forwardAbort)
@@ -2023,12 +2023,12 @@ export class DouchatRuntime {
       } finally {
         signal?.removeEventListener('abort', abort)
       }
-      if (responseFailure) return finish({ text: '', error: responseFailure, retryCount })
+      if (responseFailure) return await finish({ text: '', error: responseFailure, retryCount })
       const lastMessage = [...session.state.messages].reverse().find((message) => message.role === 'assistant')
       const text = lastMessage && 'content' in lastMessage ? this.readText(lastMessage.content) : ''
       const error = lastMessage && 'errorMessage' in lastMessage ? (lastMessage.errorMessage as string) : undefined
-      if (!text.trim() && error) return finish({ text: '', error, ...(retryCount ? { retryCount } : {}) })
-      return finish({
+      if (!text.trim() && error) return await finish({ text: '', error, ...(retryCount ? { retryCount } : {}) })
+      return await finish({
         text,
         error: error || (text.trim() || this.generatedFiles.get(sessionKey)?.length ? undefined : lastMessage && 'stopReason' in lastMessage && lastMessage.stopReason === 'length'
           ? `${config.name}: model output limit reached before a complete response. No complete reply was returned; this is not a contact activation issue.`
@@ -2036,7 +2036,7 @@ export class DouchatRuntime {
         ...(retryCount ? { retryCount } : {})
       })
     } catch (cause) {
-      return finish({ text: '', error: cause instanceof Error ? cause.message : 'Unknown runtime error' })
+      return await finish({ text: '', error: cause instanceof Error ? cause.message : 'Unknown runtime error' })
     } finally {
       if (permissionTask) this.permissions.endTask(permissionTask)
       this.permissionTasks.delete(sessionKey)
@@ -3152,7 +3152,7 @@ export class DouchatRuntime {
   /** Background work started so far has finished. */
   async idle(): Promise<void> {
     for (;;) {
-      const work = [...this.background, ...this.queues.values()]
+      const work = [...this.background, ...this.queues.values(), ...this.recording.values()]
       if (!work.length) break
       await Promise.allSettled(work)
     }
@@ -3161,18 +3161,25 @@ export class DouchatRuntime {
 
   /** A brand-new topic opens with one proactive line from the bot or lead. */
   async greet(conversationId: string): Promise<void> {
+    // Claimed before anything is read, so two greetings for one chat cannot both start.
+    if (this.greetings.has(conversationId)) return
+    const abort = new AbortController()
+    this.greetings.set(conversationId, abort)
+    try { await this.greetWith(conversationId, abort) }
+    finally { if (this.greetings.get(conversationId) === abort) this.greetings.delete(conversationId) }
+  }
+
+  private async greetWith(conversationId: string, abort: AbortController): Promise<void> {
     const conversation = (await this.store.conversation(conversationId))
-    if (!conversation) return
+    if (!conversation || abort.signal.aborted) return
     const topicId = (await this.store.activeTopicId(conversationId))
-    if ((await this.store.contextMessages(conversationId, topicId)).length || this.greetings.has(conversationId)) return
+    if ((await this.store.contextMessages(conversationId, topicId)).length || abort.signal.aborted) return
     const group = conversation.type === 'group' ? await this.group(conversation) : undefined
     const speakerId = group ? groupLeadMember(group)?.id : conversation.agentIds[0]
     const speaker = speakerId ? (await this.store.agent(speakerId)) : undefined
     if (!speaker) return
 
     const version = conversation.topics.find(topic => topic.id === topicId)?.contextReset?.id
-    const abort = new AbortController()
-    this.greetings.set(conversationId, abort)
     const sessionKey = `greeting:${conversationId}:${topicId}:${randomUUID()}`
     const stillEmpty = async (): Promise<boolean> => {
       const current = await this.store.conversation(conversationId)

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyGameAction, createGame, gamePlayerView, gameView, nextGameTurn, type GameKind, type GameState } from './groupGame'
 
 function fixture(kind: GameKind, seed: number, human = false): GameState {
-  return createGame({ id: `game-${seed}`, conversationId: 'group', topicId: 'main', ownerId: 'owner', kind, seed, now: 1, language: 'zh-CN',
+  return createGame({ id: `game-${seed}`, conversationId: 'group', topicId: 'main', kind, seed, now: 1, language: 'zh-CN',
     players: Array.from({ length: 6 }, (_, index) => ({ id: human && index === 2 ? 'human' : `p${index}`, name: `玩家${index}`, human: human && index === 2 })) })
 }
 
@@ -84,7 +84,7 @@ it('rejects self-votes and votes for removed members, while preserving the pendi
 
 
 it.each(['undercover', 'werewolf'] as const)('completes an English %s game with localized rules and persisted language', kind => {
-  let state = createGame({ id: 'english', conversationId: 'g', topicId: 't', ownerId: 'owner', kind, seed: 42, now: 1, language: 'en',
+  let state = createGame({ id: 'english', conversationId: 'g', topicId: 't', kind, seed: 42, now: 1, language: 'en',
     players: Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, name: `Player ${i}`, human: i === 0 })) })
   expect(JSON.stringify(gamePlayerView(state, 'p0'))).not.toMatch(/\p{Script=Han}/u)
   for (let steps = 0; state.status !== 'finished'; steps++) {

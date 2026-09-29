@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 const agent = {
-  id: 'original', ownerId: 'private-owner', name: 'Demo', role: 'Researcher', instructions: 'Helpful', labels: 'Careful', provider: 'private-provider', model: 'private-model',
+  id: 'original', color: '#000000', createdAt: 0, name: 'Demo', role: 'Researcher', instructions: 'Helpful', labels: 'Careful', provider: 'private-provider', model: 'private-model',
   systemFiles: { 'SOUL.md': 'Soul', 'TOOLS.md': 'Tools', 'USER.md': 'PRIVATE USER', 'MEMORY.md': 'PRIVATE MEMORY' },
   systemFilesDirectory: '/private/path',
   skills: [{ id: 'old-id', name: 'Skill', enabled: false, content: '# Skill', directory: '/private/skill', files: [{ path: 'references/test.md', data: Buffer.from('中文资料').toString('base64') }, { path: 'assets/binary.bin', data: 'AP8=' }] }]
@@ -43,20 +43,20 @@ it('rejects unsupported manifests, missing files, duplicate skill roots and unde
 })
 it('replaces custom files and skills while retaining profile, model and memory', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'agent-import-'))
-  const store = openAtFile(join(directory, 'test.db'), { seedDemo: true })
+  const store = await openAtFile(join(directory, 'test.db'), { seedDemo: true })
   try {
-    const target = store.agents[0]
-    store.updateAgent(target.id, { systemFiles: { 'SOUL.md': 'Old soul', 'HEARTBEAT.md': 'Old heartbeat', 'USER.md': 'Keep user', 'MEMORY.md': 'Keep memory' }, skills: [] })
-    const before = store.agent(target.id)!
+    const target = (await store.agents())[0]
+    await store.updateAgent(target.id, { systemFiles: { 'SOUL.md': 'Old soul', 'HEARTBEAT.md': 'Old heartbeat', 'USER.md': 'Keep user', 'MEMORY.md': 'Keep memory' }, skills: [] })
+    const before = (await store.agent(target.id))!
     const parsed = await parseAgentArchive(exportAgentArchive(agent))
-    store.updateAgent(target.id, { systemFiles: parsed.systemFiles, skills: parsed.skills })
-    const after = store.agent(target.id)!
+    await store.updateAgent(target.id, { systemFiles: parsed.systemFiles, skills: parsed.skills })
+    const after = (await store.agent(target.id))!
     expect(after.name).toBe(before.name)
     expect(after.model).toBe(before.model)
     expect(after.systemFiles).toMatchObject({ 'SOUL.md': 'Soul', 'HEARTBEAT.md': '', 'USER.md': 'Keep user', 'MEMORY.md': 'Keep memory' })
     expect(after.skills).toHaveLength(1)
     expect(after.skills![0].directory).toBeTruthy()
-  } finally { store.close(); rmSync(directory, { recursive: true, force: true }) }
+  } finally { await store.close(); rmSync(directory, { recursive: true, force: true }) }
 })
 it('supports an empty package that intentionally clears portable settings', async () => {
   const parsed = await parseAgentArchive(exportAgentArchive({ ...agent, systemFiles: {}, skills: [] }))

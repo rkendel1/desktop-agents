@@ -39,7 +39,28 @@ export interface RecordChange {
   record?: Record<string, unknown>
 }
 
-type Stored<T> = T & { id: string; seq: number; __version?: number }
+/**
+ * FeltDB transactions accept only keys of letters, digits, `.`, `_` and `-`
+ * (at most 128). The desktop's ids are richer — a topic is `session/topic`, a
+ * message id may hold `:` or be long — so a key is:
+ *   - the id itself when that is allowed;
+ *   - `_` + the id's UTF-8 bytes in base64url, when that fits;
+ *   - `.` + the id's SHA-256 in hex, otherwise.
+ * Whenever the key differs from the id the row also keeps the id (`rid`), so
+ * callers only ever see ids.
+ */
+const SAFE_KEY = /^[A-Za-z0-9-][A-Za-z0-9._-]{0,127}$/
+export function recordKey(id: string): string {
+  if (SAFE_KEY.test(id)) return id
+  const encoded = `_${Buffer.from(id, 'utf8').toString('base64url')}`
+  return encoded.length <= 128 ? encoded : `.${createHash('sha256').update(id, 'utf8').digest('hex')}`
+}
+/** The id a key was made from, when the key alone can say (a hashed key cannot). */
+export function recordIdOf(key: string): string {
+  return key.startsWith('_') ? Buffer.from(key.slice(1), 'base64url').toString('utf8') : key
+}
+
+type Stored<T> = T & { id: string; seq: number; __version?: number; rid?: string }
 
 const TYPE_CHECKS: Record<string, (value: unknown) => boolean> = {
   text: value => typeof value === 'string',
@@ -59,9 +80,11 @@ function canonical(value: unknown): string {
   })
 }
 
+/** What callers see: the record as they wrote it, with none of FeltDB's storage fields. */
 function strip<T>(row: Stored<T>): T {
-  const { seq: _seq, __version: _version, ...rest } = row
-  return structuredClone(rest) as unknown as T
+  const { seq: _seq, __version: _version, rid, ...rest } = row
+  // FeltDB stores the key in `id`; `rid` holds the id when the two differ.
+  return structuredClone({ ...rest, id: rid ?? rest.id }) as unknown as T
 }
 
 export interface PageRequest {
@@ -88,7 +111,13 @@ export class Records<T extends { id: string }> {
 
   /** @internal Raw stored form, including the write-order field. */
   async stored(id: string): Promise<Stored<T> | undefined> {
-    return (await this.collection.get(id)) ?? undefined
+    return (await this.collection.get(recordKey(id))) ?? undefined
+  }
+
+  /** @internal The stored form of a record: its own fields, its write position, and its id when the key cannot carry it. */
+  private row(record: T, previous?: Stored<T>): Stored<T> {
+    const key = recordKey(record.id)
+    return { ...record, id: record.id, seq: previous?.seq ?? this.database.nextSequence(), ...(key !== record.id ? { rid: record.id } : {}) } as Stored<T>
   }
 
   /** @internal */
@@ -108,7 +137,7 @@ export class Records<T extends { id: string }> {
   }
 
   async has(id: string): Promise<boolean> {
-    return this.collection.exists(id)
+    return this.collection.exists(recordKey(id))
   }
 
   async count(): Promise<number> {
@@ -145,15 +174,16 @@ export class Records<T extends { id: string }> {
   async put(record: T): Promise<T> {
     this.validate(record)
     const previous = await this.stored(record.id)
-    const next = { ...record, id: record.id, seq: previous?.seq ?? this.database.nextSequence() } as Stored<T>
+    const next = this.row(record, previous)
     if (previous && canonical(strip(previous)) === canonical(strip(next))) return strip(next)
-    await this.collection.put(next as Partial<Stored<T>>, record.id)
+    await this.collection.put(next as Partial<Stored<T>>, recordKey(record.id))
     return strip(next)
   }
 
   async delete(id: string): Promise<boolean> {
-    if (!(await this.collection.exists(id))) return false
-    await this.collection.delete(id)
+    const key = recordKey(id)
+    if (!(await this.collection.exists(key))) return false
+    await this.database.deleting(this.name, key, id, () => this.collection.delete(key))
     return true
   }
 
@@ -168,7 +198,7 @@ export class Records<T extends { id: string }> {
   async prepare(record: T, overlay?: Stored<T>): Promise<{ next: Stored<T>; previous?: Stored<T>; changed: boolean }> {
     this.validate(record)
     const previous = overlay ?? await this.stored(record.id)
-    const next = { ...record, id: record.id, seq: previous?.seq ?? this.database.nextSequence() } as Stored<T>
+    const next = this.row(record, previous)
     return { next, previous, changed: !previous || canonical(strip(previous)) !== canonical(strip(next)) }
   }
 }
@@ -239,6 +269,8 @@ export class FeltDatabase {
   private readonly unsubscribes = new Set<() => void>()
   private sequence = 0
   private closed = false
+  /** While a delete is announced, the id its key was made from — a hashed key cannot say. Lives only for that call. */
+  private readonly announcing = new Map<string, string>()
 
   private constructor(readonly directory: string, readonly db: StateFirstDB, private readonly lockPath: string) {
     this.flow = desktopFlow()
@@ -341,6 +373,13 @@ export class FeltDatabase {
     return records as unknown as Records<T>
   }
 
+  /** @internal Run a delete whose announcement must carry the id, not only the key. */
+  async deleting<T>(collection: string, key: string, id: string, work: () => Promise<T>): Promise<T> {
+    const name = `${collection}:${key}`
+    this.announcing.set(name, id)
+    try { return await work() } finally { this.announcing.delete(name) }
+  }
+
   /** @internal Monotonic across restarts: time-based, and never behind what is stored. */
   nextSequence(): number {
     this.sequence = Math.max(this.sequence + 1, Date.now() * 1000)
@@ -367,16 +406,20 @@ export class FeltDatabase {
     await this.db.transaction(tx => {
       for (const operation of operations) {
         const collection = tx.collection(operation.collection)
-        if (operation.kind === 'put') collection.set(operation.id, operation.value)
-        else collection.delete(operation.id)
+        if (operation.kind === 'put') collection.set(recordKey(operation.id), operation.value)
+        else collection.delete(recordKey(operation.id))
       }
     })
     const graph = getReactiveDependencyGraph()
     const timestamp = Date.now()
     for (const operation of operations) {
-      await graph.emitChange(operation.collection, operation.kind === 'put'
-        ? { type: operation.existed ? 'update' : 'insert', key: `${operation.collection}:${operation.id}`, value: { ...operation.value, __version: 1 }, timestamp }
-        : { type: 'delete', key: `${operation.collection}:${operation.id}`, value: null, timestamp })
+      const key = `${operation.collection}:${recordKey(operation.id)}`
+      if (operation.kind === 'put') {
+        await graph.emitChange(operation.collection, { type: operation.existed ? 'update' : 'insert', key, value: { ...operation.value, __version: 1 }, timestamp })
+      } else {
+        await this.deleting(operation.collection, recordKey(operation.id), operation.id,
+          () => graph.emitChange(operation.collection, { type: 'delete', key, value: null, timestamp }))
+      }
     }
     return result
   }
@@ -388,8 +431,9 @@ export class FeltDatabase {
   subscribe(listener: (change: RecordChange) => void, collections: string[] = this.flow.collections.map(collection => collection.name)): () => void {
     const graph = getReactiveDependencyGraph()
     const stops = collections.map(name => graph.subscribe(name, change => {
-      const id = change.key.slice(name.length + 1)
+      const key = change.key.slice(name.length + 1)
       const record = change.value && typeof change.value === 'object' ? strip(change.value as Stored<{ id: string }>) as unknown as Record<string, unknown> : undefined
+      const id = (record?.id as string | undefined) ?? this.announcing.get(change.key) ?? recordIdOf(key)
       try { listener({ collection: name, type: change.type, id, ...(change.type === 'delete' || !record ? {} : { record }) }) } catch { /* a subscriber never fails a write */ }
     }))
     const stop = (): void => { for (const unsubscribe of stops) unsubscribe(); this.unsubscribes.delete(stop) }

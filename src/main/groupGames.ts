@@ -47,12 +47,13 @@ export class GroupGames {
   }
 
   async control(id: string, action: 'pause' | 'resume' | 'cancel'): Promise<void> {
+    // The running generation stops now; what follows only settles the stored game.
+    const job = ['pause', 'resume', 'cancel'].includes(action) ? this.running.get(id) : undefined
+    job?.abort.abort()
     const language = (await this.store.groupGame(id))?.language ?? this.callbacks.language?.() ?? 'en'
     if (!['pause', 'resume', 'cancel'].includes(action)) throw new GameRuleError("Invalid game control.", language)
     const game = await this.store.groupGame(id)
     if (!game || ['finished', 'cancelled'].includes(game.status)) throw new GameRuleError("The game has ended or no longer exists.", language)
-    const job = this.running.get(id)
-    job?.abort.abort()
     if (job) await job.promise
     // The revision can change while cancellation settles.
     const current = await this.store.groupGame(id)

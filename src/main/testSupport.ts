@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
+import { onTestFinished } from 'vitest'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DesktopRepository, type DesktopRepositoryOptions } from './desktopRepository'
@@ -31,7 +32,13 @@ export async function createTestDesktop(options: DesktopRepositoryOptions = {}, 
     }
   }
   created.push(desktop)
+  closeAfterTest(() => desktop.dispose())
   return desktop
+}
+
+/** Whatever a test opens is closed when the test ends, so no lock or handle outlives it. */
+function closeAfterTest(close: () => Promise<void>): void {
+  try { onTestFinished(close) } catch { /* Outside a test: disposeTestDesktops closes it. */ }
 }
 
 /** Call from afterEach. */
@@ -40,8 +47,10 @@ export async function disposeTestDesktops(): Promise<void> {
 }
 
 /** Open a repository in the directory that holds `file` (tests still name a state file). */
-export function openAtFile(file: string, options: DesktopRepositoryOptions = {}): Promise<DesktopRepository> {
-  return DesktopRepository.open(dirname(file), options)
+export async function openAtFile(file: string, options: DesktopRepositoryOptions = {}): Promise<DesktopRepository> {
+  const repository = await DesktopRepository.open(dirname(file), options)
+  closeAfterTest(() => repository.close().catch(() => undefined))
+  return repository
 }
 
 /** In-memory stand-in for the FeltDB-backed workspace bindings, for tests of the workspace logic alone. */

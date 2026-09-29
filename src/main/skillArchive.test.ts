@@ -51,19 +51,19 @@ it('rejects oversized declared output before extracting it', async () => {
 it('saves resources, preserves them across restart, and exposes their directory only for enabled skills', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-skills-'))
   const database = join(directory, 'test.db')
-  let store = openAtFile(database, { seedDemo: true })
+  let store = await openAtFile(database, { seedDemo: true })
   try {
     const skills = await parseSkillArchive(archive({ 'SKILL.md': manifest(), 'references/guide.md': strToU8('saved guide'), 'scripts/check.sh': strToU8('echo okay') }))
-    store.updateAgent('dobi', { skills })
-    const saved = store.agent('dobi')!.skills![0]
+    await store.updateAgent('dobi', { skills })
+    const saved = (await store.agent('dobi'))!.skills![0]
     expect(readFileSync(join(saved.directory!, 'references/guide.md'), 'utf8')).toBe('saved guide')
-    expect(agentCustomizationPrompt(store.agent('dobi')!)).toContain(saved.directory)
-    store.close(); store = openAtFile(database, { seedDemo: true })
-    expect(readFileSync(join(store.agent('dobi')!.skills![0].directory!, 'scripts/check.sh'), 'utf8')).toBe('echo okay')
-    store.updateAgent('dobi', { skills: [{ ...saved, enabled: false }] })
-    expect(agentCustomizationPrompt(store.agent('dobi')!)).not.toContain(saved.directory)
-    expect(store.agent('dobi')!.skills![0].directory).toBe(saved.directory)
+    expect(agentCustomizationPrompt((await store.agent('dobi'))!)).toContain(saved.directory)
+    await store.close(); store = await openAtFile(database, { seedDemo: true })
+    expect(readFileSync(join((await store.agent('dobi'))!.skills![0].directory!, 'scripts/check.sh'), 'utf8')).toBe('echo okay')
+    await store.updateAgent('dobi', { skills: [{ ...saved, enabled: false }] })
+    expect(agentCustomizationPrompt((await store.agent('dobi'))!)).not.toContain(saved.directory)
+    expect((await store.agent('dobi'))!.skills![0].directory).toBe(saved.directory)
     expect(() => validateAgentSkills([{ ...saved, files: [{ path: '../escape', data: 'YQ==' }] }])).toThrow()
     expect(() => validateAgentSkills([{ ...saved, files: [{ path: 'a', data: '' }, { path: 'a/b', data: '' }] }])).toThrow()
-  } finally { store.close(); rmSync(directory, { recursive: true, force: true }) }
+  } finally { await store.close(); rmSync(directory, { recursive: true, force: true }) }
 })

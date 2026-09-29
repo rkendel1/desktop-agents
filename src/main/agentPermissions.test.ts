@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentPermissionBroker, nativeReadPermission, toolCapability } from './agentPermissions'
 import { agentPermissions } from '../shared/agentPermissions'
 import type { AgentConfig } from '../shared/types'
-const config = { id: 'agent', ownerId: 'owner', name: 'Agent' } as AgentConfig
+const config = { id: 'agent', name: 'Agent' } as AgentConfig
 const input = { requester: 'Friend', roomName: 'Group', capability: 'filesRead' as const, operation: 'read', details: '/private/file' }
 afterEach(() => vi.useRealTimers())
 describe('agent permission boundary', () => {

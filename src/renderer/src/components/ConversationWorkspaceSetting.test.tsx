@@ -7,8 +7,8 @@ vi.mock('../preferences', () => ({ t: (s: string) => s }))
 import { ConversationWorkspaceSetting } from './ConversationWorkspaceSetting'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const agents = [{ id: 'codex', ownerId: 'me', localAgentId: 'codex' }] as AgentConfig[]
-const conversation = { id: 'direct-codex', type: 'direct', name: 'Codex', agentIds: ['codex'], topics: [], activeTopicId: '', unread: 0, readAt: 0, createdAt: 0, updatedAt: 0, ownerId: 'me' } as Conversation
+const agents = [{ id: 'codex', localAgentId: 'codex' }] as AgentConfig[]
+const conversation = { id: 'direct-codex', type: 'direct', name: 'Codex', agentIds: ['codex'], topics: [], activeTopicId: '', unread: 0, readAt: 0, createdAt: 0, updatedAt: 0 } as Conversation
 
 it('requests the folder picker and clear without an onSnapshot callback, showing only the folder name', async () => {
   const open = vi.fn().mockResolvedValue(undefined)

@@ -46,16 +46,15 @@ describe('nextRoutineOccurrence', () => {
     vi.setSystemTime(now)
     const directory = mkdtempSync(join(tmpdir(), 'douchat-once-routine-'))
     directories.push(directory)
-    const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
+    const store = await openAtFile(join(directory, 'state.json'), { seedDemo: true })
     const runRoutine = vi.fn(async () => undefined)
     const scheduler = new RoutineScheduler(
       store,
-      { runRoutine } as never,
-      () => undefined
+      { runRoutine } as never
     )
-    const agent = store.agents[0]
-    const conversation = store.conversations.find((item) => item.agentIds.includes(agent.id))!
-    const routine = scheduler.createRoutine({
+    const agent = (await store.agents())[0]
+    const conversation = (await store.conversations()).find((item) => item.agentIds.includes(agent.id))!
+    const routine = await scheduler.createRoutine({
       name: 'Drink water',
       prompt: 'Remind the human to drink water.',
       agentId: agent.id,
@@ -67,9 +66,9 @@ describe('nextRoutineOccurrence', () => {
 
     await (scheduler as unknown as { runDueRoutines: () => Promise<void> }).runDueRoutines()
 
-    expect(store.routines[0]).toMatchObject({ id: routine.id, enabled: false, lastRunAt: now + 5 * 60_000 })
+    expect((await store.routines())[0]).toMatchObject({ id: routine.id, enabled: false, lastRunAt: now + 5 * 60_000 })
     expect(runRoutine).toHaveBeenCalledOnce()
-    scheduler.dispose()
+    await scheduler.dispose()
   })
 
   it('retries a failed one-time routine once, then leaves it stopped', async () => {
@@ -78,12 +77,12 @@ describe('nextRoutineOccurrence', () => {
     vi.setSystemTime(now)
     const directory = mkdtempSync(join(tmpdir(), 'douchat-once-retry-'))
     directories.push(directory)
-    const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
+    const store = await openAtFile(join(directory, 'state.json'), { seedDemo: true })
     const runRoutine = vi.fn(async () => { throw new Error('empty response') })
-    const scheduler = new RoutineScheduler(store, { runRoutine } as never, () => undefined)
-    const agent = store.agents[0]
-    const conversation = store.conversations.find((item) => item.agentIds.includes(agent.id))!
-    const routine = scheduler.createRoutine({
+    const scheduler = new RoutineScheduler(store, { runRoutine } as never)
+    const agent = (await store.agents())[0]
+    const conversation = (await store.conversations()).find((item) => item.agentIds.includes(agent.id))!
+    const routine = await scheduler.createRoutine({
       name: 'Tell a joke',
       prompt: 'Tell the human a joke.',
       agentId: agent.id,
@@ -95,29 +94,28 @@ describe('nextRoutineOccurrence', () => {
 
     await (scheduler as unknown as { runDueRoutines: () => Promise<void> }).runDueRoutines()
 
-    expect(store.routines[0]).toMatchObject({ id: routine.id, enabled: true, nextRunAt: now + 2 * 60_000 })
+    expect((await store.routines())[0]).toMatchObject({ id: routine.id, enabled: true, nextRunAt: now + 2 * 60_000 })
     vi.setSystemTime(now + 2 * 60_000)
     await (scheduler as unknown as { runDueRoutines: () => Promise<void> }).runDueRoutines()
 
-    expect(store.routines[0]).toMatchObject({ id: routine.id, enabled: false })
+    expect((await store.routines())[0]).toMatchObject({ id: routine.id, enabled: false })
     expect(runRoutine).toHaveBeenCalledTimes(2)
-    scheduler.dispose()
+    await scheduler.dispose()
   })
 
-  it('still runs due local-agent routines when Douchat credits are empty', async () => {
+  it('runs a due local-agent routine with no account or cloud service involved', async () => {
     vi.useFakeTimers()
     const now = new Date(2026, 8, 21, 19, 45, 0).getTime()
     vi.setSystemTime(now)
     const directory = mkdtempSync(join(tmpdir(), 'douchat-local-routine-'))
     directories.push(directory)
-    const store = openAtFile(join(directory, 'state.json'), { seedDemo: true })
-    const agent = store.agents[0]
-    store.updateAgent(agent.id, { localAgentId: 'codex', provider: 'local', model: 'codex' })
+    const store = await openAtFile(join(directory, 'state.json'), { seedDemo: true })
+    const agent = (await store.agents())[0]
+    await store.updateAgent(agent.id, { localAgentId: 'codex', provider: 'local', model: 'codex' })
     const runRoutine = vi.fn(async () => undefined)
-    const getDouchatCredits = vi.fn(async () => 0)
-    const scheduler = new RoutineScheduler(store, { runRoutine } as never, () => undefined, getDouchatCredits)
-    const conversation = store.conversations.find((item) => item.agentIds.includes(agent.id))!
-    scheduler.createRoutine({
+    const scheduler = new RoutineScheduler(store, { runRoutine } as never)
+    const conversation = (await store.conversations()).find((item) => item.agentIds.includes(agent.id))!
+    await scheduler.createRoutine({
       name: 'Local greeting',
       prompt: 'Say hello locally.',
       agentId: agent.id,
@@ -129,10 +127,9 @@ describe('nextRoutineOccurrence', () => {
 
     await (scheduler as unknown as { runDueRoutines: () => Promise<void> }).runDueRoutines()
 
-    expect(getDouchatCredits).not.toHaveBeenCalled()
     expect(runRoutine).toHaveBeenCalledOnce()
-    expect(store.routines[0]).toMatchObject({ enabled: true, lastRunAt: now + 3 * 60_000 })
-    scheduler.dispose()
+    expect((await store.routines())[0]).toMatchObject({ enabled: true, lastRunAt: now + 3 * 60_000 })
+    await scheduler.dispose()
   })
 
 })

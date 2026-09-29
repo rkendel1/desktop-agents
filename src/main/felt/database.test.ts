@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { FeltDatabase, FeltDatabaseError, desktopFlow, type RecordChange } from './database'
+import { FeltDatabase, FeltDatabaseError, desktopFlow, recordIdOf, recordKey, type RecordChange } from './database'
 
 const directories: string[] = []
 const opened: FeltDatabase[] = []
@@ -101,6 +101,60 @@ describe('FeltDatabase', () => {
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(network).not.toHaveBeenCalled()
     expect(process.env.FELTDB_TELEMETRY).toBe('0')
+  })
+})
+
+describe('record ids', () => {
+  it('map to keys FeltDB transactions accept, and back', () => {
+    for (const id of ['plain', 'uuid-6ebff2e0-91e1-4290', 'session/topic', 'group:agent', 'im:tg:1', 'a b', '中文', '_leading', '.dot', 'x'.repeat(128), 'a:'.repeat(80)]) {
+      const key = recordKey(id)
+      expect(key).toMatch(/^[A-Za-z0-9._-]{1,128}$/)
+      if (!key.startsWith('.')) expect(recordIdOf(key)).toBe(id)
+    }
+    expect(recordKey('plain')).toBe('plain')
+    // Too long to encode: a digest, which holds no id — the row keeps it instead.
+    expect(recordKey('a:'.repeat(80))).toMatch(/^\.[0-9a-f]{64}$/)
+  })
+
+  it('store, transact, read and announce a record whose id is not a plain key', async () => {
+    const database = await open(join(temporary(), 'felt'))
+    const settings = database.collection<Setting>('Setting')
+    const seen: RecordChange[] = []
+    database.subscribe(change => seen.push(change), ['Setting'])
+    await settings.put({ id: 'groupHealth:a/b', value: 1, updatedAt: 1 })
+    await database.transaction(async batch => {
+      await batch.put(settings, { id: 'groupHealth:a/b', value: 2, updatedAt: 2 })
+      await batch.put(settings, { id: '中文 id', value: 3, updatedAt: 3 })
+    })
+    expect((await settings.get('groupHealth:a/b'))?.value).toBe(2)
+    expect((await settings.all()).map(row => row.id)).toEqual(['groupHealth:a/b', '中文 id'])
+    await database.transaction(async batch => { await batch.delete(settings, 'groupHealth:a/b') })
+    expect(await settings.has('groupHealth:a/b')).toBe(false)
+    // Every announcement names the id the caller used, including for a delete.
+    expect(seen.map(change => `${change.type}:${change.id}`)).toEqual(['insert:groupHealth:a/b', 'update:groupHealth:a/b', 'insert:中文 id', 'delete:groupHealth:a/b'])
+  })
+
+  it('handle an id too long for any key, including its announcements and deletes', async () => {
+    const database = await open(join(temporary(), 'felt'))
+    const settings = database.collection<Setting>('Setting')
+    const long = `${'workflow:'.repeat(20)}decision:recovery:1`
+    const seen: RecordChange[] = []
+    database.subscribe(change => seen.push(change), ['Setting'])
+    await settings.put({ id: long, value: 1, updatedAt: 1 })
+    await database.transaction(async batch => { await batch.put(settings, { id: long, value: 2, updatedAt: 2 }) })
+    expect((await settings.get(long))?.value).toBe(2)
+    expect((await settings.all()).map(row => row.id)).toEqual([long])
+    expect((await database.collection<Setting>('Setting').where({ value: 2 })).map(row => row.id)).toEqual([long])
+    await settings.delete(long)
+    await settings.put({ id: long, value: 3, updatedAt: 3 })
+    await database.transaction(async batch => { await batch.delete(settings, long) })
+    expect(await settings.has(long)).toBe(false)
+    expect(seen.map(change => `${change.type}:${change.id === long}`)).toEqual(['insert:true', 'update:true', 'delete:true', 'insert:true', 'delete:true'])
+    // The id survives a restart.
+    await settings.put({ id: long, value: 4, updatedAt: 4 })
+    await database.close()
+    const reopened = await open(join(directories[0], 'felt'))
+    expect((await reopened.collection<Setting>('Setting').all()).map(row => row.id)).toEqual([long])
   })
 })
 

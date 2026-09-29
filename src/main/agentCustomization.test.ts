@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { DesktopRepository, EMBEDDED_BUILT_IN_AGENT_MANIFEST } from './desktopRepository'
+import { DesktopRepository } from './desktopRepository'
 import { agentCustomizationPrompt, agentPersona } from '../shared/agentCustomization'
 import { DouchatRuntime } from './runtime'
 import { runLocalAgent } from './localAgentRuntime'
@@ -13,14 +13,14 @@ vi.mock('./localAgentRuntime', () => ({ runLocalAgent: vi.fn(), disposeLocalAgen
 
 it('loads saved customization into hosted and local prompts and picks up later edits', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-customize-runtime-'))
-  const store = openAtFile(join(directory, 'test.db'))
+  const store = await openAtFile(join(directory, 'test.db'))
   const computer: ComputerProvider = { snapshots: () => [], start: vi.fn(), stop: vi.fn(), show: vi.fn(), createTools: () => [], dispose: vi.fn() }
   const runtime = new DouchatRuntime(store, computer, () => {})
   try {
-    const agent = store.createAgent({ name: 'Writer', role: 'Assistant', instructions: '', color: '#0b5cff', localAgentId: 'codex', provider: 'local', model: 'default' })
-    store.updateAgent(agent.id, { systemFiles: { 'SOUL.md': 'PERSONALITY_SENTINEL', 'IDENTITY.md': '我是小丽，私人秘书。' }, skills: [{ id: 'review', name: 'Review', content: 'SKILL_SENTINEL', enabled: true }] })
+    const agent = (await store.createAgent({ name: 'Writer', role: 'Assistant', instructions: '', color: '#0b5cff', localAgentId: 'codex', provider: 'local', model: 'default' }))
+    await store.updateAgent(agent.id, { systemFiles: { 'SOUL.md': 'PERSONALITY_SENTINEL', 'IDENTITY.md': '我是小丽，私人秘书。' }, skills: [{ id: 'review', name: 'Review', content: 'SKILL_SENTINEL', enabled: true }] })
     const internals = runtime as unknown as { systemPrompt: (config: typeof agent, context: 'direct', routineAllowed: boolean) => string }
-    const hostedPrompt = internals.systemPrompt(store.agent(agent.id)!, 'direct', false)
+    const hostedPrompt = internals.systemPrompt((await store.agent(agent.id))!, 'direct', false)
     expect(hostedPrompt).toContain('我是小丽，私人秘书。')
     expect(hostedPrompt).toContain('Contact profile metadata is only a fallback')
     expect(hostedPrompt).not.toContain("Use the profile's name as your display name")
@@ -32,35 +32,35 @@ it('loads saved customization into hosted and local prompts and picks up later e
     expect(vi.mocked(runLocalAgent).mock.calls.at(-1)![1]).not.toContain("Use the profile's name as your display name")
     expect(vi.mocked(runLocalAgent).mock.calls.at(-1)![1]).toContain('PERSONALITY_SENTINEL')
     expect(vi.mocked(runLocalAgent).mock.calls.at(-1)![1]).toContain('SKILL_SENTINEL')
-    store.updateAgent(agent.id, { systemFiles: { 'SOUL.md': 'UPDATED_PERSONALITY' }, skills: [] })
+    await store.updateAgent(agent.id, { systemFiles: { 'SOUL.md': 'UPDATED_PERSONALITY' }, skills: [] })
     runtime.disposeAgent(agent.id)
     await runtime.sendMessage(`direct-${agent.id}`, 'Hello again')
     const nextPrompt = vi.mocked(runLocalAgent).mock.calls.at(-1)![1]
     expect(nextPrompt).toContain('built on the Douchat system')
     expect(nextPrompt).toContain('\"localRuntime\":\"codex\"')
     expect(nextPrompt).toContain('UPDATED_PERSONALITY'); expect(nextPrompt).not.toContain('SKILL_SENTINEL')
-  } finally { for (const agent of store.agents) runtime.disposeAgent(agent.id); store.close(); rmSync(directory, { recursive: true, force: true }); vi.clearAllMocks() }
+  } finally { for (const agent of (await store.agents())) runtime.disposeAgent(agent.id); await store.close(); rmSync(directory, { recursive: true, force: true }); vi.clearAllMocks() }
 })
 
-it('persists agent-specific files and skills, merges file edits, and rejects malformed updates atomically', () => {
+it('persists agent-specific files and skills, merges file edits, and rejects malformed updates atomically', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'douchat-customize-'))
   const path = join(directory, 'test.db')
-  let store = openAtFile(path, { seedDemo: true })
+  let store = await openAtFile(path, { seedDemo: true })
   try {
-    store.updateAgent('dobi', { systemFiles: { 'SOUL.md': 'Be concise' }, skills: [
+    await store.updateAgent('dobi', { systemFiles: { 'SOUL.md': 'Be concise' }, skills: [
       { id: 'review', name: 'Review', content: 'Check edge cases', enabled: true },
       { id: 'off', name: 'Off', content: 'DO_NOT_INCLUDE', enabled: false }
     ] })
-    store.updateAgent('dobi', { systemFiles: { 'SOUL.md': 'Be clear' } })
-    expect(() => store.updateAgent('dobi', { systemFiles: { 'USER.md': 'Wrong' }, skills: [{ id: 'bad', name: '', content: '', enabled: true }] })).toThrow()
-    store.close(); store = openAtFile(path, { seedDemo: true })
-    const agent = store.agent('dobi')!
+    await store.updateAgent('dobi', { systemFiles: { 'SOUL.md': 'Be clear' } })
+    await expect(async () => (await store.updateAgent('dobi', { systemFiles: { 'USER.md': 'Wrong' }, skills: [{ id: 'bad', name: '', content: '', enabled: true }] }))).rejects.toThrow()
+    await store.close(); store = await openAtFile(path, { seedDemo: true })
+    const agent = (await store.agent('dobi'))!
     expect(agent.systemFiles).toEqual({ 'SOUL.md': 'Be clear' })
     const prompt = agentCustomizationPrompt(agent)
     expect(prompt).toContain('# SOUL.md\nBe clear'); expect(prompt).not.toContain('# USER.md')
     expect(prompt).toContain('Check edge cases'); expect(prompt).not.toContain('DO_NOT_INCLUDE')
-    expect(agentCustomizationPrompt(store.agent('lin')!)).toBe('')
-    store.updateAgent('dobi', { systemFiles: { 'SOUL.md': '' }, skills: [] })
-    expect(agentCustomizationPrompt(store.agent('dobi')!)).toBe('')
-  } finally { store.close(); rmSync(directory, { recursive: true, force: true }) }
+    expect(agentCustomizationPrompt((await store.agent('lin'))!)).toBe('')
+    await store.updateAgent('dobi', { systemFiles: { 'SOUL.md': '' }, skills: [] })
+    expect(agentCustomizationPrompt((await store.agent('dobi'))!)).toBe('')
+  } finally { await store.close(); rmSync(directory, { recursive: true, force: true }) }
 })
