@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Upload a published GitHub Release to the public Douchat R2 bucket.
+# Upload a published GitHub Release to the public Foundry R2 bucket.
 #
 # Versioned installers, archives and blockmaps are uploaded first with immutable
 # cache headers. The latest*.yml feed files are uploaded last and are never

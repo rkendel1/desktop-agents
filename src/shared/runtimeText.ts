@@ -4,7 +4,7 @@ export const runtimeTranslations: Record<string, string> = {
   "This mention matches multiple members. Use a unique member name or select a task recipient.": "这个 @ 对应多个同名成员，请使用不重名的成员名称，或选择任务接收者。",
   "Message not sent. Try again.": "消息未发送，请重试。",
   "Sign in first.": "请先登录。",
-  "Sign in to Douchat first.": "请先登录 Douchat。",
+  "Sign in to Foundry first.": "请先登录 Foundry。",
   "This group task does not belong to the current account.": "群任务不属于当前账号。",
   "The original group task message was deleted.": "群任务的原始消息已删除。",
   "You may only add and run your own agents.": "只能添加和执行自己的 agent。",

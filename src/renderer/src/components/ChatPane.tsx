@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { legacyGroupNotice } from '../../../shared/groupText'
 import { messageSendError, type QueuedMessage } from '../messageQueue'
 import { mentionableAgents } from './common'
-import douchatLogo from '../../../../resources/icons/douchat.png'
+import foundryLogo from '../../../../resources/icons/foundry.png'
 import { t, tr } from '../preferences'
 import { AtSign, FolderOpen, FileText, Check, ChevronDown, Copy, CornerDownRight, LoaderCircle, Lock, Mic, MoreHorizontal, Smile, SquareTerminal, TriangleAlert, Sparkles, Square, Trash2, ListEnd, X } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -1244,7 +1244,7 @@ export function ChatPane({
   const startVoiceInput = async (): Promise<void> => {
     const Recognition = speechRecognitionConstructor()
     if (!Recognition) {
-      setVoiceError(t('Voice input is unavailable in this version of Douchat.'))
+      setVoiceError(t('Voice input is unavailable in this version of Foundry.'))
       setVoiceNeedsSettings(false)
       return
     }
@@ -1261,7 +1261,7 @@ export function ChatPane({
       const access = await window.douchat.requestMicrophoneAccess()
       if (voiceAttemptRef.current !== attempt) return
       if (!navigator.mediaDevices?.getUserMedia) {
-        setVoiceError(t('Voice input is unavailable in this version of Douchat.'))
+        setVoiceError(t('Voice input is unavailable in this version of Foundry.'))
         setVoiceNeedsSettings(false)
         setVoiceState('idle')
         return
@@ -1275,7 +1275,7 @@ export function ChatPane({
       } catch {
         if (voiceAttemptRef.current !== attempt) return
         if (access === 'granted') {
-          setVoiceError(t('Microphone permission changed. Restart Douchat and try again.'))
+          setVoiceError(t('Microphone permission changed. Restart Foundry and try again.'))
           setVoiceNeedsSettings(false)
         } else {
           setVoiceError(tr('Microphone access is off. Allow {name} in System Settings, then restart the app.', {
@@ -1479,7 +1479,7 @@ export function ChatPane({
 
   if (!conversation) return (
     <main className="workspace empty-conversation" aria-label={t('No conversation selected')}>
-      <img className="empty-conversation-mark" src={douchatLogo} alt="Douchat" draggable={false} />
+      <img className="empty-conversation-mark" src={foundryLogo} alt="Foundry" draggable={false} />
     </main>
   )
 
@@ -1491,7 +1491,7 @@ export function ChatPane({
             <button type="button" className="workspace-title no-drag" onClick={onToggleInspector}
               aria-label={`${t('Chat details')}: ${fullConversationName}`} title={fullConversationName} aria-expanded={inspectorOpen}>
               <strong>
-                {conversationName || 'Douchat'}
+                {conversationName || 'Foundry'}
                 {conversation?.type === 'group' && conversationName === fullConversationName ? ` (${members.length + 1})` : ''}
               </strong>
             </button>

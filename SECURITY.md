@@ -16,7 +16,7 @@ give us a reasonable window to release a patch before any public disclosure.
 
 ## Scope notes
 
-- Douchat has no account and no cloud service. Desktop state lives in a local
+- Foundry has no account and no cloud service. Desktop state lives in a local
   FeltDB database. Provider API keys and mailbox passwords are entered by the
   user and stored only in the operating system's credential store (Electron
   `safeStorage`), never in FeltDB, never committed to this repository, and never

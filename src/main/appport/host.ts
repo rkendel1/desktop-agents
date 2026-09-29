@@ -14,7 +14,7 @@ import { apiKeyAuthenticator, ensureClientApiKey } from './services'
  * reads FeltDB, Git and the runtime. Live notices from the coding service are forwarded to
  * AppPort's event bus, which is at-most-once and keeps nothing.
  */
-export function createDouchatAppPort(api: CodingApi, authenticate?: Authenticate, remote?: RemoteLookup): { server: AppPortServer; close(): void } {
+export function createFoundryAppPort(api: CodingApi, authenticate?: Authenticate, remote?: RemoteLookup): { server: AppPortServer; close(): void } {
   const application = createApplication({
     application: APPLICATION,
     capabilities: codingCapabilities(api, remote),
@@ -29,7 +29,7 @@ export function createDouchatAppPort(api: CodingApi, authenticate?: Authenticate
 
 export interface AppPortHostOptions {
   api: CodingApi
-  /** AppPort Services over Douchat's flow: they identify callers by API key. */
+  /** AppPort Services over Foundry's flow: they identify callers by API key. */
   services: AppPortServices
   /** The project → remote lookup backed by the @appport/github capability. */
   remote?: RemoteLookup
@@ -50,7 +50,7 @@ export interface AppPortHost {
 /** Serve the coding capability on this computer's loopback interface. Off unless the owner turns it on. */
 export async function startAppPortHost(options: AppPortHostOptions): Promise<AppPortHost> {
   const { file } = await ensureClientApiKey(options.services, options.directory)
-  const app = createDouchatAppPort(options.api, apiKeyAuthenticator(options.services), options.remote)
+  const app = createFoundryAppPort(options.api, apiKeyAuthenticator(options.services), options.remote)
   // Loopback only, and no browser origin is accepted: a web page cannot speak to this port.
   const running: RunningServer = await serve({ server: app.server, host: '127.0.0.1', port: options.port ?? 0, websocket: true, allowedOrigins: [] })
   return { url: running.url, port: running.port, keyFile: file, close: async () => { app.close(); await running.close() } }

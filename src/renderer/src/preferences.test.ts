@@ -29,7 +29,7 @@ describe('interface language preference', () => {
 
     expect(document.documentElement.lang).toBe('zh-CN')
     expect(t('Settings')).toBe('设置')
-    expect(t('Sign in to Douchat')).toBe('登录 Douchat')
+    expect(t('Sign in to Foundry')).toBe('登录 Foundry')
     setPreferences({ appearance: 'dark' })
     expect(JSON.parse(localStorage.getItem('douchat.general') || '{}').language).toBe('system')
   })

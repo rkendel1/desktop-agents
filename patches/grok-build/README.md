@@ -1,6 +1,6 @@
 # Grok Build macOS socket compatibility
 
-Douchat keeps `--sandbox strict` and `--permission-mode dontAsk`. Some Grok
+Foundry keeps `--sandbox strict` and `--permission-mode dontAsk`. Some Grok
 versions reject the Docker/OrbStack socket symlink before starting. This optional
 local build fixes that check without changing the official Grok installation.
 
@@ -30,9 +30,9 @@ The kernel check must report that both link and target connections and mutations
 are denied, while a control workspace write succeeds. Never substitute a weaker
 sandbox profile when a test or initialization fails.
 
-After verifying a headless reply with Douchat's exact arguments, install the binary
+After verifying a headless reply with Foundry's exact arguments, install the binary
 as `~/.douchat/local-tools/grok/<Node process.arch>/grok` (executable).
-Douchat uses this file only for the built-in Grok adapter on macOS. Other platforms,
+Foundry uses this file only for the built-in Grok adapter on macOS. Other platforms,
 other agents, and the terminal's official Grok executable are unchanged. Removing
 this optional binary restores the normal executable selection. Official CLI
 updates do not update this separate compatibility build.

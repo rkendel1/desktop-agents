@@ -1,7 +1,7 @@
 import type { CodingActivity, CodingEvent, CodingSession, CommandResult, GitChange, Project } from './types'
 
 /**
- * The shape in which Douchat presents projects, coding sessions and approvals to any client of
+ * The shape in which Foundry presents projects, coding sessions and approvals to any client of
  * the coding service — the desktop's own IPC handlers and the AppPort capability alike. These are
  * views of what FeltDB, Git and the runtime already hold; nothing here is stored.
  */
@@ -10,7 +10,7 @@ export interface ProjectView {
   /** Stable identity of the folder (a hash of its path). */
   id: string
   name: string
-  /** The repository's folder on the machine running Douchat. */
+  /** The repository's folder on the machine running Foundry. */
   path: string
   isGit: boolean
   /** The command "Run checks" runs, as an argument vector. */
@@ -105,7 +105,7 @@ export type CodingEventName = typeof CODING_EVENT_NAMES[number]
 /**
  * A live notice that something in a session happened. Notices are told to whoever is listening at
  * that moment and kept nowhere: the durable record is the session's history, and a client that
- * missed a notice reads it there. `origin` says who knows it — Douchat observed every one of these;
+ * missed a notice reads it there. `origin` says who knows it — Foundry observed every one of these;
  * an `agent` origin is reserved for what a CLI itself reports, and is never inferred.
  */
 export interface CodingNotification {

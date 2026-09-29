@@ -7,7 +7,7 @@ import { CodingApi } from '../coding/api'
 import { TestKit, taskText, type Booted } from '../coding/testkit'
 import { connectGitHub, openDesktopGitHub, parseGitHubRemote, projectRemote } from './github'
 import { ensureClientApiKey, openDesktopServices } from './services'
-import { createDouchatAppPort } from './host'
+import { createFoundryAppPort } from './host'
 import { apiKeyAuthenticator } from './services'
 import { createClient } from '@appport/client'
 import { createInProcessTransport } from '@appport/transport-inprocess'
@@ -35,7 +35,7 @@ async function world() {
   return { booted, directory, services, github }
 }
 
-describe('one flow for Douchat, AppPort Services and @appport/github', () => {
+describe('one flow for Foundry, AppPort Services and @appport/github', () => {
   it('resolves all three to the same flow directory, and each one’s state lands in it', async () => {
     const { booted, directory, services, github } = await world()
     const path = kit.repository()
@@ -43,7 +43,7 @@ describe('one flow for Douchat, AppPort Services and @appport/github', () => {
     await ensureClientApiKey(services, booted.root)
     await connectGitHub(github, booted.desktop.vault)
 
-    // A fresh handle on that one directory sees Douchat's, the Services' and GitHub's rows.
+    // A fresh handle on that one directory sees Foundry's, the Services' and GitHub's rows.
     const probe = createFeltDB({ namespace: 'probe', mode: 'local', path: directory })
     expect(((await probe.collection('Workspace').get(project.id)) as { name?: string } | null)?.name).toBe('Shared')
     expect((await probe.collection('api_keys').all()).length).toBe(1)
@@ -91,10 +91,10 @@ describe('one flow for Douchat, AppPort Services and @appport/github', () => {
     for (const collection of githubFlow.collections) expect(fieldsOf(flow, collection.name)).toBe(fieldsOf(githubFlow, collection.name))
     const servicesFlow = parseFlowSpec(readFileSync(join(process.cwd(), 'node_modules/@appport/services/appport.flow'), 'utf8'))
     for (const name of ['ApiKeys', 'ApiKeyPrefixes', 'ApiKeyAuditEvents', 'ServiceEffectEvidence']) expect(fieldsOf(flow, name)).toBe(fieldsOf(servicesFlow, name))
-    // Douchat's own collections share no name with either provider's.
-    const douchat = names.filter(name => !githubFlow.collections.some(item => item.name === name) && !servicesFlow.collections.some(item => item.name === name))
-    expect(douchat).toContain('CodingSession')
-    expect(douchat.filter(name => /^(GitHub|ApiKey|Webhook|Job|Secret|Notification|File|Configuration)/.test(name))).toEqual([])
+    // Foundry's own collections share no name with either provider's.
+    const owned = names.filter(name => !githubFlow.collections.some(item => item.name === name) && !servicesFlow.collections.some(item => item.name === name))
+    expect(owned).toContain('CodingSession')
+    expect(owned.filter(name => /^(GitHub|ApiKey|Webhook|Job|Secret|Notification|File|Configuration)/.test(name))).toEqual([])
 
     // What is physically stored is declared by exactly one owner.
     await ensureClientApiKey(services, booted.root)
@@ -143,10 +143,10 @@ describe('@appport/github as the GitHub capability', () => {
     expect(view.github).toMatchObject({ fullName: 'acme/widget', defaultBranch: 'trunk', private: false })
     expect(seen.some(url => url.includes('api.github.com/repos/acme/widget'))).toBe(true)
 
-    // Through AppPort: the Douchat capability delegates; it does not reimplement.
+    // Through AppPort: the Foundry capability delegates; it does not reimplement.
     const authenticate = apiKeyAuthenticator(services)
     const { secret } = await ensureClientApiKey(services, booted.root)
-    const app = createDouchatAppPort(api, authenticate, async id => projectRemote(github, await api.getProject(id), await api.remoteUrl(id)))
+    const app = createFoundryAppPort(api, authenticate, async id => projectRemote(github, await api.getProject(id), await api.remoteUrl(id)))
     const client = createClient({ transport: createInProcessTransport({ server: app.server, identity: await app.server.identify({ transport: 'inprocess', headers: { authorization: `Bearer ${secret}` } }) }) })
     await client.connect()
     expect(await client.call('douchat.projects.remote', { id: project.id })).toMatchObject({ projectId: project.id, github: { fullName: 'acme/widget' } })
@@ -163,7 +163,7 @@ describe('@appport/github as the GitHub capability', () => {
     const walk = (dir: string): void => { for (const entry of readdirSync(dir, { withFileTypes: true })) { const full = join(dir, entry.name); if (entry.isDirectory()) walk(full); else if (/\.ts$/.test(entry.name) && !/\.test\.ts$|testkit|testSupport/.test(entry.name)) files.push(full) } }
     walk(root)
     const sources = files.map(file => [file, readFileSync(file, 'utf8')] as const)
-    // No GitHub API code of Douchat's own for repositories, issues, branches or pull requests. Two older, unrelated features
+    // No GitHub API code of Foundry's own for repositories, issues, branches or pull requests. Two older, unrelated features
     // talk to GitHub directly and are pinned here so that no third can appear: the release check of the local agent CLIs
     // and the skill installer's download of a skill package. Neither is a project/coding operation; both are candidates to move
     // onto the capability later.

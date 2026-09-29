@@ -23,7 +23,7 @@ export function exportAgentArchive(agent: AgentConfig): Uint8Array {
     for (const file of skill.files ?? []) entries[`${directory}/${file.path}`] = Buffer.from(file.data, 'base64')
     return { name: skill.name, description: skill.description, enabled: skill.enabled, directory }
   })
-  put('README.md', 'Douchat agent configuration\n\nCustom Markdown files live at the archive root. Skills live in skills/<name>/.\nImport replaces custom files and skills after confirmation. Profile metadata is informational.\nModel credentials, channels, chats and personal memory are not included.\n')
+  put('README.md', 'Foundry agent configuration\n\nCustom Markdown files live at the archive root. Skills live in skills/<name>/.\nImport replaces custom files and skills after confirmation. Profile metadata is informational.\nModel credentials, channels, chats and personal memory are not included.\n')
   put('agent.json', JSON.stringify({ format: 'douchat-agent', version: 2,
     profile: { name: agent.name, role: agent.role, instructions: agent.instructions, labels: agent.labels },
     customFiles, skills }, null, 2))
@@ -108,7 +108,7 @@ export async function parseAgentArchive(data: Uint8Array, selectedRoot?: string)
     .map(([path, data]) => [path.slice(root.length), data]))
   if (files.has('agent.json')) {
     const parsed = parseDouchatArchive(files)
-    return { ...parsed, sourceRoot: root, format: 'Douchat' }
+    return { ...parsed, sourceRoot: root, format: 'Foundry' }
   }
   const systemFiles: AgentFiles = Object.fromEntries(portableAgentFiles.map(name => [name, '']))
   const used = new Set<string>()

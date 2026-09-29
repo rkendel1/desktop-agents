@@ -146,7 +146,7 @@ it('disables Run checks while running or without a check command', async () => {
 it('says an interrupted session was interrupted, and Continue starts it again without claiming the old process lives', async () => {
   await panel({ status: 'interrupted', error: 'The app closed while this coding session was running. Its process did not survive.' })
   expect(node.querySelector('[role=status]')!.textContent).toContain('Interrupted')
-  expect(node.textContent).toContain('This session was interrupted when Douchat closed.')
+  expect(node.textContent).toContain('This session was interrupted when Foundry closed.')
   expect(node.textContent).toContain('A new agent process will be started in this project. The previous process will not be resumed.')
   expect(node.textContent).toContain('Continue will start a new conversation with the existing project/session context.')
   await click('Continue')
@@ -155,7 +155,7 @@ it('says an interrupted session was interrupted, and Continue starts it again wi
 
 it('continues a finished session with a new instruction, in the same session', async () => {
   await panel()
-  const box = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Continue the conversation"]')!
+  const box = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Continue the session"]')!
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, 'Fix the remaining failing test.')
     box.dispatchEvent(new Event('input', { bubbles: true }))

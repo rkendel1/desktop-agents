@@ -5,7 +5,7 @@ it('localizes existing routine notices in either language while preserving the t
   const name = '喝水提醒（每5分钟） · {name}'
   for (const [en, zh] of [['Scheduled', '定时'], ['Manual', '手动']]) {
     for (const text of [`${en} routine started · ${name}`, `${zh}任务已开始 · ${name}`]) {
-      const notice = legacyGroupNotice({ kind: 'system', authorId: 'system', authorName: 'Douchat', text })!
+      const notice = legacyGroupNotice({ kind: 'system', authorId: 'system', authorName: 'Foundry', text })!
       expect(groupText('zh-CN', notice.key, notice.values)).toBe(`${zh}任务已开始 · ${name}`)
       expect(groupText('en', notice.key, notice.values)).toBe(`${en} routine started · ${name}`)
       expect(legacyGroupNotice({ kind: 'text', authorId: 'agent', authorName: 'Agent', text })).toBeUndefined()
@@ -31,7 +31,7 @@ it('recognizes only owned historical system templates, without mutating persiste
   for (const language of ['en', 'zh-CN'] as const) {
     const key = 'Round complete: {count} replied; {absent} unavailable and skipped ({members}).'
     const values = { count: 2, absent: 1, members: 'A (测试) [x] {count}' }
-    const message = { kind: 'system', authorId: 'system', authorName: 'Douchat', text: groupText(language, key, values) }
+    const message = { kind: 'system', authorId: 'system', authorName: 'Foundry', text: groupText(language, key, values) }
     const before = JSON.stringify(message)
     const notice = legacyGroupNotice(message)!
     expect(groupText('en', notice.key, notice.values)).toBe(groupText('en', key, values))

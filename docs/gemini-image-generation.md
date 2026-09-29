@@ -1,6 +1,6 @@
 # Gemini CLI image generation
 
-Douchat's local Gemini contact uses the installed Gemini CLI. Image generation
+Foundry's local Gemini contact uses the installed Gemini CLI. Image generation
 is provided by the [Nano Banana extension](https://github.com/gemini-cli-extensions/nanobanana),
 not by the CLI's ordinary text model or its Google account login.
 
@@ -16,11 +16,11 @@ gemini extensions config nanobanana
 Enter a Google AI Studio API key in the extension's local configuration prompt.
 Do not paste it into a conversation. An OpenRouter key cannot be used here.
 An existing `NANOBANANA_API_KEY` environment variable is also supported, including
-when Douchat is launched from Finder. The extension also recognizes
+when Foundry is launched from Finder. The extension also recognizes
 `NANOBANANA_GEMINI_API_KEY`, `NANOBANANA_GOOGLE_API_KEY`, `GEMINI_API_KEY`, and
 `GOOGLE_API_KEY`. Prefer the Nano Banana-specific variable to keep the CLI's
 chat authentication independent. `NANOBANANA_MODEL` selects the extension's image
-model; otherwise its own default is used. Restart Douchat after changing shell
+model; otherwise its own default is used. Restart Foundry after changing shell
 environment variables because the login-shell environment is cached.
 
 ## Runtime

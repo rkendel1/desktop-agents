@@ -158,7 +158,7 @@ class Importer {
     const imported = new Set<string>()
     const files = new Map<string, AgentFiles>()
     for (const agent of agents) {
-      // The hosted onboarding contact only works against the Douchat service.
+      // The hosted onboarding contact only works against the Foundry service.
       if (agent.systemRole === 'admin') { this.skip('cloudAgents'); continue }
       const {
         ownerId, systemRole: _role, systemKey: _key, cloudAgentId: _cloud, templateVersion: _template, modelRoute: _route,

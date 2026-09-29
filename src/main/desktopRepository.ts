@@ -1412,7 +1412,7 @@ export class DesktopRepository {
   }
 
   // ───────────────────────────── projects and coding sessions ─────────────────────────────
-  // A project is a folder Douchat may work in; the folder itself stays the authority for its files.
+  // A project is a folder Foundry may work in; the folder itself stays the authority for its files.
   // Nothing here stores source code, only that the project and the session exist and what they produced.
 
   async projects(): Promise<Project[]> {
@@ -1467,7 +1467,7 @@ export class DesktopRepository {
     return rows.map(codingSessionFromRecord)
   }
 
-  /** Processes Douchat started and is responsible for (see processLedger.ts). Not their state — a note for the next start. */
+  /** Processes Foundry started and is responsible for (see processLedger.ts). Not their state — a note for the next start. */
   processLedger(): { put(record: AgentProcessRow): Promise<void>; remove(id: string): Promise<void>; all(): Promise<AgentProcessRow[]> } {
     return {
       put: async record => { await this.processRows.put(record) },
@@ -1540,7 +1540,7 @@ export class DesktopRepository {
       for (const row of interrupted) {
         const current = codingSessionFromRecord(row)
         const next: CodingSession = { ...current, status: 'interrupted', finishedAt: now, error: 'The app closed while this coding session was running. Its process did not survive.',
-          events: [...current.events, { at: now, kind: 'interrupted' as const, label: 'Interrupted when Douchat closed' }].slice(-MAX_CODING_EVENTS) }
+          events: [...current.events, { at: now, kind: 'interrupted' as const, label: 'Interrupted when Foundry closed' }].slice(-MAX_CODING_EVENTS) }
         await this.codingRows.put(codingSessionToRecord(next))
         recovered.push(next)
       }

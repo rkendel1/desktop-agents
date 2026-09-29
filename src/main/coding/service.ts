@@ -22,7 +22,7 @@ export interface CodingRuntime {
 const MAX_COMMANDS = 20
 const CHECK_TIMEOUT_MS = 10 * 60_000
 const RESUME_PROMPT = 'Continue where you left off. Check the repository’s current state first.'
-const INTERRUPTED_PROMPT = 'Your previous turn was interrupted when Douchat closed, so its process is gone. Check the repository’s current state and continue the task.'
+const INTERRUPTED_PROMPT = 'Your previous turn was interrupted when Foundry closed, so its process is gone. Check the repository’s current state and continue the task.'
 
 /** Live facts about one running session: the process side of it, gone when the app closes. */
 interface Live { projectId: string; sessionId: string; agentId: string; conversationId: string; projectName: string; workingDirectory: string; task: string; since: number }
@@ -221,7 +221,7 @@ export class CodingService {
   }
 
   /**
-   * Stop a session: the agent's turn and any command Douchat is running for it.
+   * Stop a session: the agent's turn and any command Foundry is running for it.
    * Their whole process trees are killed; the session ends `cancelled`.
    */
   async cancel(id: string): Promise<void> {

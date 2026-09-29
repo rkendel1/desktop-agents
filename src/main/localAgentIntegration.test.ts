@@ -96,7 +96,7 @@ describe('local contact routing', () => {
     vi.mocked(runLocalAgent).mockImplementation(async (_config, prompt) => {
       const url = /Endpoint: (http:\/\/127\.0\.0\.1:\d+\/tools)/.exec(prompt)![1]
       const authorization = /Authorization: (Bearer [a-f0-9]+)/.exec(prompt)![1]
-      const response = await fetch(url, { method: 'POST', headers: { authorization }, body: JSON.stringify({ tool: 'create_file', arguments: { name: 'slides.html', content: '<html>Douchat slides</html>' } }) })
+      const response = await fetch(url, { method: 'POST', headers: { authorization }, body: JSON.stringify({ tool: 'create_file', arguments: { name: 'slides.html', content: '<html>Foundry slides</html>' } }) })
       expect(response.status).toBe(200)
       return { text: 'Created slides.', images: [] }
     })
@@ -109,7 +109,7 @@ describe('local contact routing', () => {
       const { readFile } = await import('node:fs/promises')
       const path = fileURLToPath(url.replace('douchat-file:', 'file:'))
       expect(await store.ownedDocumentPath(path)).toBe(path)
-      expect(await readFile(path, 'utf8')).toBe('<html>Douchat slides</html>')
+      expect(await readFile(path, 'utf8')).toBe('<html>Foundry slides</html>')
       await expect(store.ownedDocumentPath(join(path, '..', 'not-generated.html'))).rejects.toThrow('Document not found')
     } finally { runtime.disposeAgent(agent.id); await store.close() }
   })
@@ -147,7 +147,7 @@ describe('local contact routing', () => {
     vi.mocked(runLocalAgent).mockResolvedValueOnce({ text: '{"authorized":true}', images: [] })
     await runtime.sendMessage(conversationId, '盯一下，有更新每天推送给我')
 
-    expect(vi.mocked(runLocalAgent).mock.calls[0][1]).toContain('Douchat, not your CLI, owns the scheduler')
+    expect(vi.mocked(runLocalAgent).mock.calls[0][1]).toContain('Foundry, not your CLI, owns the scheduler')
     expect((await store.routines())).toHaveLength(1)
     expect((await store.routines())[0]).toMatchObject({
       name: '跟进峰会结果',

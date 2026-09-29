@@ -7,7 +7,7 @@ export { accountChanges } from '../../shared/coding'
 import { runCommand } from './commands'
 
 const GIT_ENVIRONMENT: NodeJS.ProcessEnv = { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C', GIT_PAGER: 'cat' }
-// A repository's own configuration must not be able to run programs when Douchat only looks at it.
+// A repository's own configuration must not be able to run programs when Foundry only looks at it.
 const SAFE = ['-c', 'core.fsmonitor=false', '-c', 'core.pager=cat']
 const MAX_DIFF = 2 * 1024 * 1024
 

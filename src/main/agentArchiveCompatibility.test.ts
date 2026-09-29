@@ -50,7 +50,7 @@ it('imports a Hermes distribution and maps system_prompt.md when AGENTS.md is ab
   expect(result.systemFiles['AGENTS.md']).toBe('Review carefully')
   expect(result.skills[0].name).toBe('review')
 })
-it('imports wrapped Douchat v2 exports', async () => {
+it('imports wrapped Foundry v2 exports', async () => {
   const { unzipSync } = await import('fflate')
   const files = unzipSync(exportAgentArchive({ name: 'Demo', systemFiles: { 'SOUL.md': 'Soul' }, skills: [] } as unknown as AgentConfig))
   const wrapped = zipSync(Object.fromEntries(Object.entries(files).map(([path, content]) => [`wrapper/${path}`, content])))

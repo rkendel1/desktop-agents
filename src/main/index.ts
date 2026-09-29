@@ -61,6 +61,7 @@ import { DesktopUpdater, type UpdateDriver } from './updater'
 import { EmailConnectorManager } from './emailConnector'
 import type { SecretCodec } from './credentialVault'
 import { applicationName, userDataDirectoryName } from './userData'
+import { displayName, PRODUCT_TAGLINE } from '../shared/brand'
 import { validateWorkspaceFolder, resolveSavedWorkspace, localWorkspace, openableWorkspace } from './localWorkspaces'
 import { canAssignConversationWorkspace } from '../shared/conversationWorkspace'
 import { prepareNpmMaintenance, resolveMaintenancePlan } from './localAgentMaintenance'
@@ -71,16 +72,17 @@ import { openMaintenanceTerminal, openLocalAgentTerminal } from './terminalLaunc
 if (process.platform === 'win32') app.disableHardwareAcceleration()
 
 const development = !app.isPackaged
-// Chromium derives the macOS safeStorage Keychain service from the application
-// name. Keep development on "Douchat Dev Safe Storage" so local builds never
-// contend with the signed release's "Douchat Safe Storage" credentials.
+// Compatibility, not branding: Chromium derives the macOS safeStorage Keychain service from the application
+// name, so it stays "Douchat Safe Storage" (and "Douchat Dev Safe Storage" for local builds, which never contend
+// with the signed release's credentials). What a person sees is Foundry — see the menu, About panel and window
+// titles below and docs/foundry-identifiers.md.
 app.setName(applicationName(development))
-const appIcon = join(app.getAppPath(), 'resources/icons', development ? 'douchat-dev.png' : 'douchat.png')
+const appIcon = join(app.getAppPath(), 'resources/icons', development ? 'foundry-dev.png' : 'foundry.png')
 
 /**
  * Keep packaged user data stable across display-name changes, while isolating
  * local development so test logins, screenshots and database resets cannot
- * overwrite a user's installed Douchat data.
+ * overwrite a user's installed data. (The directory keeps its original name: it is where the FeltDB flow lives.)
  */
 app.setPath('userData', join(app.getPath('appData'), userDataDirectoryName(development)))
 configureManagedNode(app.getPath('userData'))
@@ -92,7 +94,7 @@ const credentialCodec: SecretCodec = {
 }
 async function reloadCustomModels(): Promise<void> {
   try { await runtime.configureCustomModels(await desktop.providers.records(), (await desktop.providers.list()).defaultModel) }
-  catch { await runtime.configureCustomModels([]); console.warn('[douchat] Provider keys could not be loaded') }
+  catch { await runtime.configureCustomModels([]); console.warn('[foundry] Provider keys could not be loaded') }
 }
 const diagnostics = new DiagnosticLog(join(app.getPath('userData'), 'logs'))
 try {
@@ -122,7 +124,7 @@ async function openDiagnosticLogs(): Promise<void> {
   const error = await shell.openPath(diagnostics.directory)
   if (error) {
     diagnostics.write('logs.open-failed', error)
-    dialog.showErrorBox('Douchat', `${ui('Could not open the log folder:', '无法打开日志目录：')} ${diagnostics.directory}\n${error}`)
+    dialog.showErrorBox('Foundry', `${ui('Could not open the log folder:', '无法打开日志目录：')} ${diagnostics.directory}\n${error}`)
   }
 }
 app.on('browser-window-created', (_event, window) => {
@@ -140,7 +142,7 @@ app.on('browser-window-created', (_event, window) => {
     showingCrashDialog = true
     // Native UI remains usable after the renderer (including its React boundaries) exits.
     void dialog.showMessageBox(window, {
-      type: 'error', title: 'Douchat', message: ui('The interface stopped unexpectedly', '界面进程意外退出'),
+      type: 'error', title: 'Foundry', message: ui('The interface stopped unexpectedly', '界面进程意外退出'),
       detail: `${ui('Please send diagnostics.log and the crashes folder from the log folder to the developers.', '请将日志目录中的 diagnostics.log 和 crashes 文件夹发给开发者。')}\n${ui('Error:', '错误：')} ${details.reason} (${details.exitCode})`,
       buttons: [ui('Open log folder and reload', '打开日志目录并重新加载'), ui('Reload', '重新加载'), ui('Close window', '关闭窗口')], defaultId: 0, cancelId: 2
     }).then(async ({ response }) => {
@@ -391,14 +393,28 @@ function configureMediaPermissions(): void {
   })
 }
 
+/** Everything a person reads as the product's name: the About panel and, on macOS, the application menu. */
+function configureBrand(): void {
+  const name = displayName(development)
+  app.setAboutPanelOptions({ applicationName: name, applicationVersion: app.getVersion(), copyright: PRODUCT_TAGLINE })
+  if (process.platform !== 'darwin') return
+  // The default menu is named after the (compatibility) application name, so the same standard menu is spelled out with Foundry's.
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: name, submenu: [{ role: 'about', label: `About ${name}` }, { type: 'separator' }, { role: 'services' }, { type: 'separator' },
+      { role: 'hide', label: `Hide ${name}` }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit', label: `Quit ${name}` }] },
+    { role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }
+  ]))
+}
+
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return
   // Electron creates a default File/Edit/View/Window menu on Windows when no
-  // application menu is provided. Douchat exposes its actions in the app UI,
+  // application menu is provided. Foundry exposes its actions in the app UI,
   // so remove the native menu instead of merely hiding it until Alt is pressed.
   if (process.platform === 'win32') Menu.setApplicationMenu(null)
   configureMediaPermissions()
   app.dock?.setIcon(appIcon)
+  configureBrand()
   ipcMain.on('douchat:window-action', (event, action: string) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return
     if (action === 'close') mainWindow.close()
@@ -425,7 +441,7 @@ app.whenReady().then(async () => {
   } catch (error) {
     const detail = error instanceof DesktopStartupError ? error.message : String(error)
     diagnostics.write('desktop.start-failed', error instanceof Error ? error.stack || detail : detail)
-    dialog.showErrorBox('Douchat', `${ui('Douchat could not open its local data and will close.', 'Douchat 无法打开本地数据，即将退出。')}\n\n${detail}`)
+    dialog.showErrorBox('Foundry', `${ui('Foundry could not open its local data and will close.', 'Foundry 无法打开本地数据，即将退出。')}\n\n${detail}`)
     quitting = true
     app.exit(1)
     return
@@ -546,10 +562,10 @@ app.whenReady().then(async () => {
     if (!agent) throw new Error('Unknown local agent')
     const plan = await prepareNpmMaintenance(await resolveMaintenancePlan(agent))
     if (!plan.command) {
-      await dialog.showMessageBox({ type: 'info', message: ui('Install or update this tool the way it was originally installed.', '请按该工具原有的安装方式安装或更新。'), detail: ui('Douchat does not run install commands for custom tools or tools from unconfirmed sources.', '自定义工具或未确认来源的工具不会自动运行安装命令。') })
+      await dialog.showMessageBox({ type: 'info', message: ui('Install or update this tool the way it was originally installed.', '请按该工具原有的安装方式安装或更新。'), detail: ui('Foundry does not run install commands for custom tools or tools from unconfirmed sources.', '自定义工具或未确认来源的工具不会自动运行安装命令。') })
       return false
     }
-    const result = await dialog.showMessageBox({ type: 'question', message: `${agent.installed ? ui('Update', '更新') : ui('Install', '安装')} ${agent.name}`, detail: `${plan.needsDownload ? ui('First use: Douchat will download and verify a runtime first. This may take a few minutes.', '首次使用，需要先下载并校验运行环境，可能需要几分钟。') + '\n\n' : ''}${ui('The following command will run in your system terminal. Finish any prompts there; Douchat checks again when you return.', '将在系统终端执行以下命令。请在终端完成提示，返回后会自动检测。')}\n\n${plan.command}`, buttons: [ui('Cancel', '取消'), ui('Run in Terminal', '在终端执行')], defaultId: 1, cancelId: 0 })
+    const result = await dialog.showMessageBox({ type: 'question', message: `${agent.installed ? ui('Update', '更新') : ui('Install', '安装')} ${agent.name}`, detail: `${plan.needsDownload ? ui('First use: Foundry will download and verify a runtime first. This may take a few minutes.', '首次使用，需要先下载并校验运行环境，可能需要几分钟。') + '\n\n' : ''}${ui('The following command will run in your system terminal. Finish any prompts there; Foundry checks again when you return.', '将在系统终端执行以下命令。请在终端完成提示，返回后会自动检测。')}\n\n${plan.command}`, buttons: [ui('Cancel', '取消'), ui('Run in Terminal', '在终端执行')], defaultId: 1, cancelId: 0 })
     if (result.response !== 1) return false
     if (plan.needsDownload) await ensureManagedNode()
     resetShellPath()
@@ -1044,7 +1060,7 @@ app.whenReady().then(async () => {
   // Windows open on the local desktop immediately. Nothing waits on a network,
   // an account, or a provider: models are configured when the person wants them.
   await reloadCustomModels()
-  try { await imChannels.activate() } catch { console.warn('[douchat] IM credentials could not be loaded') }
+  try { await imChannels.activate() } catch { console.warn('[foundry] IM credentials could not be loaded') }
   // Update checks contact the release feed, so they run only when asked for.
   scheduler.start()
   powerMonitor.on('resume', () => { scheduler.checkNow() })
@@ -1054,7 +1070,7 @@ app.whenReady().then(async () => {
   void runtime.recoverGroupWorkflows().catch(error => diagnostics.write('recovery.failed', error instanceof Error ? error.stack || error.message : String(error)))
 }).catch(error => {
   diagnostics.write('desktop.boot-failed', error instanceof Error ? error.stack || error.message : String(error))
-  dialog.showErrorBox('Douchat', String(error instanceof Error ? error.message : error))
+  dialog.showErrorBox('Foundry', String(error instanceof Error ? error.message : error))
   quitting = true
   app.exit(1)
 })

@@ -16,7 +16,7 @@ import { DesktopProjection } from '../projection'
 
 /**
  * Real repository, real processes. Nothing here is a mocked tool call: the agent
- * is a real child process (see fixtures/scripted-agent.cjs), started by Douchat's
+ * is a real child process (see fixtures/scripted-agent.cjs), started by Foundry's
  * own local-agent path with the project as its working directory.
  */
 const fixture = join(__dirname, 'fixtures', 'scripted-agent.cjs')
@@ -192,7 +192,7 @@ describe('an agent coding in a real repository', () => {
     expect((await coding.gitStatus(project.id)).changes.map(change => change.path)).toEqual(session.changes.map(change => change.path))
     expect((await coding.gitDiff(project.id)).diff).toContain('+  return a + b')
 
-    // Douchat itself can run the project's check, and the result belongs to the session.
+    // Foundry itself can run the project's check, and the result belongs to the session.
     const check = (await coding.runChecks(session.id))!
     expect(check).toMatchObject({ exitCode: 0, argv: ['npm', 'test'] })
     expect(check.stdout).toContain('ok')
@@ -483,14 +483,14 @@ describe('coding as a usable loop', () => {
     const second = await boot(root)
     const interrupted = (await second.desktop.repository.codingSession(seed.id))!
     expect(interrupted).toMatchObject({ status: 'interrupted', workingDirectory: path })
-    expect(interrupted.events.at(-1)).toMatchObject({ kind: 'interrupted', label: 'Interrupted when Douchat closed' })
+    expect(interrupted.events.at(-1)).toMatchObject({ kind: 'interrupted', label: 'Interrupted when Foundry closed' })
     expect(interrupted.finishedAt).toBeDefined()
     await second.coding.continue(seed.id)
     const done = (await second.coding.settled(seed.id))!
     expect(done.error).toBeUndefined()
     expect(done).toMatchObject({ status: 'succeeded', conversationId: seed.conversationId, topicId: seed.topicId })
     const prompt = (await second.desktop.repository.topicMessages(seed.conversationId, seed.topicId)).filter(message => message.authorId === 'user').at(-1)!
-    expect(prompt.text).toContain('interrupted when Douchat closed')
+    expect(prompt.text).toContain('interrupted when Foundry closed')
   }, 90_000)
 
   it('records check runs as events: the command, and whether it passed', async () => {

@@ -772,7 +772,7 @@ describe('private delivery disclosure', () => {
   it('renders scheduling notice metadata instead of its previously stored language', async () => {
     const message: ChatMessage = {
       id: 'schedule-translation', conversationId: directConversation.id, topicId: 'topic-2',
-      authorId: 'system', authorName: 'Douchat', kind: 'system', createdAt: 31,
+      authorId: 'system', authorName: 'Foundry', kind: 'system', createdAt: 31,
       text: '本轮已结束：3 人已回复。',
       localization: { key: 'Round complete: {count} replied.', values: { count: 3 } }
     }
@@ -784,7 +784,7 @@ describe('private delivery disclosure', () => {
   it('renders the context reset boundary using the centered system notice', async () => {
     const message: ChatMessage = {
       id: 'context-reset:test', conversationId: directConversation.id, topicId: 'topic-2',
-      authorId: 'system', authorName: 'Douchat', kind: 'system', createdAt: 31, text: 'Context reset'
+      authorId: 'system', authorName: 'Foundry', kind: 'system', createdAt: 31, text: 'Context reset'
     }
     await act(async () => root.render(<SystemMessage message={message} />))
     expect(container.querySelector('.system-message')?.textContent).toBe('Context reset')
@@ -794,7 +794,7 @@ describe('private delivery disclosure', () => {
   it('shows a next step for a local Claude startup failure', async () => {
     const message: ChatMessage = {
       id: 'error-2', conversationId: directConversation.id, topicId: 'topic-2',
-      authorId: 'system', authorName: 'Douchat', text: 'Claude Code: Exited with status 1',
+      authorId: 'system', authorName: 'Foundry', text: 'Claude Code: Exited with status 1',
       detail: 'Run ID: run-1\nCause:\nClaude Code: Exited with status 1', kind: 'system', createdAt: 31
     }
     await act(async () => root.render(<SystemMessage message={message} />))
@@ -808,7 +808,7 @@ describe('private delivery disclosure', () => {
     Object.defineProperty(window, 'douchat', { configurable: true, value: { maintainLocalAgent } })
     const message: ChatMessage = {
       id: 'grok-error', conversationId: directConversation.id, topicId: 'topic-2',
-      authorId: 'system', authorName: 'Douchat', text: 'could not apply strict sandbox',
+      authorId: 'system', authorName: 'Foundry', text: 'could not apply strict sandbox',
       detail: 'Grok Build: sandbox could not be applied: socket deny resolution failed: /var/run/docker.sock: endpoint is a symlink',
       kind: 'system', createdAt: 31
     }
@@ -827,7 +827,7 @@ describe('private delivery disclosure', () => {
     })
     const message: ChatMessage = {
       id: 'error-3', conversationId: directConversation.id, topicId: 'topic-2',
-      authorId: 'system', authorName: 'Douchat', text: 'Claude Code: Credit balance is too low',
+      authorId: 'system', authorName: 'Foundry', text: 'Claude Code: Credit balance is too low',
       detail: 'Run ID: run-2\nCause:\nClaude Code: Credit balance is too low', kind: 'system', createdAt: 32
     }
     await act(async () => root.render(<SystemMessage message={message} />))
@@ -853,7 +853,7 @@ describe('private delivery disclosure', () => {
       })
       const message: ChatMessage = {
         id: 'error-4', conversationId: directConversation.id, topicId: 'topic-2',
-        authorId: 'system', authorName: 'Douchat', text: 'Claude Code: Credit balance is too low',
+        authorId: 'system', authorName: 'Foundry', text: 'Claude Code: Credit balance is too low',
         detail: 'Cause:\nClaude Code: Credit balance is too low', kind: 'system', createdAt: 33
       }
       await act(async () => root.render(<SystemMessage message={message} />))

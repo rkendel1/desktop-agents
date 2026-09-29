@@ -89,7 +89,7 @@ app desktop {
     updatedAt: integer
   }
 
-  // A note of the agent/command processes Douchat started, so the next start can stop any the last run left behind.
+  // A note of the agent/command processes Foundry started, so the next start can stop any the last run left behind.
   collection AgentProcess {
     id: text
     pid: integer
@@ -100,8 +100,8 @@ app desktop {
   }
 
   // ── AppPort Services (capability `api`) ─────────────────────────────────────────────
-  // Declared here, verbatim from AppPort Services' own contract, because Douchat and the AppPort
-  // Services it consumes share this one flow: one FeltDB authority, several owners. Douchat never
+  // Declared here, verbatim from AppPort Services' own contract, because Foundry and the AppPort
+  // Services it consumes share this one flow: one FeltDB authority, several owners. Foundry never
   // reads or writes these collections itself; AppPort Services does, through its capabilities.
   collection ApiKeys {
     id: uuid
@@ -167,8 +167,8 @@ app desktop {
 
   // ── @appport/github ────────────────────────────────────────────────────────────────
   // The GitHub capability's own collections, verbatim from its feltdb.flow (`await github.flow()`), in
-  // the same flow for the same reason: Douchat, AppPort Services and @appport/github are owners of
-  // different collections in one FeltDB authority. Douchat does not read or write these; the
+  // the same flow for the same reason: Foundry, AppPort Services and @appport/github are owners of
+  // different collections in one FeltDB authority. Foundry does not read or write these; the
   // capability does. Credentials never appear here — a connection holds only a secret *reference*.
   collection GitHubConnection {
     credential_reference: json

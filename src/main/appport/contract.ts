@@ -1,11 +1,12 @@
 import { AppPortError } from '@appport/protocol'
 import { defineCapability, defineEvent, type AnyCapability, type AnyEvent } from '@appport/core'
 import { s } from '@appport/schema'
+import { PRODUCT_NAME } from '../../shared/brand'
 import { CODING_EVENT_NAMES } from '../../shared/codingApi'
 import { CodingApiError, type CodingApi } from '../coding/api'
 
 /**
- * Douchat's coding capability surface.
+ * Foundry's coding capability surface.
  *
  * A contract, not a database proxy: every operation is a thing a person does in the Projects
  * screen — look at projects, start / continue / cancel a coding session, read where it stands, and
@@ -13,7 +14,8 @@ import { CodingApiError, type CodingApi } from '../coding/api'
  * file, runs a command, or changes a session's folder: the client controls a coding session, not
  * the machine.
  */
-export const APPLICATION = { id: 'ai.douchat.desktop', name: 'Douchat', version: '1.0.0' } as const
+/** `id` is the contract's identity and stays as published; `name` is the product. */
+export const APPLICATION = { id: 'ai.douchat.desktop', name: PRODUCT_NAME, version: '1.0.0' } as const
 
 /** Permissions, one per kind of authority. Holding one does not imply another. */
 export const PERMISSIONS = {
@@ -81,7 +83,7 @@ export function codingCapabilities(api: CodingApi, remote?: RemoteLookup): AnyCa
         projectId: s.string(), local: s.object({ path: s.string(), remoteUrl: s.optional(s.string()) }),
         github: s.optional(s.object({ owner: s.string(), repository: s.string(), fullName: s.string(), defaultBranch: s.optional(s.string()), private: s.boolean(), archived: s.boolean(), url: s.optional(s.string()) }))
       }), handler: input => mapped(() => remote(input.id)) })] : []),
-    defineCapability({ name: 'douchat.projects.add', version: 1, description: 'Register a folder on the machine running Douchat as a project. The folder must pass the same checks as adding it in the app.', effect: 'consequential', authorization: [PERMISSIONS.projectsWrite],
+    defineCapability({ name: 'douchat.projects.add', version: 1, description: 'Register a folder on the machine running Foundry as a project. The folder must pass the same checks as adding it in the app.', effect: 'consequential', authorization: [PERMISSIONS.projectsWrite],
       input: s.object({ path: s.string({ minLength: 1, maxLength: 4096 }), name: s.optional(s.string({ maxLength: 200 })) }), output: project, handler: input => mapped(() => api.addProject(input.path, input.name)) }),
 
     defineCapability({ name: 'douchat.coding.agents.list', version: 1, description: 'The agents a coding session can be started with (id and name only).', effect: 'observation', authorization: [PERMISSIONS.codingRead],

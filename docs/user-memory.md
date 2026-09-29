@@ -1,6 +1,6 @@
 # User profiles and agent memory
 
-Douchat separates agent configuration from information about its human user:
+Foundry separates agent configuration from information about its human user:
 
 | Scope | Storage in the local `douchat.db` | Editor |
 | --- | --- | --- |
@@ -24,7 +24,7 @@ Fact selection and scope classification are model decisions; the user can inspec
 correct or delete them and disable automatic memory globally or for one agent.
 
 Hosted models use `update_user_memory`. Local agents use private
-`[[douchat_user_memory]]` directives; Douchat removes the directives, validates
+`[[douchat_user_memory]]` directives; Foundry removes the directives, validates
 and persists them, and appends an authoritative receipt. Both paths require an
 active authenticated human turn, exact evidence from its current message, matching
 account/agent ownership, automatic memory enabled and no cancellation.

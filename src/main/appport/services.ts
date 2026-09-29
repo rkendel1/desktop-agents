@@ -6,11 +6,11 @@ import type { Authenticate } from '@appport/server'
 import { ALL_PERMISSIONS, APPLICATION } from './contract'
 
 /**
- * Douchat consumes AppPort Services from the same FeltDB flow it stores its own state in.
+ * Foundry consumes AppPort Services from the same FeltDB flow it stores its own state in.
  *
- * `createServices` is given the directory of Douchat's flow, and FeltDB resolves that to the one store
- * (`desktop.flow` declares Douchat's collections and the Services collections it uses). There is no
- * second database, no second path and no copy of Services state on the Douchat side: Douchat holds
+ * `createServices` is given the directory of Foundry's flow, and FeltDB resolves that to the one store
+ * (`desktop.flow` declares Foundry's collections and the Services collections it uses). There is no
+ * second database, no second path and no copy of Services state on the Foundry side: Foundry holds
  * no API-key data, it asks the Services capability.
  */
 export const LOCAL_TENANT = 'local'
@@ -20,8 +20,8 @@ const OWNER = { principalId: 'local-owner', principalType: 'user', tenantId: LOC
  * The authority for API-key management on this computer.
  *
  * AppPort Services never decides who may cause an effect; a host-supplied authorizer (AuthBoundry, when one is
- * connected) does, and without one every service effect fails closed. Douchat has no AuthBoundry yet, so this
- * stand-in permits exactly one thing: the local owner, identified by Douchat's own main process, managing
+ * connected) does, and without one every service effect fails closed. Foundry has no AuthBoundry yet, so this
+ * stand-in permits exactly one thing: the local owner, identified by Foundry's own main process, managing
  * this application's API keys. It authorizes nothing else, for anyone else. It is replaced, not extended,
  * when a real authority is connected.
  */
@@ -35,7 +35,7 @@ export function localOwnerAuthorizer(): ServiceAuthorizer {
   }
 }
 
-/** AppPort Services over Douchat's flow directory (`databaseDirectory` of the desktop). */
+/** AppPort Services over Foundry's flow directory (`databaseDirectory` of the desktop). */
 export function openDesktopServices(flowDirectory: string): AppPortServices {
   return createServices({ mode: 'local', path: flowDirectory, namespace: 'desktop', application: APPLICATION.id, authorizer: localOwnerAuthorizer() })
 }
@@ -51,7 +51,7 @@ export async function ensureClientApiKey(services: AppPortServices, directory: s
   if (existing && (await services.apiKeys.authenticateApiKey(existing))) return { secret: existing, file }
   const owner = services.identify(OWNER)
   if (!owner) throw new Error('The local owner could not be identified.')
-  const created = await services.apiKeys.createApiKey({ name: 'Douchat local client', tenantId: LOCAL_TENANT }, owner)
+  const created = await services.apiKeys.createApiKey({ name: 'Foundry local client', tenantId: LOCAL_TENANT }, owner)
   await writeFile(file, `${created.secret}\n`, { mode: 0o600 })
   await chmod(file, 0o600).catch(() => undefined)
   return { secret: created.secret, file }
@@ -59,8 +59,8 @@ export async function ensureClientApiKey(services: AppPortServices, directory: s
 
 /**
  * AppPort does not authenticate; it represents an identity. Here the identity is whoever holds a valid,
- * unrevoked Douchat API key. A key identifies a caller and carries no scopes, so what a Douchat caller may do is
- * Douchat's decision (its coding permissions), stated in one place: this function.
+ * unrevoked Foundry API key. A key identifies a caller and carries no scopes, so what a Foundry caller may do is
+ * Foundry's decision (its coding permissions), stated in one place: this function.
  */
 export function apiKeyAuthenticator(services: AppPortServices): Authenticate {
   return async ({ headers }) => {
@@ -68,7 +68,7 @@ export function apiKeyAuthenticator(services: AppPortServices): Authenticate {
     if (typeof header !== 'string' || !header.startsWith('Bearer ')) return {}
     const principal = await services.apiKeys.authenticateApiKey(header.slice(7).trim()).catch(() => null)
     if (!principal || principal.applicationId !== APPLICATION.id) return {}
-    const identity = { id: principal.principalId, type: 'application' as const, displayName: 'Douchat API key' }
+    const identity = { id: principal.principalId, type: 'application' as const, displayName: 'Foundry API key' }
     return { principal: identity, session: { id: principal.credentialId ?? principal.principalId, applicationId: APPLICATION.id, createdAt: new Date().toISOString(), permissions: ALL_PERMISSIONS, principal: identity } }
   }
 }

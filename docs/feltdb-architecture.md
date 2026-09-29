@@ -4,7 +4,7 @@
 > `DesktopRepository` is the asynchronous application boundary over that authority.
 > The renderer is a projection of FeltDB state, not an independent state store.
 
-Douchat has no account and no cloud dependency. Everything the desktop remembers —
+Foundry has no account and no cloud dependency. Everything the desktop remembers —
 agents, chats, groups, topics, messages, routines, runs, group games and
 workflows, settings, memories — lives in one embedded [FeltDB](https://www.npmjs.com/package/@feltdb/core)
 (`@feltdb/core` 0.11.9) database in the application-data folder:
@@ -16,14 +16,14 @@ workflows, settings, memories — lives in one embedded [FeltDB](https://www.npm
 ```
 
 ```
-Douchat UI ──IPC──▶ DesktopRepository (async) ──transactions──▶ FeltDB (durable)
+Foundry UI ──IPC──▶ DesktopRepository (async) ──transactions──▶ FeltDB (durable)
      ▲                                                              │
      └──── deltas ◀── DesktopProjection ◀── change announcements ◀──┘
 ```
 
 ## One flow, several owners
 
-> Douchat, the AppPort Services it consumes, and `@appport/github` operate within the same FeltDB `.flow`
+> Foundry, the AppPort Services it consumes, and `@appport/github` operate within the same FeltDB `.flow`
 > authority. FeltDB supports multiple applications sharing a flow; application boundaries are expressed through
 > contracts/capabilities and collection ownership, not separate databases.
 
@@ -31,19 +31,19 @@ Douchat UI ──IPC──▶ DesktopRepository (async) ──transactions──
                      shared .flow  (one FeltDB directory)
                            │
         ┌──────────────────┼──────────────────┐
-     Douchat        AppPort Services     @appport/github
+     Foundry        AppPort Services     @appport/github
    (its own collections)  (ApiKeys …)   (GitHubConnection …)
         └──────────────────┴──────────────────┘
                            │
                          FeltDB
 ```
 
-`desktop.flow` declares Douchat's collections and, verbatim from each provider's own contract, the collections of
-the capabilities Douchat uses (`ApiKeys`, `ApiKeyPrefixes`, `ApiKeyAuditEvents`, `ServiceEffectEvidence` from AppPort
+`desktop.flow` declares Foundry's collections and, verbatim from each provider's own contract, the collections of
+the capabilities Foundry uses (`ApiKeys`, `ApiKeyPrefixes`, `ApiKeyAuditEvents`, `ServiceEffectEvidence` from AppPort
 Services; `GitHubConnection`, `GitHubInstallation`, `GitHubRepository`, `GitHubWebhookEvent`, `GitHubOperation`,
 `GitHubEvidence` from `@appport/github`). Each provider is given the flow's directory (`createServices({ path })`,
 `createGitHubIntegration({ felt: { path } })`) and FeltDB resolves it to the same store; nobody opens another one.
-Douchat never reads or writes a provider's collections — it calls the capability. A test compares every declared
+Foundry never reads or writes a provider's collections — it calls the capability. A test compares every declared
 collection with the provider's published contract, so the flow cannot drift from it. See
 [appport-coding.md](appport-coding.md).
 
@@ -58,7 +58,7 @@ the code, its Git state and any generated files stay on disk, and the agent and
 its commands are OS processes that are never persisted. See
 [coding-execution-path.md](coding-execution-path.md).
 
-> **AppPort exposes Douchat capabilities; it does not become an alternate authority for coding state, source state,
+> **AppPort exposes Foundry capabilities; it does not become an alternate authority for coding state, source state,
 > approvals, or execution.**
 
 Three companion invariants hold the coding loop together
@@ -74,7 +74,7 @@ Three companion invariants hold the coding loop together
 > processes are ephemeral.**
 
 `AgentProcess` is the one collection that is a *note about* processes rather than
-state: a pid and its start time, written when Douchat starts an agent or command and
+state: a pid and its start time, written when Foundry starts an agent or command and
 removed when it exits, so the next start can stop anything a crash left running.
 
 ## The rules

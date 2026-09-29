@@ -5,16 +5,16 @@ import { promisify } from 'node:util'
 const run = promisify(execFile)
 
 /**
- * A record of an agent or command process Douchat started. Operating-system
+ * A record of an agent or command process Foundry started. Operating-system
  * processes are ephemeral, so this is not their state: it is a note of which
- * ones Douchat is responsible for, kept so that a process that outlives the app
- * (a crash, a kill -9, a power cut) is stopped the next time Douchat starts
+ * ones Foundry is responsible for, kept so that a process that outlives the app
+ * (a crash, a kill -9, a power cut) is stopped the next time Foundry starts
  * instead of carrying on unsupervised in a project folder.
  */
 export interface AgentProcessRecord {
   id: string
   pid: number
-  /** Which kind of process: an agent turn, a persistent agent connection or a command Douchat ran. */
+  /** Which kind of process: an agent turn, a persistent agent connection or a command Foundry ran. */
   role: 'agent' | 'connection' | 'command'
   /** The operating system's own start time for the process, so a reused pid is never mistaken for it. */
   identity: string

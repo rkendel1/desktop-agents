@@ -25,7 +25,7 @@ export function killLocalProcess(child: ChildProcessWithoutNullStreams): void {
 type Packet = Record<string, any>
 type Pending = { resolve: (value: any) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
 
-/** One private stdio connection per Douchat conversation/topic/agent. No TCP listener. */
+/** One private stdio connection per Foundry conversation/topic/agent. No TCP listener. */
 export class LocalAgentConnection {
   private child!: ChildProcessWithoutNullStreams
   private pending = new Map<number, Pending>()
@@ -263,14 +263,14 @@ export class LocalAgentConnection {
         }
       } else if (packet.id !== undefined && packet.method) {
         if (packet.method === 'mcpServer/elicitation/request') void this.approveComputerUse(packet).catch(error => this.close(error))
-        else this.write({ id: packet.id, error: { code: -32601, message: 'Interactive requests are not supported in Douchat.' } })
+        else this.write({ id: packet.id, error: { code: -32601, message: 'Interactive requests are not supported in Foundry.' } })
       } else if (packet.type === 'control_cancel_request') {
         this.approvals.get(packet.request_id)?.abort()
         this.approvals.delete(packet.request_id)
       } else if (packet.type === 'control_request' && this.kind === 'claude' && packet.request?.subtype === 'can_use_tool') {
         void this.approveClaudeTool(packet).catch(error => this.close(error))
       } else if (packet.type === 'control_request') {
-        this.write({ type: 'control_response', response: { subtype: 'error', request_id: packet.request_id, error: 'Interactive requests are not supported in Douchat' } })
+        this.write({ type: 'control_response', response: { subtype: 'error', request_id: packet.request_id, error: 'Interactive requests are not supported in Foundry' } })
       } else {
         if (packet.method === 'serverRequest/resolved') {
           const id = packet.params?.requestId
@@ -333,7 +333,7 @@ export class LocalAgentConnection {
           }
           computerContext = codexComputerUseInventory(servers)
         } catch {
-          computerContext = 'Douchat could not verify the native Computer Use inventory for this session. This does not prove the tools are absent. Inspect your exposed tools and report any actual tool failure precisely.'
+          computerContext = 'Foundry could not verify the native Computer Use inventory for this session. This does not prove the tools are absent. Inspect your exposed tools and report any actual tool failure precisely.'
         }
         signal?.throwIfAborted()
       }
@@ -397,7 +397,7 @@ export class LocalAgentConnection {
         if (this.kind === 'codex') {
           void this.request('turn/start', { threadId: this.threadId, input: [
             { type: 'text', text: prompt, text_elements: [] },
-            ...(computerContext ? [{ type: 'text', text: `Douchat native capability check:\n${computerContext}`, text_elements: [] }] : [])
+            ...(computerContext ? [{ type: 'text', text: `Foundry native capability check:\n${computerContext}`, text_elements: [] }] : [])
           ] }).catch(reject)
         } else {
           try { this.write({ type: 'user', message: { role: 'user', content: prompt } }) } catch (error) { reject(error) }

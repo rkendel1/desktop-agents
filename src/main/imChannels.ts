@@ -320,7 +320,7 @@ export class IMChannelManager {
         if (paired) { r.peer = message.peer; r.pairingCode = '' }
         await this.save()
         void send(paired ? '配对成功，可以开始给这个联系人发消息了。' :
-          (/^\/pair(?:\s|$)/.test(message.text.trim()) ? '配对指令无效。' : '还未配对，暂时无法聊天。') + '请在 Douchat 中打开对应联系人的「消息渠道」，复制配对指令并发送到当前私信，完成绑定后即可聊天。').catch(() => {})
+          (/^\/pair(?:\s|$)/.test(message.text.trim()) ? '配对指令无效。' : '还未配对，暂时无法聊天。') + '请在 Foundry 中打开对应联系人的「消息渠道」，复制配对指令并发送到当前私信，完成绑定后即可聊天。').catch(() => {})
         return
       }
       if (message.peer !== r.peer) { await this.save(); return }
@@ -339,7 +339,7 @@ export class IMChannelManager {
       if (!this.live(r, worker)) return
       try {
         if (interrupted) {
-          await send('上一条任务的回复未完成回传，操作可能已执行。请在 Douchat 检查结果后再决定是否重发。')
+          await send('上一条任务的回复未完成回传，操作可能已执行。请在 Foundry 检查结果后再决定是否重发。')
           return
         }
 
@@ -357,7 +357,7 @@ export class IMChannelManager {
             this.diagnostic?.('im.processing', JSON.stringify({ provider: r.provider, channel: r.id, message: message.id, waitMs: Date.now() - (entry.receivedAt ?? Date.now()) }))
             bubbles = await this.reply(r.agentId, r.id, message.text, worker.abort.signal, r.provider, media, entry.receiptId)
           }
-          catch (error) { bubbles = error instanceof IMMediaError ? [error.message] : ['联系人暂时无法回复，请在 Douchat 检查模型配置、运行状态或权限请求后重试。'] }
+          catch (error) { bubbles = error instanceof IMMediaError ? [error.message] : ['联系人暂时无法回复，请在 Foundry 检查模型配置、运行状态或权限请求后重试。'] }
         }
         // Stop refreshing before delivery, so Telegram cannot re-show typing after a reply.
         void stopTyping?.()
@@ -370,7 +370,7 @@ export class IMChannelManager {
               try { await this.sendImage(r, worker, message, bubble.image) }
               catch {
                 if (!this.live(r, worker)) return
-                await send('图片已生成，但发送失败。请在 Douchat 查看图片，并检查渠道权限或网络。')
+                await send('图片已生成，但发送失败。请在 Foundry 查看图片，并检查渠道权限或网络。')
                 worker.error = '图片发送失败，已保留桌面会话中的图片'; worker.status = 'error'
                 return
               }

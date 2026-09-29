@@ -40,7 +40,7 @@ export async function latestAgentVersion(id: string): Promise<string | undefined
         : id === 'grok' ? 'https://x.ai/cli/stable'
           : id === 'cursor' ? 'https://cursor.com/install' : undefined
   if (!url) return undefined
-  const response = await fetch(url, { signal: AbortSignal.timeout(3500), headers: { 'User-Agent': 'Douchat' } })
+  const response = await fetch(url, { signal: AbortSignal.timeout(3500), headers: { 'User-Agent': 'Foundry' } })
   if (!response.ok) return undefined
   if (id === 'grok') return (await response.text()).trim()
   // Read the official installer as text only; never execute it to check updates.

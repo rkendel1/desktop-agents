@@ -4,10 +4,10 @@ import { LOCAL_TENANT } from './services'
 import { APPLICATION } from './contract'
 
 /**
- * Douchat consumes `@appport/github` as a capability. There is no GitHub API code in Douchat: repository
+ * Foundry consumes `@appport/github` as a capability. There is no GitHub API code in Foundry: repository
  * metadata, branches, issues and pull requests are the capability's operations, and everything it stores
  * (connections, normalized repositories, operations, evidence, webhook deliveries) lives in its own collections
- * of the one shared flow — `felt.path` is the directory of Douchat's flow, so FeltDB resolves it to the same store.
+ * of the one shared flow — `felt.path` is the directory of Foundry's flow, so FeltDB resolves it to the same store.
  *
  * Git remains the authority for the local working tree; this is the remote service capability.
  */
@@ -21,7 +21,7 @@ interface AuthorityBoundaryLike { session(): Promise<never>; authorize(capabilit
 /**
  * The AuthBoundry-compatible boundary for this computer's owner. `@appport/github` takes identity and tenant from the
  * boundary and ignores what a caller claims. A real AuthBoundry client replaces this; until then the local owner
- * may read (never mutate) through the capability, which is all Douchat asks of it today.
+ * may read (never mutate) through the capability, which is all Foundry asks of it today.
  */
 export function localOwnerGitHubAuthority(): AuthorityBoundaryLike {
   const session = async (): Promise<never> => ({
@@ -37,7 +37,7 @@ export function openDesktopGitHub(flowDirectory: string, vault: Pick<CredentialV
     authority: localOwnerGitHubAuthority() as never,
     felt: { mode: 'local', namespace: 'desktop', path: flowDirectory },
     configuration: {
-      // Secret values come from Douchat's credential vault (encrypted by the operating system), by reference. FeltDB holds the reference only.
+      // Secret values come from Foundry's credential vault (encrypted by the operating system), by reference. FeltDB holds the reference only.
       resolveGitHubToken: async connection => {
         const reference = connection.credentialReference
         const token = reference ? vault.get(secretName(reference.secretId)) : undefined
@@ -48,7 +48,7 @@ export function openDesktopGitHub(flowDirectory: string, vault: Pick<CredentialV
   })
 }
 
-/** Connect Douchat to GitHub. `token` (a personal access token) is kept in the vault; the connection records only its reference. */
+/** Connect Foundry to GitHub. `token` (a personal access token) is kept in the vault; the connection records only its reference. */
 export async function connectGitHub(github: GitHubIntegration, vault: Pick<CredentialVault, 'set'>, token?: string): Promise<void> {
   const now = new Date().toISOString()
   if (token) vault.set(secretName('douchat-github-token'), token)

@@ -89,7 +89,7 @@ function localAgentFailure(source: string): Omit<RuntimeErrorSummary, 'detail'> 
   if (/\bOMP:/i.test(source) && /credit balance is too low.*Anthropic API/i.test(source)) {
     return {
       title: 'OMP’s Anthropic API credit is insufficient',
-      guidance: 'Select the model you use in OMP, or top up that provider’s API balance. Douchat credits do not cover local agent usage.'
+      guidance: 'Select the model you use in OMP, or top up that provider’s API balance. Foundry credits do not cover local agent usage.'
     }
   }
   if (/^Grok: Image generation failed\./i.test(source)) {
@@ -119,7 +119,7 @@ function localAgentFailure(source: string): Omit<RuntimeErrorSummary, 'detail'> 
   if (/cursor/i.test(source) && /workspace trust required/i.test(source)) {
     return {
       title: 'Cursor needs workspace trust',
-      guidance: 'Cursor could not start in the temporary chat workspace. Update Douchat and try again.'
+      guidance: 'Cursor could not start in the temporary chat workspace. Update Foundry and try again.'
     }
   }
   if (/grok|runtime-socket deny|socket deny resolution/i.test(source) && /sandbox|runtime-socket deny/i.test(source)) {
@@ -144,21 +144,21 @@ function localAgentFailure(source: string): Omit<RuntimeErrorSummary, 'detail'> 
   if (/not logged in|not signed in|log in first|login required|authentication required|unauthori[sz]ed|invalid (?:api )?key|missing (?:api )?key|run \/login/i.test(source)) {
     return {
       title: 'Claude Code is not signed in',
-      guidance: 'Open Claude Code in Terminal and sign in, then return to Douchat and try again.',
+      guidance: 'Open Claude Code in Terminal and sign in, then return to Foundry and try again.',
       action: OPEN_CLAUDE
     }
   }
   if (/credit balance (?:is )?too low|insufficient (?:credit|credits|quota)|out of credits|quota exceeded|usage limit (?:is )?(?:reached|exceeded)|billing required/i.test(source)) {
     return {
       title: 'Claude Code does not have enough credit',
-      guidance: 'Open Claude Code in Terminal and add credit or switch to an account with available usage, then return to Douchat and try again.',
+      guidance: 'Open Claude Code in Terminal and add credit or switch to an account with available usage, then return to Foundry and try again.',
       action: OPEN_CLAUDE
     }
   }
   if (/exited with status|exit(?:ed)? code|failed to start|spawn .*EACCES/i.test(source)) {
     return {
       title: 'Claude Code could not start',
-      guidance: 'Open Claude Code in Terminal once. Finish signing in or fix the error shown there, then return to Douchat and try again.',
+      guidance: 'Open Claude Code in Terminal once. Finish signing in or fix the error shown there, then return to Foundry and try again.',
       action: OPEN_CLAUDE
     }
   }
@@ -172,7 +172,7 @@ function describe(source: string, status: number | undefined, retries: number): 
   if (status === 429) return 'The provider is rate limiting this key'
   if (status && status >= 500) return 'The provider returned a server error'
   if (/\b(?:EACCES|EPERM)\b|operation not permitted|permission denied|needs permission to access/i.test(source)) {
-    return 'Douchat does not have permission to access that local file or folder'
+    return 'Foundry does not have permission to access that local file or folder'
   }
   if (/ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|socket hang up|fetch failed/i.test(source)) {
     return 'Could not reach the model endpoint'

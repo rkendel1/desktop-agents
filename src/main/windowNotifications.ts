@@ -17,7 +17,7 @@ export function notifyWindows(windows: NotificationWindow[], channel: string, pa
     } catch (error) {
       // Native objects can be destroyed between the checks and send(). Keep
       // notifying the other windows; UI delivery is not task execution.
-      console.warn(`[douchat] Could not notify renderer (${channel}):`, error instanceof Error ? error.message : error)
+      console.warn(`[foundry] Could not notify renderer (${channel}):`, error instanceof Error ? error.message : error)
     }
   }
 }

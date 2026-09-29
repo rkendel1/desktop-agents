@@ -124,11 +124,11 @@ export function CodingSessionPanel({ session, project, agent, activity }: {
     {session.status === 'running' && (activity?.state === 'awaiting-approval'
       ? <ApprovalCard activity={activity} session={session} project={project} agent={agent} onCancel={cancel} />
       : <section className="coding-activity"><span className="coding-pulse" aria-hidden />{activity?.label ?? t('Running…')}
-        {activity?.source !== 'agent' && <span className="muted coding-note"> {t('This agent has not reported step-by-step activity. Douchat shows approvals, checks and repository changes.')}</span>}
+        {activity?.source !== 'agent' && <span className="muted coding-note"> {t('This agent has not reported step-by-step activity. Foundry shows approvals, checks and repository changes.')}</span>}
         <button className="secondary-button danger" onClick={cancel} disabled={running}>{t('Cancel session')}</button></section>)}
 
     {session.status === 'interrupted' && <section className="coding-banner" role="status">
-      <p>{t('This session was interrupted when Douchat closed.')}</p>
+      <p>{t('This session was interrupted when Foundry closed.')}</p>
       <ContinueNote agent={agent} />
       <button className="primary-button" disabled={running} onClick={() => void act(() => window.douchat.continueCodingSession(session.id))}>{t('Continue')}</button>
     </section>}
@@ -161,7 +161,7 @@ export function CodingSessionPanel({ session, project, agent, activity }: {
       void act(async () => { await window.douchat.continueCodingSession(session.id, message); setText('') })
     }}>
       <ContinueNote agent={agent} />
-      <textarea value={text} onChange={event => setText(event.target.value)} rows={2} placeholder={t('Tell the agent what to do next…')} aria-label={t('Continue the conversation')} />
+      <textarea value={text} onChange={event => setText(event.target.value)} rows={2} placeholder={t('Tell the agent what to do next…')} aria-label={t('Continue the session')} />
       <button className="primary-button" type="submit" disabled={running || !text.trim()}>{t('Send')}</button>
     </form>}
   </div>

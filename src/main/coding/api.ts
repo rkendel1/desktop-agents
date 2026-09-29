@@ -150,7 +150,7 @@ export class CodingApi {
 
   /**
    * Answer one approval, once. It must be pending *now* and belong to the session named: an approval
-   * that expired (the session ended, was continued, or Douchat restarted) or that belongs to another
+   * that expired (the session ended, was continued, or Foundry restarted) or that belongs to another
    * session is refused, and authorizes nothing.
    */
   async resolveApproval(input: { approvalId: string; sessionId: string; decision: 'approve' | 'deny' }): Promise<{ approvalId: string; decision: 'approve' | 'deny' }> {

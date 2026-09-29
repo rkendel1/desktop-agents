@@ -193,7 +193,7 @@ export function maintenanceShellBody(command: string): string {
     command,
     'result=$?',
     'if [ "$result" -eq 0 ]; then',
-    "  printf '\n%s\n' '命令执行成功。返回 Douchat 后会重新检测版本。'",
+    "  printf '\n%s\n' '命令执行成功。返回 Foundry 后会重新检测版本。'",
     'else',
     "  printf '\n执行未成功（退出码 %s），请查看上方工具输出。\n' \"$result\"",
     'fi',
@@ -211,7 +211,7 @@ export async function openMaintenanceTerminal(command: string, dependencies: Ter
   if (platform === 'darwin') {
     // Open a private .command file via Launch Services; no Apple Events automation permission.
     const directory = await mkdtemp(join(tmpdir(), 'douchat-maintenance-'))
-    const script = join(directory, 'Douchat-Agent-Maintenance.command')
+    const script = join(directory, 'Foundry-Agent-Maintenance.command')
     try {
       await writeFile(script, `#!/bin/bash\ntrap ${shellQuote(`/bin/rm -rf -- ${shellQuote(directory)}`)} EXIT\n${maintenanceShellBody(command)}\n`, { mode: 0o700 })
       await execute('/usr/bin/open', ['-a', 'Terminal', script])
@@ -222,7 +222,7 @@ export async function openMaintenanceTerminal(command: string, dependencies: Ter
     return
   }
   if (platform === 'win32') {
-    await launch('powershell.exe', ['-NoProfile', '-NoExit', '-EncodedCommand', Buffer.from(`$env:Path = ${powershellQuote(managedSearchPaths().join(';') + ';')} + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path\nClear-Host\nWrite-Host '本地智能体安装与更新'\nWrite-Host '即将执行（与确认窗口一致）：'\nWrite-Host ${powershellQuote(command)}\n$global:LASTEXITCODE = 0\n${command}\n$douchatSucceeded = $?\nif ($douchatSucceeded -and $LASTEXITCODE -eq 0) { Write-Host '命令执行成功。返回 Douchat 后会重新检测版本。' } else { Write-Host '执行未成功，请查看上方工具输出。' }`, 'utf16le').toString('base64')])
+    await launch('powershell.exe', ['-NoProfile', '-NoExit', '-EncodedCommand', Buffer.from(`$env:Path = ${powershellQuote(managedSearchPaths().join(';') + ';')} + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path\nClear-Host\nWrite-Host '本地智能体安装与更新'\nWrite-Host '即将执行（与确认窗口一致）：'\nWrite-Host ${powershellQuote(command)}\n$global:LASTEXITCODE = 0\n${command}\n$douchatSucceeded = $?\nif ($douchatSucceeded -and $LASTEXITCODE -eq 0) { Write-Host '命令执行成功。返回 Foundry 后会重新检测版本。' } else { Write-Host '执行未成功，请查看上方工具输出。' }`, 'utf16le').toString('base64')])
     return
   }
   for (const name of ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'xterm']) {

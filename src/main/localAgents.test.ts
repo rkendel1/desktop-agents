@@ -46,7 +46,7 @@ describe('local agent discovery', () => {
     })
   })
   it('looks for macOS apps in each supplied application root', async () => {
-    await expect(findDesktopApp(['Definitely Missing Douchat Fixture.app'], ['/missing/one', '/missing/two'])).resolves.toBeUndefined()
+    await expect(findDesktopApp(['Definitely Missing Foundry Fixture.app'], ['/missing/one', '/missing/two'])).resolves.toBeUndefined()
   })
   it('persists a custom command and discovers it without a shell', async () => {
     await addCustomLocalAgent({ name: 'My Agent', command: '/opt/tools/my-agent' })

@@ -44,7 +44,7 @@ export const groupTranslations: Record<string, string> = {
   "A group coordinator decides whether to reply, who handles the task, and in what order. No separate decision model is required.": "由群内的协调成员判断是否需要回复、由谁处理及处理顺序，无需单独配置决策模型。",
   "Member health check interval (seconds)": "群成员健康探测周期（秒）",
   "Each group caches member availability and response time. New tasks refresh checks when the interval expires. Unavailable members receive no tasks until a successful check; unknown members may be rechecked after 30 seconds. Decisions consider health, skills, and response time.": "每个群分别缓存成员响应状态与速度；收到新任务时按检测周期刷新。不可用成员暂停分配任务，检测成功后恢复；仅状态未知的成员最早 30 秒后复查。决策时会参考健康状态、任务能力和响应速度。",
-  "Douchat cloud decisions use credits. Each successful call costs {credits} credits.": "将使用 Douchat 云端决策模型进行调度，会消耗额度；每次成功调用消耗 {credits} credits。",
+  "Foundry cloud decisions use credits. Each successful call costs {credits} credits.": "将使用 Foundry 云端决策模型进行调度，会消耗额度；每次成功调用消耗 {credits} credits。",
   "Save decision settings": "保存决策设置",
   "Group decision settings saved. They apply to the next task.": "群决策设置已保存，下个任务生效。",
   "Scheduling: {member} is unavailable. Skipping this round until the next health check.": "调度通知：{member} 暂不可用，本轮不再调用，等待下次健康检测。",
@@ -127,7 +127,7 @@ const legacyNoticeTemplates = [
 
 /** Read-time compatibility only. Never rewrite stored messages or model output. */
 export function legacyGroupNotice(message: { kind: string; authorId: string; authorName: string; text: string }): GroupNotice | undefined {
-  if (message.kind !== 'system' || message.authorId !== 'system' || message.authorName !== 'Douchat') return
+  if (message.kind !== 'system' || message.authorId !== 'system' || !['Foundry', 'Douchat'].includes(message.authorName)) return // 'Douchat' is what messages stored before the rename are signed with
   for (const { key, names, pattern } of legacyNoticeTemplates) {
     const match = pattern.exec(message.text)
     if (match) return { key, values: Object.fromEntries(names.map((name, index) => [name, match[index + 1]])) }

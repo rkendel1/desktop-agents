@@ -6,7 +6,7 @@ import { messageSendError } from '../messageQueue'
 import { NativeDialog } from './NativeDialog'
 import { reportDiagnostic } from '../diagnostics'
 import { agentIcons } from '../agentIcons'
-import douchatLogo from '../../../../resources/icons/douchat.png'
+import foundryLogo from '../../../../resources/icons/foundry.png'
 import { setPreferences, usePreferences, t, tr, type LanguagePreference } from '../preferences'
 import { SlidersHorizontal, Bot, CalendarClock, Camera, CircleUserRound, Cpu, ExternalLink, FolderOpen, Info, Pause, Play, Plus, RefreshCw, ScanSearch, SquareArrowOutUpRight, Trash2, Workflow, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -326,9 +326,9 @@ function AboutTab(): ReactElement {
   )
   return <div className="about-page">
     <header className="about-hero">
-      <img className="about-logo" src={douchatLogo} alt="" />
+      <img className="about-logo" src={foundryLogo} alt="" />
       <div className="about-hero-copy">
-        <h1>Douchat</h1>
+        <h1>Foundry</h1>
         <p>{t('A desktop workspace where AI agents work and talk together.')}</p>
         <div className="about-meta">
           <code>{update?.currentVersion ? `v${update.currentVersion}` : '…'}</code>
@@ -353,11 +353,11 @@ function AboutTab(): ReactElement {
         <div className="about-update-status" aria-live="polite">
           {status === 'downloading' ? <>
             <div className="update-progress"><i style={{ width: `${update?.percent ?? 0}%` }} /></div>
-            <span>{t('Downloading the verified update from Douchat…')}</span>
+            <span>{t('Downloading the verified update from Foundry…')}</span>
           </> : status === 'available' ? <div className="update-copy"><span>{t('Version {version} is available').replace('{version}', version ?? '')}</span>{update?.releaseNotes && <p>{update.releaseNotes}</p>}</div>
             : status === 'downloaded' ? <div className="update-copy"><span>{t('Update ready to install')}</span>{Boolean(update?.busyTasks) && <p>{t('Finish {count} active tasks before restarting.').replace('{count}', String(update?.busyTasks))}</p>}</div>
               : status === 'installing' ? <span>{t('Installing update and restarting…')}</span>
-                : status === 'checking' ? <span>{t('Connecting to the Douchat update service…')}</span>
+                : status === 'checking' ? <span>{t('Connecting to the Foundry update service…')}</span>
                   : status === 'up-to-date' ? <span>{t('You are using the latest version.')}</span>
                     : status === 'disabled' ? <span>{t('Update checks are available in packaged builds.')}</span>
                       : null}

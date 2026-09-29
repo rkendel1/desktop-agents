@@ -75,7 +75,7 @@ export function IMChannelsDialog({ agent, onClose }: { agent: AgentConfig; onClo
       <header className="im-heading"><h2 id="im-title"><Radio size={22} /> {tr('Message channels', '消息渠道')}</h2><button className="icon-button" onClick={onClose} aria-label={tr('Close', '关闭')}><X size={20} /></button></header>
       <div className="im-body">
         {!selected && <><p className="im-intro">{tr(`Connect ${agent.name} to your messaging apps.`, `为「${agent.name}」连接即时通讯平台，在其他 IM 中与其聊天。`)}</p>
-        <p className="settings-note">{tr('Keep Douchat running and signed in. Text, images and files are supported; all channels share this contact’s conversation.', '接收消息时需保持 Douchat 运行并登录。支持文字、图片和文件，所有渠道共用此联系人的聊天记录。')}</p>
+        <p className="settings-note">{tr('Keep Foundry running and signed in. Text, images and files are supported; all channels share this contact’s conversation.', '接收消息时需保持 Foundry 运行并登录。支持文字、图片和文件，所有渠道共用此联系人的聊天记录。')}</p>
         </>}
         {error && <p className="settings-error" role="alert">{error}</p>}
         {!selected ? <>

@@ -7,7 +7,7 @@ import { createInProcessTransport } from '@appport/transport-inprocess'
 import { CODING_EVENT_NAMES, type CodingNotification, type SessionView } from '../../shared/codingApi'
 import { CodingApi } from '../coding/api'
 import { pidsReady, taskText, TestKit, waitUntil, type Booted } from '../coding/testkit'
-import { createDouchatAppPort } from './host'
+import { createFoundryAppPort } from './host'
 import { apiKeyAuthenticator, ensureClientApiKey, openDesktopServices } from './services'
 
 const kit = new TestKit()
@@ -22,7 +22,7 @@ async function remote(booted: Booted, options: { token?: string | null } = {}): 
   // AppPort Services over the desktop's own flow identify the caller by API key.
   const services = openDesktopServices(booted.desktop.databaseDirectory)
   const { secret } = await ensureClientApiKey(services, booted.root)
-  const app = createDouchatAppPort(api, apiKeyAuthenticator(services))
+  const app = createFoundryAppPort(api, apiKeyAuthenticator(services))
   const token = options.token === undefined ? secret : options.token
   const identity = await app.server.identify({ transport: 'inprocess', headers: token ? { authorization: `Bearer ${token}` } : {} })
   const client = createClient({ transport: createInProcessTransport({ server: app.server, identity }) })
@@ -137,7 +137,7 @@ describe('coding sessions', () => {
     await waitUntil(() => r.events.some(event => event.name === 'session.interrupted'))
     const view = await call<SessionView>(r, 'douchat.coding.sessions.get', { id: running.id })
     expect(view.status).toBe('interrupted')
-    expect(view.history.at(-1)).toMatchObject({ kind: 'interrupted', label: 'Interrupted when Douchat closed' })
+    expect(view.history.at(-1)).toMatchObject({ kind: 'interrupted', label: 'Interrupted when Foundry closed' })
     const late = await remote(second)
     expect((await call<SessionView>(late, 'douchat.coding.sessions.get', { id: running.id })).history.at(-1)?.kind).toBe('interrupted')
     await call(r, 'douchat.coding.sessions.continue', { id: running.id, text: taskText('Look.', { action: 'none' }) })
@@ -229,7 +229,7 @@ describe('approvals', () => {
 })
 
 describe('events', () => {
-  it('are emitted in the order things happen, only for what Douchat knows, and never as agent activity', async () => {
+  it('are emitted in the order things happen, only for what Foundry knows, and never as agent activity', async () => {
     const { booted, project, agent, r } = await setup()
     await booted.desktop.repository.setProjectTestCommand(project.id, ['npm', 'test'])
     const session = await call<SessionView>(r, 'douchat.coding.sessions.start', { projectId: project.id, agentId: agent.id, task: taskText('Fix add().', { action: 'fix-add' }) })
@@ -264,6 +264,24 @@ describe('events', () => {
     expect((await booted.desktop.repository.codingSessions()).length).toBe(count)
     await again.close()
   }, 60_000)
+})
+
+describe('branding', () => {
+  it('presents the coding surface as Foundry: its manifest, descriptions and errors, without changing the contract', async () => {
+    const { r, booted } = await setup()
+    const manifest = await r.client.load() as unknown as { application: { id: string; name: string }; capabilities: { name: string; description?: string }[]; events?: { name: string; description?: string }[] }
+    expect(manifest.application.name).toBe('Foundry')
+    expect(manifest.application.id).toBe('ai.douchat.desktop') // the contract's identity is unchanged
+    const ours = manifest.capabilities.filter(capability => capability.name.startsWith('douchat.'))
+    expect(ours.length).toBeGreaterThan(10)
+    for (const capability of ours) expect(capability.description ?? '', capability.name).not.toMatch(/douchat/i)
+    for (const event of manifest.events ?? []) expect(event.description ?? '', event.name).not.toMatch(/douchat/i)
+    const refusals = [await failure(call(r, 'douchat.projects.get', { id: 'nope' })), await failure(call(r, 'douchat.coding.sessions.get', { id: 'nope' })), await failure(call(r, 'douchat.projects.add', { path: '/not/a/folder' }))]
+    for (const refusal of refusals) expect(refusal.message).not.toMatch(/douchat/i)
+    // Same service, same behaviour: the capability still reaches the coding service that the desktop uses.
+    expect((await call<{ projects: unknown[] }>(r, 'douchat.projects.list')).projects.length).toBe((await booted.desktop.repository.projects()).length)
+    await r.close()
+  }, 30_000)
 })
 
 describe('authority', () => {
@@ -306,7 +324,7 @@ describe('authority', () => {
     const recorded = JSON.stringify(await booted.desktop.repository.codingSessions())
     for (const name of ['douchat.projects.list', 'douchat.coding.sessions.list', 'douchat.coding.approvals.list']) await call(r, name)
     await call(r, 'douchat.coding.sessions.get', { id: session.id }); await call(r, 'douchat.projects.gitstate', { id: project.id })
-    // Reading changes none of Douchat's state. (Authenticating an API key is AppPort Services' own bookkeeping in the shared flow.)
+    // Reading changes none of Foundry's state. (Authenticating an API key is AppPort Services' own bookkeeping in the shared flow.)
     void before
     expect(JSON.stringify(await booted.desktop.repository.codingSessions())).toBe(recorded)
     await r.close()

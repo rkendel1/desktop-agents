@@ -68,7 +68,7 @@ let cachedCliEnvironment: Promise<NodeJS.ProcessEnv> | undefined;
  * terminal startup file. Keep this list deliberately narrow: these are model
  * CLI configuration values that the same user-owned CLI would already receive
  * when launched in Terminal. They are passed only to child agent processes and
- * are never persisted or logged by Douchat.
+ * are never persisted or logged by Foundry.
  */
 const CLI_ENVIRONMENT_NAMES = [
   "ANTHROPIC_API_KEY",

@@ -322,8 +322,8 @@ describe('summarizeRuntimeError', () => {
       'Lost the connection to the model endpoint · after 2 retries'
     )
     expect(summarizeRuntimeError('Request was aborted').title).toBe('The model connection was interrupted')
-    expect(summarizeRuntimeError('Douchat needs permission to access Downloads. (EPERM)').title).toBe(
-      'Douchat does not have permission to access that local file or folder'
+    expect(summarizeRuntimeError('Foundry needs permission to access Downloads. (EPERM)').title).toBe(
+      'Foundry does not have permission to access that local file or folder'
     )
   })
 
@@ -342,7 +342,7 @@ describe('summarizeRuntimeError', () => {
     const raw = 'OMP: Working...\n400 {"error":{"message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}'
     expect(summarizeRuntimeError(raw)).toEqual({
       title: 'OMP’s Anthropic API credit is insufficient',
-      guidance: 'Select the model you use in OMP, or top up that provider’s API balance. Douchat credits do not cover local agent usage.',
+      guidance: 'Select the model you use in OMP, or top up that provider’s API balance. Foundry credits do not cover local agent usage.',
       detail: raw
     })
     expect(isRetryableRuntimeError(raw)).toBe(false)
@@ -351,15 +351,15 @@ describe('summarizeRuntimeError', () => {
   it('turns local Claude failures into an immediate next step', () => {
     expect(summarizeRuntimeError('Claude Code: Exited with status 1')).toMatchObject({
       title: 'Claude Code could not start',
-      guidance: 'Open Claude Code in Terminal once. Finish signing in or fix the error shown there, then return to Douchat and try again.'
+      guidance: 'Open Claude Code in Terminal once. Finish signing in or fix the error shown there, then return to Foundry and try again.'
     })
     expect(summarizeRuntimeError('Claude Code: Please run /login')).toMatchObject({
       title: 'Claude Code is not signed in',
-      guidance: 'Open Claude Code in Terminal and sign in, then return to Douchat and try again.'
+      guidance: 'Open Claude Code in Terminal and sign in, then return to Foundry and try again.'
     })
     expect(summarizeRuntimeError('Claude Code: Credit balance is too low')).toMatchObject({
       title: 'Claude Code does not have enough credit',
-      guidance: 'Open Claude Code in Terminal and add credit or switch to an account with available usage, then return to Douchat and try again.',
+      guidance: 'Open Claude Code in Terminal and add credit or switch to an account with available usage, then return to Foundry and try again.',
       action: { kind: 'open-local-agent-terminal', agentId: 'claude', label: 'Open Claude Code' }
     })
   })

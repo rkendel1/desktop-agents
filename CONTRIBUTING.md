@@ -1,13 +1,13 @@
-# Contributing to Douchat
+# Contributing to Foundry
 
-Thanks for your interest in improving Douchat! This guide covers local setup and
+Thanks for your interest in improving Foundry! This guide covers local setup and
 how to get a change merged.
 
 ## Prerequisites
 
 - **Node.js 22.12+** and **npm 10+**
 - macOS: Xcode Command Line Tools
-- Optional: a Douchat account for Cloud Agents, or a supported local agent CLI
+- Optional: a Foundry account for Cloud Agents, or a supported local agent CLI
   (Claude Code, Codex, Gemini, …) for Local Agents
 
 ## Setup
@@ -55,7 +55,7 @@ See the [README](README.md#configuration) for environment variables.
 
 ## License of contributions
 
-Douchat is released under [AGPL-3.0](LICENSE), and is also offered under a separate
+Foundry is released under [AGPL-3.0](LICENSE), and is also offered under a separate
 commercial license to organizations that cannot accept AGPL terms. Keeping both
 options open requires every contribution to carry the same two grants, so by
 submitting a pull request you agree to the following.

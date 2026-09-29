@@ -85,7 +85,7 @@ export function accountChanges(baseline: GitChange[], after: GitChange[]): { cha
   return { changes, cleaned: baseline.filter(change => !now.has(change.path)).map(change => change.path) }
 }
 
-/** CLIs whose own conversation Douchat can pick up again after a restart (their thread id is kept). */
+/** CLIs whose own conversation Foundry can pick up again after a restart (their thread id is kept). */
 const nativeResume = new Set(['claude', 'codex'])
 
 /**

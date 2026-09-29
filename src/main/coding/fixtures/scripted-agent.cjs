@@ -3,7 +3,7 @@
 /*
  * A deterministic stand-in for a coding-agent CLI, used by the coding tests.
  *
- * Douchat starts it exactly as it starts any custom local agent: a real process,
+ * Foundry starts it exactly as it starts any custom local agent: a real process,
  * with the prompt as its argument and the project as its working directory. What
  * it does then is real too — it reads the repository, runs real commands in it
  * and rewrites a real file — but the decisions are scripted, not a model's.

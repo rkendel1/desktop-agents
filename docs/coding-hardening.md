@@ -19,7 +19,7 @@ been run.
 
 ## A dirty repository is the normal case
 
-When a session starts, Douchat records `git status --porcelain` (with untracked files),
+When a session starts, Foundry records `git status --porcelain` (with untracked files),
 `HEAD`, and a fingerprint of every dirty file (a SHA-1 of its bytes; size and time for
 files over 8 MB). When it ends it reads the same things again and reports:
 
@@ -62,7 +62,7 @@ Allow/Deny answer exactly that request once. A request **expires** when
 
 - the session is cancelled while it waits,
 - the session ends by itself (the agent exits, fails, finishes) while it waits,
-- Douchat shuts down (orderly), or crashes — approvals are never written to FeltDB, so a
+- Foundry shuts down (orderly), or crashes — approvals are never written to FeltDB, so a
   restarted app has none, and
 - the session is continued: whatever was pending or reusable before is withdrawn first.
 
@@ -84,23 +84,23 @@ session, Finished / Cancelled / Failed, Continued, Interrupted.
 The activity line comes from three sources and says which:
 
 1. **The agent's own report** (`source: 'agent'`) — a tool it says it is running, or the step a CLI stream reports.
-2. **Douchat's own knowledge** (`source: 'douchat'`) — waiting for your approval, a check Douchat is running, the repository's changes.
+2. **Foundry's own knowledge** (`source: 'douchat'`) — waiting for your approval, a check Foundry is running, the repository's changes.
 3. **The final result** — the agent's last message.
 
 When an agent has reported nothing, the screen says "Running…" and, in words, that this
-agent has not reported step-by-step activity. Douchat does not invent tool calls.
+agent has not reported step-by-step activity. Foundry does not invent tool calls.
 
 ## Continue
 
 Continue never reattaches to an old process.
 
 - Always: *"A new agent process will be started in this project. The previous process will not be resumed."*
-- Claude Code and Codex: their own conversation is picked up again from the native thread id kept in FeltDB, and Douchat provides the project and session context too.
+- Claude Code and Codex: their own conversation is picked up again from the native thread id kept in FeltDB, and Foundry provides the project and session context too.
 - Every other agent: *"Continue will start a new conversation with the existing project/session context."*
 
 ## A crash leaves nothing running
 
-Every agent process and every command Douchat starts is noted in FeltDB (`AgentProcess`:
+Every agent process and every command Foundry starts is noted in FeltDB (`AgentProcess`:
 pid + the operating system's start time for that process) and forgotten when it exits.
 At startup, **before anything else can run**, each note is checked: if that pid is still
 the same process (same start time — a reused pid is not mistaken for it), its whole
@@ -118,10 +118,10 @@ double-forks out of its group is not stopped.
 | Capability | Implemented | Verified with installed CLI | Provider-dependent |
 | --- | --- | --- | --- |
 | Project folder, pinned cwd, Git status/diff, dirty accounting | ✅ | ✅ (real Claude Code, real repo, in the Electron app) | |
-| Approvals for Edit / Bash | ✅ Claude Code, Codex (`app-server`) | ✅ **Claude Code only**. Codex is implemented against its protocol but **was not run live** here. | Other CLIs run without Douchat approvals (see below) |
+| Approvals for Edit / Bash | ✅ Claude Code, Codex (`app-server`) | ✅ **Claude Code only**. Codex is implemented against its protocol but **was not run live** here. | Other CLIs run without Foundry approvals (see below) |
 | Native step-by-step activity | ✅ Claude Code, Codex, Grok, Gemini streams | ✅ Claude Code | Reported by the CLI; custom/other agents report nothing |
 | Native conversation resume on Continue | ✅ Claude Code, Codex | ✅ Claude Code (Continue after a crash) | Others start a new conversation with context |
-| Edits and commands without Douchat approval | — | — | Depends on each CLI's defaults and sandbox; Grok, Cursor and oh-my-pi are read-only by construction |
+| Edits and commands without Foundry approval | — | — | Depends on each CLI's defaults and sandbox; Grok, Cursor and oh-my-pi are read-only by construction |
 | Checks, cancellation, timeouts, big output | ✅ | ✅ (real processes, tests) | |
 | Orphan cleanup after a crash | ✅ Linux, macOS | ✅ Linux | Windows: not implemented |
 | 1,000+ file dirty tree | ✅ | ✅ (1,200 tracked files, edits, deletion, staged rename, nested and spaced untracked files, a multi-MB diff) | |
