@@ -119,7 +119,7 @@ export function createSkillInstallationTools(host: SkillInstallHost): AgentTool[
       const target = await targetFor(args.targetAgentId)
       if (typeof args.source === 'string' && isAbsolute(args.source)) {
         await host.authorize(target, JSON.stringify({ stage: 'Read local skill package for installation preview', source: args.source, targetAgentId: target.id }), signal)
-        targetFor(args.targetAgentId)
+        await targetFor(args.targetAgentId)
       }
       const loaded = await loadSkillSource(args.source, signal)
       const skills = args.skill ? loaded.skills.filter(s => s.name === args.skill) : loaded.skills

@@ -17,7 +17,7 @@ beforeEach(async () => {
   Object.defineProperty(window, 'douchat', { configurable: true, value: { getCustomModels: vi.fn().mockResolvedValue({ providers: [], defaultModel: '' }), listIMChannels: vi.fn().mockResolvedValue([]) } })
   vi.spyOn(window, 'confirm').mockReturnValue(false)
   container = document.createElement('div'); document.body.append(container); root = createRoot(container)
-  await act(async () => root.render(<AgentSettingsDialog agent={agent} localAgents={[]} cloudModels={[]} onUpdate={update} onClose={close} onDelete={vi.fn()} onModelSettings={vi.fn()} onCreditsSettings={vi.fn()} />))
+  await act(async () => root.render(<AgentSettingsDialog agent={agent} localAgents={[]} onUpdate={update} onClose={close} onDelete={vi.fn()} onModelSettings={vi.fn()} />))
 })
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks() })
 async function click(text: string) {

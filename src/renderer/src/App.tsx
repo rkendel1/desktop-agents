@@ -446,7 +446,7 @@ function WorkspaceApp(): ReactElement {
         <MemberProfilePopover anchor={dialog.anchor} onClose={() => setDialog(null)}>
             <button autoFocus className="icon-button member-profile-close" aria-label={t('Close')} onClick={() => setDialog(null)}><X size={18} /></button>
             <ContactCard snapshot={{ ...uiSnapshot, agents: [...uiSnapshot.agents, ...members.filter((member) => !uiSnapshot.agents.some((agent) => agent.id === member.id))] }} readOnly={!uiSnapshot.agents.some((agent) => agent.id === dialog.agentId)} selection={{ kind: 'bot', id: dialog.agentId }}
-              onMessage={(id) => { setDialog(null); openChat(id) }}
+              onMessage={(id) => { setDialog(null); void openChat(id).catch(() => undefined) }}
               onStartDirect={(agentId) => { setDialog(null); void startDirectChat(agentId) }}
               onEditBot={(agent) => setDialog({ kind: 'bot', agent })} onConfigureModel={(agent) => setDialog({ kind: 'local-model', agent })} onConfigureIM={(agent) => setDialog({ kind: 'im-channels', agent })}
               onEditPermissions={(agent) => setDialog({ kind: 'agent-permissions', agent })}

@@ -1,53 +1,5 @@
-# 本地版的架构边界与后续多端准备
+# Local-first architecture
 
-当前版本仍以本机 SQLite 和 Markdown 为数据源。本次调整不启用云端聊天存储、同步、云端执行或 sandbox；已有云模型及消息渠道的联网行为不变。
-
-## 已落实的边界
-
-| 边界 | 当前实现 | 后续扩展点 |
-| --- | --- | --- |
-| 账号数据 | `shared/accountData.ts` 定义异步 `AccountDataApi`；`main/accountData.ts` 的 `LocalAccountData` 适配本地存储 | 为相同数据操作提供经过服务端认证的 HTTP 实现 |
-| 设备能力 | `shared/deviceApi.ts` 的 `DesktopDeviceApi` 单独声明窗口、剪贴板、麦克风、本地文件等能力 | Web/移动端采用各自的平台实现与交互 |
-| Agent 执行 | `shared/agentExecutor.ts` 的 `AgentExecutor`；默认 `desktopAgentExecutor` 包装本机执行 | 通过构造参数注入执行器，保持执行、会话重置、释放走同一适配器 |
-| 数据格式 | SQLite `PRAGMA user_version = 1`，新版本数据拒绝被不支持该版本的应用打开 | 后续增加明确的本地格式迁移 |
-| 身份标识 | 新建自定义联系人和群组使用完整 UUID；消息和新主题原已使用 UUID | 保留旧 ID，迁移时不打断引用 |
-| 编辑版本 | Agent 和会话记录带 `revision`，更新可传 `expectedRevision` 拒绝旧快照 | 后续客户端可使用版本前置条件；这不是跨设备同步协议 |
-
-`DouchatApi` 组合账号数据与设备接口，保持现有 preload/renderer 调用兼容。消息搜索、分页、共享/专属记忆和群记忆的 IPC 已接入 `LocalAccountData`，不再由这些 IPC handler 自行组织数据权限逻辑。
-
-目前 `DouchatApi` 仍包含聊天命令、认证、模型配置等接口；桌面 runtime 的其他存储访问仍使用本地 `DouchatStore`。不要直接把桌面 runtime 单例部署为共享云服务，也不要把原始 store getter 暴露为网络接口。后续随具体功能迁移继续提取其仓储接口，而不是现在模拟一个尚不存在的云后端。
-
-## 账号与异步任务
-
-`captureAccountContext()` 捕获 `ownerId` 和本次进程内账号会话的 `sessionId`。账号切换或登出会使旧上下文失效；切走再切回同一账号也不会重新激活旧上下文。同账号的正常认证刷新不会改变会话标识。
-
-账号数据适配器在每个操作执行前验证上下文，并对会话、Agent 和记忆检查归属。上下文由主进程创建，不接受 renderer 提供的 ownerId，也不是服务端认证凭据。
-
-Agent 回复入队时捕获上下文；开始执行和返回结果时再次验证。旧会话排队任务不再执行，旧执行结果不再作为成功回复返回。已经在外部工具完成的动作不能因此撤销；工具自身的账号检查、取消和权限机制仍然必要。
-
-云服务将来应从认证会话构建请求上下文，为每个任务显式传递用户和执行归属，而不是沿用桌面的全局当前账号。当前实现仍然是单进程桌面账号会话模型，不是多租户服务实现。
-
-## 版本与可读文件
-
-- 数据库首次升级给已有联系人、会话补充缺失的 `revision`，保留原 ID、消息顺序和内容。
-- 后续经存储入口写入联系人、会话时递增记录版本。`expectedRevision` 是可选前置条件；旧调用兼容，不代表全部 UI 表单已经强制版本检查。
-- 记忆继续使用原有 `revision` 和冲突检查。
-- 身份 Markdown 继续用 `expectedSystemFiles` 检查原始内容，能发现应用外编辑；数据库记录版本不能替代文件内容检查。
-- SQLite 格式版本、记录版本、记忆版本各有用途，均不能作为未来全局同步游标。
-- `systemFilesDirectory`、技能目录和本地文件链接属于设备信息。将来同步时必须转成逻辑文档/附件引用，不得直接同步绝对路径或让客户端提交服务器路径。
-
-文件布局详见 [记忆存储](user-memory-files.md)。Markdown 继续作为可读、可编辑的本地文件，不需要提前改成远程对象存储。
-
-## 本地备份与迁移
-
-已有 Agent 导出包用于迁移角色配置和技能，格式版本独立于数据库。它不是完整账号备份，不包含聊天、个人记忆和模型凭据。
-
-目前完整本机备份应在退出 Douchat 后复制应用的整个 userData 目录，而不是只复制 `douchat.db`：资料文件、每日记忆、技能资源、附件以及可能尚未合并的 SQLite WAL 必须一并保存。目录可能包含账号配置和凭据，应作为私有备份保管。不要在运行时用普通文件复制制作一致性快照。CLI 自己管理的登录、工作区和会话不属于该备份范围。
-
-未来增加一键备份时，应统一协调数据库快照与 Markdown 写入，提供明确的格式清单、恢复验证和凭据处理；不要把角色导出包当成完整备份。
-
-## 留到多端版本
-
-账号认证与租户隔离、远端仓储、附件对象存储、离线 outbox、增量游标、删除墓碑、冲突合并、重复请求去重、任务执行权归属、运行中回复恢复、同步开关与数据删除策略均留待多端需求确定后实现。云端任意代码执行及 sandbox 是单独的功能，不是做 Web 界面的前提。
-
-验证覆盖旧库升级、未来格式拒绝打开、完整 UUID、版本冲突、跨账号访问、切走再切回、排队任务失效、执行器注入和生命周期，以及现有聊天、群协作、记忆和本机连接回归。
+This page has moved. The desktop's durable state, its asynchronous repository
+boundary, the renderer projection, shutdown ordering and migration are described
+in [feltdb-architecture.md](feltdb-architecture.md).

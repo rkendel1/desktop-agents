@@ -34,7 +34,7 @@ it('filters human and agent DMs, local and shared groups, unread chats and searc
     render()
   })
   const render = (): void => root.render(<BotInbox snapshot={snapshot} activeId="human" workingIds={new Set()} onSelect={vi.fn()}
-    onCreateBot={vi.fn()} onAddFriend={vi.fn()} onCreateGroup={vi.fn()} onEdit={vi.fn()} onTogglePin={vi.fn()} onDelete={vi.fn()} onUpdate={vi.fn()} onOpenWindow={vi.fn()} onMarkAllRead={onMarkAllRead} />)
+    onCreateBot={vi.fn()} onCreateGroup={vi.fn()} onEdit={vi.fn()} onTogglePin={vi.fn()} onDelete={vi.fn()} onUpdate={vi.fn()} onOpenWindow={vi.fn()} onMarkAllRead={onMarkAllRead} />)
   const trigger = (): HTMLButtonElement => host.querySelector('.inbox-filter-trigger')!
   const addButton = (): HTMLButtonElement => host.querySelector('.sidebar-add')!
   const openFilter = async (): Promise<void> => {

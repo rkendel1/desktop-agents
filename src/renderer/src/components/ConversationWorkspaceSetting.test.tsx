@@ -16,13 +16,13 @@ it('requests the folder picker and clear without an onSnapshot callback, showing
   Object.defineProperty(window, 'douchat', { configurable: true, value: { openConversationWorkspace: open, chooseConversationWorkspace: choose, clearConversationWorkspace: clear } })
   const host = document.createElement('div'); const root = createRoot(host)
   try {
-    await act(async () => root.render(<ConversationWorkspaceSetting conversation={conversation} agents={agents} />))
+    await act(async () => root.render(<ConversationWorkspaceSetting conversation={conversation} />))
     await act(async () => host.querySelector<HTMLButtonElement>('.conversation-workspace-actions button')!.click())
     expect(choose).toHaveBeenCalledWith('direct-codex')
     expect(host.querySelector('.conversation-workspace-path span')!.textContent).toBe('Default')
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Open folder"]')!.click())
     expect(open).toHaveBeenCalledWith('direct-codex')
-    await act(async () => root.render(<ConversationWorkspaceSetting conversation={{ ...conversation, workspacePath: '/Users/me/code/project' }} agents={agents} />))
+    await act(async () => root.render(<ConversationWorkspaceSetting conversation={{ ...conversation, workspacePath: '/Users/me/code/project' }} />))
     expect(host.querySelector('.conversation-workspace-path span')!.textContent).toBe('project')
     expect(host.querySelector('.conversation-workspace-path')!.getAttribute('title')).toBe('/Users/me/code/project')
     await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Use default')!.click())
@@ -34,7 +34,7 @@ it('requests the folder picker and clear without an onSnapshot callback, showing
 it('keeps folder authorization out of workspace settings', async () => {
   const host = document.createElement('div'), root = createRoot(host)
   try {
-    await act(async () => root.render(<ConversationWorkspaceSetting conversation={{ ...conversation, allowedFolders: ['/Users/me/assets'] }} agents={agents} />))
+    await act(async () => root.render(<ConversationWorkspaceSetting conversation={{ ...conversation, allowedFolders: ['/Users/me/assets'] }} />))
     expect(host.textContent).not.toContain('Authorized folders')
     expect(host.textContent).not.toContain('Authorize folder')
     expect(host.textContent).not.toContain('/Users/me/assets')

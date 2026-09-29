@@ -1203,7 +1203,8 @@ describe('DouchatRuntime', () => {
     let finish!: (value: { text: string }) => void
     internal.runReply = () => new Promise(resolve => { finish = resolve })
     const greeting = runtime.greet('direct-lin')
-    await Promise.resolve()
+    // The greeting is generating: wait for that state, not for a number of ticks.
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
     await store.addMessage({ conversationId: 'direct-lin', topicId: topic, authorId: 'user', authorName: 'Me', text: 'Start now', kind: 'message' })
     finish({ text: 'Must not interrupt' })
     await greeting
@@ -1396,7 +1397,7 @@ it('uses the new default model after resetting context while preserving the agen
   const conversation = (await store.conversations()).find(conversation => conversation.type === 'direct' && conversation.agentIds.includes(bot.id))!
   const topicId = (await store.activeTopicId(conversation.id))
   const key = `direct:${conversation.id}:${topicId}`
-  const internals = runtime as unknown as { session: (config: typeof bot, key: string, context: 'direct') => { state: { model: { id: string }; systemPrompt: string } } }
+  const internals = runtime as unknown as { session: (config: typeof bot, key: string, context: 'direct') => Promise<{ state: { model: { id: string }; systemPrompt: string } }> }
   const previous = await internals.session(bot, key, 'direct')
   expect(previous.state.model.id).toBe('mimo-model')
   await runtime.configureCustomModels(records, 'mine/deepseek-flash')

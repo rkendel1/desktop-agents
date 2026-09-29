@@ -158,6 +158,21 @@ describe('record ids', () => {
   })
 })
 
+describe('unbounded reads', () => {
+  it('return every record, not the first hundred FeltDB answers with by default', async () => {
+    const database = await open(join(temporary(), 'felt'))
+    const messages = database.collection<Message>('Message')
+    for (let i = 0; i < 1230; i++) await messages.put(message(`m${i}`, `text ${i}`, i % 2 ? 'odd' : 'even'))
+    expect(await messages.count()).toBe(1230)
+    expect((await messages.all())).toHaveLength(1230)
+    expect((await messages.all()).map(row => row.id).slice(0, 3)).toEqual(['m0', 'm1', 'm2'])
+    expect(await messages.where({ topicId: 'odd' })).toHaveLength(615)
+    expect((await messages.where({ topicId: 'even' }, { order: 'desc', limit: 3 })).map(row => row.id)).toEqual(['m1228', 'm1226', 'm1224'])
+    expect(await messages.deleteWhere({ topicId: 'odd' })).toBe(615)
+    expect(await messages.count()).toBe(615)
+  }, 60_000)
+})
+
 describe('transactions', () => {
   it('commit every staged write together, and read their own staged state', async () => {
     const database = await open(join(temporary(), 'felt'))

@@ -29,7 +29,6 @@ describe('settings panel', () => {
   let root: Root
   let getUsageSummary: ReturnType<typeof vi.fn>
   let openSubscriptionPlans: ReturnType<typeof vi.fn>
-  let onCreditsAvailable: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -38,7 +37,6 @@ describe('settings panel', () => {
     root = createRoot(container)
     getUsageSummary = vi.fn(async () => ({ planName: 'Free', status: 'free', credits: 1611 }))
     openSubscriptionPlans = vi.fn(async () => undefined)
-    onCreditsAvailable = vi.fn()
     Object.defineProperty(window, 'douchat', {
       configurable: true,
       value: { getUsageSummary, openSubscriptionPlans } as Partial<DouchatApi>
@@ -50,38 +48,16 @@ describe('settings panel', () => {
     container.remove()
   })
 
-  async function renderUsage(creditsRefreshToken = 0, creditsAttention = false): Promise<void> {
-    await act(async () => root.render(
-      <SettingsPanel
-        user={{ id: 'user-1', name: 'Ada', email: 'ada@example.com' }}
-        agents={[]}
-        scanning={false}
-        error=""
-        tab="usage"
-        creditsRefreshToken={creditsRefreshToken}
-        creditsAttention={creditsAttention}
-        onCreditsAvailable={onCreditsAvailable}
-        onTab={vi.fn()}
-        onClose={vi.fn()}
-        onSignOut={vi.fn(async () => undefined)}
-        onUpdateProfile={vi.fn(async () => undefined)}
-        onDetect={vi.fn()}
-      />
-    ))
-  }
-
   async function renderGeneral(): Promise<void> {
     await act(async () => root.render(
       <SettingsPanel
-        user={{ id: 'user-1', name: 'Ada', email: 'ada@example.com' }}
+        user={{ name: 'Ada', image: '' }}
         agents={[]}
         scanning={false}
         error=""
         tab="general"
-        creditsRefreshToken={0}
         onTab={vi.fn()}
         onClose={vi.fn()}
-        onSignOut={vi.fn(async () => undefined)}
         onUpdateProfile={vi.fn(async () => undefined)}
         onDetect={vi.fn()}
       />
@@ -91,15 +67,13 @@ describe('settings panel', () => {
   async function renderAgents(agents: LocalAgent[]): Promise<void> {
     await act(async () => root.render(
       <SettingsPanel
-        user={{ id: 'user-1', name: 'Ada', email: 'ada@example.com' }}
+        user={{ name: 'Ada', image: '' }}
         agents={agents}
         scanning={false}
         error=""
         tab="agents"
-        creditsRefreshToken={0}
         onTab={vi.fn()}
         onClose={vi.fn()}
-        onSignOut={vi.fn(async () => undefined)}
         onUpdateProfile={vi.fn(async () => undefined)}
         onDetect={vi.fn()}
       />
@@ -114,7 +88,7 @@ describe('settings panel', () => {
   ): Promise<void> {
     await act(async () => root.render(
       <SettingsPanel
-        user={{ id: 'user-1', name: 'Ada', email: 'ada@example.com' }}
+        user={{ name: 'Ada', image: '' }}
         agents={[]}
         routines={routines}
         workspaceAgents={workspaceAgents}
@@ -122,10 +96,8 @@ describe('settings panel', () => {
         scanning={false}
         error=""
         tab="automation"
-        creditsRefreshToken={0}
         onTab={vi.fn()}
         onClose={vi.fn()}
-        onSignOut={vi.fn(async () => undefined)}
         onUpdateProfile={vi.fn(async () => undefined)}
         onDetect={vi.fn()}
         onSetRoutineEnabled={onSetRoutineEnabled}
@@ -235,15 +207,13 @@ describe('settings panel', () => {
     })
     await act(async () => root.render(
       <SettingsPanel
-        user={{ id: 'user-1', name: 'Ada', email: 'ada@example.com' }}
+        user={{ name: 'Ada', image: '' }}
         agents={[]}
         scanning={false}
         error=""
         tab="about"
-        creditsRefreshToken={0}
         onTab={vi.fn()}
         onClose={vi.fn()}
-        onSignOut={vi.fn(async () => undefined)}
         onUpdateProfile={vi.fn(async () => undefined)}
         onDetect={vi.fn()}
       />

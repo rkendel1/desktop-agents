@@ -800,7 +800,10 @@ export class DouchatRuntime {
   /** Run events arrive in order and are stored in that order; a failure to store one must not stop the turn. */
   private record(sessionKey: string, work: () => Promise<void>): void {
     const previous = this.recording.get(sessionKey) ?? Promise.resolve()
-    this.recording.set(sessionKey, previous.then(work).catch(error => console.error('Could not record run activity', error)))
+    const tail: Promise<void> = previous.then(work).catch(error => console.error('Could not record run activity', error)).finally(() => {
+      if (this.recording.get(sessionKey) === tail) this.recording.delete(sessionKey)
+    })
+    this.recording.set(sessionKey, tail)
   }
 
   /** Everything recorded so far for this session has reached FeltDB. */

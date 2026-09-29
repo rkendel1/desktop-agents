@@ -87,6 +87,8 @@ function strip<T>(row: Stored<T>): T {
   return structuredClone({ ...rest, id: rid ?? rest.id }) as unknown as T
 }
 
+const PAGE = 500
+
 export interface PageRequest {
   where?: { field: string; eq?: unknown; neq?: unknown; lt?: unknown; lte?: unknown; gt?: unknown; gte?: unknown }[]
   order?: 'asc' | 'desc'
@@ -144,19 +146,33 @@ export class Records<T extends { id: string }> {
     return this.collection.count()
   }
 
+  /**
+   * Every match, in write order (or newest first). FeltDB answers a query with
+   * at most 100 records unless told otherwise, so an unbounded read walks the
+   * pages itself; a caller that asks for a `limit` gets just that many.
+   */
+  private async read(where: { field: string; eq: unknown }[], order: 'asc' | 'desc', limit?: number): Promise<T[]> {
+    const rows: Stored<T>[] = []
+    let cursor: string | undefined
+    do {
+      const page = await this.database.db.query<Stored<T>>({
+        collection: this.name, where, orderBy: [{ field: 'seq', direction: order }],
+        limit: limit === undefined ? PAGE : Math.min(PAGE, limit - rows.length), ...(cursor ? { cursor } : {})
+      })
+      rows.push(...page.records)
+      cursor = page.nextCursor
+    } while (cursor && (limit === undefined || rows.length < limit))
+    return rows.map(strip)
+  }
+
   /** Every record, in the order it was first written. */
   async all(): Promise<T[]> {
-    const rows = await this.collection.find({}, { orderBy: [{ field: 'seq', direction: 'asc' }] })
-    return rows.map(strip)
+    return this.read([], 'asc')
   }
 
   /** Records whose fields equal `query`, in write order (or newest first). */
   async where(query: Partial<T>, options: { limit?: number; order?: 'asc' | 'desc' } = {}): Promise<T[]> {
-    const rows = await this.collection.find(query as Partial<Stored<T>>, {
-      orderBy: [{ field: 'seq', direction: options.order ?? 'asc' }],
-      ...(options.limit !== undefined ? { limit: options.limit } : {})
-    })
-    return rows.map(strip)
+    return this.read(Object.entries(query).map(([field, eq]) => ({ field, eq })), options.order ?? 'asc', options.limit)
   }
 
   /** A bounded page through FeltDB's query engine, for range conditions. */

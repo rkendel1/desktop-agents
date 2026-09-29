@@ -50,7 +50,7 @@ describe('interface language preference', () => {
     expect(render()).toContain('my-model (unavailable)')
     expect(render()).not.toMatch(/[\u4e00-\u9fff]/)
     setPreferences({ language: 'zh-CN' })
-    expect(render()).toContain('模型来源')
+    expect(render()).toContain('<span>模型</span>')
     expect(render()).toContain('添加服务商')
     expect(t('Use your own API key. Your model provider handles billing.')).toBe('使用你自己的 API 密钥，费用由模型服务商收取。')
     expect(tr('Edit {name}', { name: 'DeepSeek' })).toBe('编辑 DeepSeek')

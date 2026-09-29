@@ -61,6 +61,13 @@ export class DesktopProjection {
     await this.flushing
   }
 
+  /** Every change announced so far has been turned into a delta and sent. */
+  async settled(): Promise<void> {
+    // Announcements arrive inside the writer's own call, so by now the flush is scheduled; let it start, then wait for it.
+    await Promise.resolve()
+    do { await this.flushing } while (this.scheduled)
+  }
+
   /** Something that lives only in memory changed. */
   ephemeralChanged(): void {
     this.slices.add('ephemeral')

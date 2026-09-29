@@ -167,7 +167,7 @@ export function NativeDialog({ children, onClose, width: _width, height: _height
     const observer = new (view?.ResizeObserver ?? ResizeObserver)(changed)
     observer.observe(content)
     doc.addEventListener('load', changed, true)
-    doc.fonts?.ready.then(() => { if (!stopped) changed() })
+    void doc.fonts?.ready.then(() => { if (!stopped) changed() })
     changed()
     return () => {
       stopped = true
