@@ -46,4 +46,10 @@ describe('messenger surface theme styles', () => {
       /\.settings-modal \.local-proxy-heading,\s*\.settings-modal \.usage-heading \{\s*padding-right: 0;/s
     )
   })
+
+  it('keeps custom-model row controls inside the provider dialog', () => {
+    expect(styles).toMatch(/\.custom-model-inputs \{[^}]*overflow-x: hidden;/s)
+    expect(styles).toMatch(/\.custom-model-input-row > input \{[^}]*min-width: 0;[^}]*width: 100%;/s)
+    expect(styles).toMatch(/\.custom-model-input-row \.custom-model-reasoning input \{[^}]*width: 14px;[^}]*min-width: 14px;/s)
+  })
 })

@@ -566,6 +566,7 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   authorizeTokenDance: () => Promise<string>
   cancelTokenDanceAuthorization: () => Promise<void>
   getCustomModels: () => Promise<CustomModelConfig>
+  detectOllama: () => Promise<CustomProviderInput | null>
   getDecisionSettings: () => Promise<import('./groupDecision').DecisionSettings>
   saveDecisionSettings: (settings: import('./groupDecision').DecisionSettings) => Promise<import('./groupDecision').DecisionSettings>
   testDecisionSettings: (settings: import('./groupDecision').DecisionSettings) => Promise<{ ok: boolean; error?: string }>

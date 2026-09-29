@@ -5,6 +5,29 @@ import { expect, it, vi } from 'vitest'
 vi.mock('./NativeDialog', () => ({ NativeDialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }))
 vi.mock('../preferences', () => ({ usePreferences: () => ({ language: 'zh-CN' }), resolveInterfaceLanguage: (language: string) => language, t: (s: string) => s, tr: (s: string, values: Record<string, string | number>) => Object.entries(values).reduce((text, [key, value]) => text.replaceAll('{'+key+'}', String(value)), s) }))
 import { CustomModelSettings } from './CustomModelSettings'
+it('offers a detected Ollama service with its installed models and no API key', async () => {
+  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  const config = { providers: [], defaultModel: '' }
+  const ollama = { id: 'ollama', name: 'Ollama', kind: 'ollama' as const, apiBase: 'http://127.0.0.1:11434', models: ['llama3.2:latest', 'qwen3:8b'] }
+  const saveCustomModels = vi.fn(async () => ({ providers: [{ ...ollama, hasKey: true }], defaultModel: 'ollama/llama3.2:latest' }))
+  Object.defineProperty(window, 'douchat', { configurable: true, value: {
+    getCustomModels: vi.fn(async () => config), detectOllama: vi.fn(async () => ollama), saveCustomModels,
+    cancelTokenDanceAuthorization: vi.fn(async () => {})
+  } })
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<CustomModelSettings />))
+    const detected = [...container.querySelectorAll('button')].find(button => button.textContent === 'Use detected Ollama')!
+    await act(async () => detected.click())
+    expect([...container.querySelectorAll<HTMLInputElement>('input[aria-label^="Model ID"]')].map(input => input.value)).toEqual(ollama.models)
+    expect(container.querySelector('input[type="password"]')).toBeNull()
+    expect([...container.querySelectorAll('button')].find(button => button.textContent === 'Save')!.disabled).toBe(false)
+    await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(saveCustomModels).toHaveBeenCalledWith([expect.objectContaining(ollama)], 'ollama/llama3.2:latest')
+  } finally { await act(async () => root.unmount()); container.remove() }
+})
+
 it('edits a saved provider, tests with the stored key, and saves multiple model IDs', async () => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   const config = { providers: [{ id: 'mine', name: 'Mine', kind: 'openai', apiBase: 'https://example.com/v1', models: ['one'], hasKey: true }], defaultModel: 'mine/one' }
@@ -63,7 +86,7 @@ it('places TokenDance after OpenRouter, defaults to OAuth, saves the authorized 
     await act(async () => root.render(<CustomModelSettings />))
     await act(async () => button('Add provider').click())
     const preset = container.querySelector<HTMLSelectElement>('.custom-model-fields select')!
-    expect([...preset.options].map(o => o.value)).toEqual(['anthropic', 'openai', 'openrouter', 'tokendance', 'deepseek', 'custom'])
+    expect([...preset.options].map(o => o.value)).toEqual(['anthropic', 'openai', 'openrouter', 'tokendance', 'deepseek', 'ollama', 'custom'])
     for (const id of ['anthropic', 'openai', 'openrouter', 'deepseek']) {
       await select(preset, id)
       expect(container.querySelector('a[target="_blank"]')?.textContent).toContain('Create an API key')

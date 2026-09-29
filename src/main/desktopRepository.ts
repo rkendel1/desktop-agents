@@ -76,7 +76,7 @@ interface SettingRecord { id: string; value: unknown; updatedAt: number }
 /** Non-secret provider configuration. The secret itself is in the credential vault, named by `credentialRef`. */
 export interface ProviderRecord {
   id: string
-  kind: 'openai' | 'anthropic'
+  kind: 'openai' | 'anthropic' | 'ollama'
   name: string
   config: { apiBase: string; models: string[]; modelLabels?: Record<string, string>; reasoningModels?: string[] }
   credentialRef?: string

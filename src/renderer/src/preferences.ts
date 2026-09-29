@@ -195,6 +195,8 @@ const translations: Record<string, string> = {
   "No providers yet": "尚未添加服务商",
   "Add a provider to create agents with your own models.": "添加服务商后，即可使用自己的模型创建智能体。",
   "Supports OpenAI Chat Completions and Anthropic Messages": "支持 OpenAI Chat Completions 和 Anthropic Messages",
+  "Supports Ollama, OpenAI Chat Completions and Anthropic Messages": "支持 Ollama、OpenAI Chat Completions 和 Anthropic Messages",
+  "Use detected Ollama": "使用检测到的 Ollama",
   "Save this provider to keep the new credential on this device.": "保存服务商后，新凭证会加密保存在本机。",
   "Your saved credential is ready to use. Authorize again only to replace it.": "可直接使用已保存的凭证；如需更换，可重新授权。",
   "Continue in your browser. No API key to copy.": "在浏览器中完成授权，无需复制 API Key。",

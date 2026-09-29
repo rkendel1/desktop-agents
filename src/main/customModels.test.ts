@@ -5,7 +5,7 @@ import { CredentialVault } from './credentialVault'
 import { createTestDesktop, disposeTestDesktops } from './testSupport'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createModels } from '@earendil-works/pi-ai'
-import { CustomModelStore, customModelProvider } from './customModels'
+import { CustomModelStore, customModelProvider, detectOllama } from './customModels'
 import { customEndpoint } from '../shared/customModels'
 const folders: string[] = []
 async function setup() {
@@ -42,10 +42,31 @@ it('survives a restart with configuration in FeltDB and the key in the vault', a
   expect((await reopened.list())).toMatchObject({ defaultModel: 'example/org/model', providers: [{ id: 'example', hasKey: true }] })
   expect((await reopened.records())[0].apiKey).toBe(provider.apiKey)
 })
+it('detects installed Ollama models and ignores unavailable or empty services', async () => {
+  const request = vi.fn(async () => new Response(JSON.stringify({ models: [{ name: 'llama3.2:latest' }, { model: 'qwen3:8b' }, { name: 'llama3.2:latest' }] })))
+  await expect(detectOllama(request)).resolves.toEqual({ id: 'ollama', name: 'Ollama', kind: 'ollama', apiBase: 'http://127.0.0.1:11434', models: ['llama3.2:latest', 'qwen3:8b'] })
+  expect(request).toHaveBeenCalledWith('http://127.0.0.1:11434/api/tags', expect.objectContaining({ redirect: 'error' }))
+  await expect(detectOllama(async () => new Response(JSON.stringify({ models: [] })))).resolves.toBeNull()
+  await expect(detectOllama(async () => { throw new Error('offline') })).resolves.toBeNull()
+})
+it('persists and loads Ollama without a credential', async () => {
+  const { store, vault, desktop } = await setup()
+  const ollama = { id: 'ollama', name: 'Ollama', kind: 'ollama' as const, apiBase: 'http://127.0.0.1:11434', models: ['llama3.2'] }
+  expect(await store.save([ollama], 'ollama/llama3.2')).toMatchObject({ providers: [{ id: 'ollama', hasKey: true }], defaultModel: 'ollama/llama3.2' })
+  expect(vault.has('provider:ollama')).toBe(false)
+  expect((await desktop.repository.providers())[0].credentialRef).toBeUndefined()
+  expect((await store.records())[0]).toMatchObject({ ...ollama, apiKey: '' })
+  await store.save([{ ...provider, id: 'ollama' }], 'ollama/org/model')
+  expect(vault.has('provider:ollama')).toBe(true)
+  await store.save([ollama], 'ollama/llama3.2')
+  expect(vault.has('provider:ollama')).toBe(false)
+  await expect(store.save([{ ...provider, id: 'ollama', apiKey: undefined }], '')).rejects.toThrow(/API key/)
+})
 it('normalizes complete and versioned endpoints without duplicate v1', () => {
   expect(customEndpoint('https://example.com/v1/', 'openai')).toBe('https://example.com/v1/chat/completions')
   expect(customEndpoint('https://example.com/v1/chat/completions', 'openai')).toBe('https://example.com/v1/chat/completions')
   expect(customEndpoint('https://example.com/anthropic', 'anthropic')).toBe('https://example.com/anthropic/v1/messages')
+  expect(customEndpoint('', 'ollama')).toBe('http://127.0.0.1:11434/v1/chat/completions')
 })
 it('tests with a saved key, blocks changed destinations, and does not echo upstream secrets', async () => {
   const { store } = await setup(); await store.save([provider], '')
@@ -59,7 +80,7 @@ it('tests with a saved key, blocks changed destinations, and does not echo upstr
   request.mockImplementation(async () => new Response(provider.apiKey, { status: 401 }))
   expect(JSON.stringify(await store.test({ provider, model: 'org/model' }))).not.toContain(provider.apiKey)
 })
-it.each(['openai', 'anthropic'] as const)('registers %s models with the configured key and endpoint', async kind => {
+it.each(['openai', 'anthropic', 'ollama'] as const)('registers %s models with the configured key and endpoint', async kind => {
   const models = createModels()
   models.setProvider(customModelProvider({ ...provider, kind }))
   const model = models.getModel('custom:example', 'org/model')!

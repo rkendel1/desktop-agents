@@ -3,11 +3,11 @@ import * as openai from '@earendil-works/pi-ai/api/openai-completions'
 import * as anthropic from '@earendil-works/pi-ai/api/anthropic-messages'
 import type { DesktopRepository, ProviderRecord } from './desktopRepository'
 import type { CredentialVault } from './credentialVault'
-import { CUSTOM_PROVIDER_PREFIX, customEndpoint, type CustomProviderInput, type CustomModelConfig, type CustomModelTest } from '../shared/customModels'
+import { CUSTOM_PROVIDER_PREFIX, customEndpoint, providerRequiresApiKey, type CustomProviderInput, type CustomModelConfig, type CustomModelTest } from '../shared/customModels'
 export interface CustomProviderRecord extends CustomProviderInput { apiKey: string }
 export function validateCustomProvider(input: CustomProviderInput): CustomProviderInput {
   if (!input || typeof input.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(input.id)) throw new Error("Invalid provider ID.")
-  if (input.kind !== 'openai' && input.kind !== 'anthropic') throw new Error("Select an API type.")
+  if (input.kind !== 'openai' && input.kind !== 'anthropic' && input.kind !== 'ollama') throw new Error("Select an API type.")
   if (typeof input.name !== 'string' || !input.name.trim()) throw new Error("Enter a provider name.")
   if (typeof input.apiBase !== 'string' || (input.apiKey !== undefined && typeof input.apiKey !== 'string')) throw new Error("Invalid configuration format.")
   const endpoint = new URL(customEndpoint(input.apiBase, input.kind))
@@ -29,13 +29,13 @@ export class CustomModelStore {
   async list(): Promise<CustomModelConfig> {
     return {
       defaultModel: (await this.repository.setting<string>('defaultModel')) ?? '',
-      providers: (await this.repository.providers()).map(record => ({ id: record.id, name: record.name, kind: record.kind, ...record.config, hasKey: this.vault.has(record.credentialRef ?? this.reference(record.id)) }))
+      providers: (await this.repository.providers()).map(record => ({ id: record.id, name: record.name, kind: record.kind, ...record.config, hasKey: !providerRequiresApiKey(record.kind) || this.vault.has(record.credentialRef ?? this.reference(record.id)) }))
     }
   }
   async records(): Promise<CustomProviderRecord[]> {
     return (await this.repository.providers()).flatMap(record => {
-      const apiKey = this.secret(record.id)
-      return apiKey ? [{ id: record.id, name: record.name, kind: record.kind, ...record.config, apiKey }] : []
+      const apiKey = this.secret(record.id) ?? ''
+      return apiKey || !providerRequiresApiKey(record.kind) ? [{ id: record.id, name: record.name, kind: record.kind, ...record.config, apiKey }] : []
     })
   }
   async save(inputs: CustomProviderInput[], defaultModel: string): Promise<CustomModelConfig> {
@@ -43,11 +43,13 @@ export class CustomModelStore {
     const old = new Map((await this.repository.providers()).map(record => [record.id, record]))
     const staged: { record: ProviderRecord; apiKey?: string }[] = inputs.map(validateCustomProvider).map(({ apiKey, ...p }) => {
       const previous = old.get(p.id)
+      const sameDestination = previous && customEndpoint(previous.config.apiBase, previous.kind) === customEndpoint(p.apiBase, p.kind)
+      const canReuseKey = providerRequiresApiKey(p.kind) && sameDestination && Boolean(previous.credentialRef && this.vault.has(previous.credentialRef))
       // Never forward a stored key to a changed endpoint without explicit re-entry.
-      if (!apiKey && previous && (customEndpoint(previous.config.apiBase, previous.kind) !== customEndpoint(p.apiBase, p.kind))) throw new Error("The API URL changed. Enter the API key again.")
-      if (!apiKey && !this.vault.has(this.reference(p.id))) throw new Error("Enter an API key.")
+      if (providerRequiresApiKey(p.kind) && !apiKey && previous && !sameDestination) throw new Error("The API URL changed. Enter the API key again.")
+      if (providerRequiresApiKey(p.kind) && !apiKey && !canReuseKey) throw new Error("Enter an API key.")
       const { id, name, kind, ...config } = p
-      return { apiKey, record: { id, name, kind, config, credentialRef: this.reference(id), updatedAt: Date.now() } }
+      return { apiKey, record: { id, name, kind, config, ...(providerRequiresApiKey(kind) ? { credentialRef: this.reference(id) } : {}), updatedAt: Date.now() } }
     })
     if (new Set(staged.map(item => item.record.id)).size !== staged.length) throw new Error("Duplicate provider IDs.")
     const choices = staged.flatMap(item => item.record.config.models.map(m => `${item.record.id}/${m}`))
@@ -55,7 +57,7 @@ export class CustomModelStore {
     for (const item of staged) if (item.apiKey) this.vault.set(item.record.credentialRef!, item.apiKey)
     // The providers and the default model commit together.
     await this.repository.replaceProviders(staged.map(item => item.record), choices.includes(defaultModel) ? defaultModel : choices[0] ?? '')
-    for (const id of old.keys()) if (!staged.some(item => item.record.id === id)) this.vault.delete(this.reference(id))
+    for (const id of old.keys()) if (!staged.some(item => item.record.id === id && item.record.credentialRef)) this.vault.delete(this.reference(id))
     return this.list()
   }
   async test(input: CustomModelTest): Promise<{ ok: boolean; error?: string; model?: string }> {
@@ -64,11 +66,11 @@ export class CustomModelStore {
     const saved = (await this.repository.providers()).find(item => item.id === p.id)
     const canReuse = saved && customEndpoint(saved.config.apiBase, saved.kind) === customEndpoint(p.apiBase, p.kind)
     const key = p.apiKey || (canReuse ? this.secret(p.id) ?? '' : '')
-    if (!key) return { ok: false, error: '请输入 API 密钥；地址修改后需要重新输入。' }
+    if (providerRequiresApiKey(p.kind) && !key) return { ok: false, error: '请输入 API 密钥；地址修改后需要重新输入。' }
     try {
       const res = await fetch(customEndpoint(p.apiBase, p.kind), {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20000),
-        headers: p.kind === 'anthropic' ? { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' } : { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        headers: p.kind === 'anthropic' ? { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' } : p.kind === 'ollama' ? { 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model: input.model, max_tokens: 16, messages: [{ role: 'user', content: 'Hi' }] })
       })
       if (!res.ok) return { ok: false, error: `连接失败（HTTP ${res.status}），请检查地址、密钥和模型权限。` }
@@ -88,7 +90,19 @@ export function customModelProvider(p: CustomProviderRecord): Provider {
     compat: { maxTokensField: 'max_tokens' }
   })) as Model<any>[]
   return createProvider({ id, name: p.name, baseUrl, models,
-    auth: { apiKey: { name: p.name, resolve: async () => ({ auth: { apiKey: p.apiKey }, source: 'custom model settings' }) } },
+    auth: { apiKey: { name: p.name, resolve: async () => ({ auth: { apiKey: p.kind === 'ollama' ? 'ollama' : p.apiKey }, source: 'custom model settings' }) } },
     api: p.kind === 'anthropic' ? anthropic : openai
   }) as Provider
+}
+
+/** Detect the standard local Ollama service and return its installed chat models. */
+export async function detectOllama(request: typeof fetch = fetch): Promise<CustomProviderInput | null> {
+  try {
+    const response = await request('http://127.0.0.1:11434/api/tags', { redirect: 'error', signal: AbortSignal.timeout(2500) })
+    if (!response.ok) return null
+    const data = await response.json() as { models?: Array<{ name?: unknown; model?: unknown }> }
+    const models = [...new Set((data.models ?? []).map(item => typeof item.name === 'string' ? item.name : typeof item.model === 'string' ? item.model : '').map(name => name.trim()).filter(name => name.length > 0 && name.length <= 200))].slice(0, 100)
+    if (!models.length) return null
+    return { id: 'ollama', name: 'Ollama', kind: 'ollama', apiBase: 'http://127.0.0.1:11434', models }
+  } catch { return null }
 }

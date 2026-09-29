@@ -6714,13 +6714,13 @@ html.native-dialog-window,
   .custom-model-default select { max-width: 100%; width: 100%; }
   .messenger :is(.custom-model-form, .custom-model-delete) .modal-footer button { padding-inline: 12px; }
 }
-.custom-model-inputs { display: grid; gap: 8px; max-height: 208px; overflow-y: auto; padding: 3px; margin: -3px; }
+.custom-model-inputs { display: grid; gap: 8px; max-height: 208px; overflow-x: hidden; overflow-y: auto; padding: 3px; margin: -3px; }
 .custom-model-input-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto 32px; align-items: center; gap: 8px; }
-.custom-model-input-row input { flex: 1; }
+.custom-model-input-row > input { min-width: 0; width: 100%; }
 .custom-model-input-row .custom-model-reasoning { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); white-space: nowrap; cursor: pointer; }
-.custom-model-input-row .custom-model-reasoning input { flex: none; margin: 0; }
+.custom-model-input-row .custom-model-reasoning input { flex: none; width: 14px; min-width: 14px; height: 14px; margin: 0; padding: 0; }
 .local-model-thinking-note { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
-.custom-model-input-row .icon-button { flex: 0 0 32px; color: var(--muted); }
+.custom-model-input-row .icon-button { width: 32px; min-width: 32px; padding: 0; color: var(--muted); }
 .custom-model-add { display: inline-flex; align-items: center; justify-self: start; gap: 6px; padding: 6px 0; border: 0; background: transparent; color: var(--brand); font: inherit; font-size: 12px; cursor: pointer; }
 
 /* Compact run-source selector: cloud, custom model, local agent. */
