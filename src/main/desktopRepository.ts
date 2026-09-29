@@ -5,9 +5,9 @@ import { lstat, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
-  AgentConfig, AttentionItem, ChatMessage, Conversation, CreateGroupInput, CreateRoutineInput, EmailConnectorAccount, MessageAttachment,
+  AgentConfig, AttentionItem, ChatMessage, CodingSession, Conversation, CreateGroupInput, CreateRoutineInput, EmailConnectorAccount, MessageAttachment,
   MessageDeliveryReply, PrivateMessage, ResolvedCreateAgentInput, Routine, RunEvent, RunStatus, TaskRun, Topic,
-  UpdateAgentInput, UpdateConversationInput
+  Project, UpdateAgentInput, UpdateConversationInput
 } from '../shared/types'
 import { normalizeAgentEmoji } from '../shared/avatar'
 import { thinkingLevel } from '../shared/thinkingLevels'
@@ -20,14 +20,17 @@ import type { GroupWorkflow } from '../shared/groupWorkflow'
 import { mediaName, MAX_IM_FILE_BYTES, IMMediaError } from './imMedia'
 import { DESKTOP_SCHEMA_VERSION, FeltDatabase, FeltDatabaseError, type Batch, type RecordChange, type Records } from './felt/database'
 import {
-  agentFromRecord, agentToRecord, conversationFromParts, conversationParts, eventFromRecord, eventToRecord, messageFromRecord,
+  agentFromRecord, agentToRecord, codingSessionFromRecord, codingSessionToRecord, projectFromRecord, conversationFromParts, conversationParts, eventFromRecord, eventToRecord, messageFromRecord,
   messageToRecord, privateMessageFromRecord, privateMessageToRecord, routineFromRecord, routineToRecord, runFromRecord, runToRecord,
-  type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type ExecutionEventRecord, type GroupMemberRecord, type GroupRecord,
+  type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CodingSessionRecord, type ExecutionEventRecord, type GroupMemberRecord, type GroupRecord,
   type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord, type SessionRecord, type TopicRecord, type WorkspaceRecord
 } from './felt/records'
 import { MemoryRepository, type MemoryRecord } from './memoryRepository'
 
 export { DESKTOP_SCHEMA_VERSION }
+
+/** A folder's id: the same path is always the same workspace (and project). */
+export const workspaceId = (path: string): string => `workspace-${createHash('sha256').update(path).digest('hex').slice(0, 32)}`
 export type { RecordChange }
 
 const DEFAULT_TOPIC_ID = 'main'
@@ -145,6 +148,7 @@ export class DesktopRepository {
   private readonly agentRows: Records<AgentRecord>
   private readonly profiles: Records<AgentProfileRecord>
   private readonly workspaces: Records<WorkspaceRecord>
+  private readonly codingRows: Records<CodingSessionRecord>
   private readonly sessions: Records<SessionRecord>
   private readonly topics: Records<TopicRecord>
   private readonly groups: Records<GroupRecord>
@@ -177,6 +181,7 @@ export class DesktopRepository {
     this.agentRows = felt.collection('Agent')
     this.profiles = felt.collection('AgentProfile')
     this.workspaces = felt.collection('Workspace')
+    this.codingRows = felt.collection('CodingSession')
     this.sessions = felt.collection('Session')
     this.topics = felt.collection('Topic')
     this.groups = felt.collection('Group')
@@ -249,6 +254,7 @@ export class DesktopRepository {
     if (!existing) await this.desktop.put({ id: 'local', schemaVersion: DESKTOP_SCHEMA_VERSION, createdAt: Date.now() })
     if (seedDemo && !(await this.setting('demoSeeded'))) await this.seedDemo()
     await this.recoverInterruptedRuns()
+    await this.recoverInterruptedCodingSessions()
   }
 
   // ───────────────────────────── settings ─────────────────────────────
@@ -413,7 +419,7 @@ export class DesktopRepository {
     if (!path) return undefined
     const existing = (await this.workspaces.where({ path }))[0]
     if (existing) return existing.id
-    const record: WorkspaceRecord = { id: `workspace-${createHash('sha256').update(path).digest('hex').slice(0, 32)}`, path, createdAt: Date.now() }
+    const record: WorkspaceRecord = { id: workspaceId(path), path, createdAt: Date.now() }
     await batch.put(this.workspaces, record)
     return record.id
   }
@@ -1372,6 +1378,106 @@ export class DesktopRepository {
 
   async runEventsFor(runId: string): Promise<RunEvent[]> {
     return (await this.eventRows.where({ runId })).map(eventFromRecord)
+  }
+
+  // ───────────────────────────── projects and coding sessions ─────────────────────────────
+  // A project is a folder Douchat may work in; the folder itself stays the authority for its files.
+  // Nothing here stores source code, only that the project and the session exist and what they produced.
+
+  async projects(): Promise<Project[]> {
+    return (await this.workspaces.all()).filter(record => record.name !== undefined).map(projectFromRecord)
+  }
+
+  async project(id: string): Promise<Project | undefined> {
+    const record = await this.workspaces.get(id)
+    return record?.name !== undefined ? projectFromRecord(record) : undefined
+  }
+
+  /** The same folder is always the same project, so adding it again updates rather than duplicates. */
+  addProject(input: { path: string; name: string; isGit: boolean; testCommand?: string[] }): Promise<Project> {
+    return this.exclusive(async () => {
+      const existing = (await this.workspaces.where({ path: input.path }))[0]
+      const now = Date.now()
+      const record: WorkspaceRecord = { ...(existing ?? { id: workspaceId(input.path), path: input.path, createdAt: now }),
+        name: input.name.trim() || basename(input.path), isGit: input.isGit, updatedAt: now,
+        ...(input.testCommand ? { testCommand: input.testCommand } : {}) }
+      if (!input.testCommand) delete record.testCommand
+      await this.workspaces.put(record)
+      return projectFromRecord(record)
+    })
+  }
+
+  setProjectTestCommand(id: string, testCommand: string[] | undefined): Promise<Project | undefined> {
+    return this.exclusive(async () => {
+      const record = await this.workspaces.get(id)
+      if (record?.name === undefined) return undefined
+      const next: WorkspaceRecord = { ...record, updatedAt: Date.now() }
+      if (testCommand) next.testCommand = testCommand
+      else delete next.testCommand
+      await this.workspaces.put(next)
+      return projectFromRecord(next)
+    })
+  }
+
+  /** Stops being a project. Chats that used the folder keep their workspace; sessions keep their history. */
+  removeProject(id: string): Promise<boolean> {
+    return this.exclusive(async () => {
+      const record = await this.workspaces.get(id)
+      if (record?.name === undefined) return false
+      if ((await this.codingRows.where({ workspaceId: id })).some(row => row.status === 'running')) throw new Error('This project has a coding session that is still running.')
+      const { name: _name, isGit: _isGit, testCommand: _test, ...rest } = record
+      await this.workspaces.put({ ...rest, updatedAt: Date.now() })
+      return true
+    })
+  }
+
+  async codingSessions(projectId?: string): Promise<CodingSession[]> {
+    const rows = projectId ? await this.codingRows.where({ workspaceId: projectId }) : await this.codingRows.all()
+    return rows.map(codingSessionFromRecord)
+  }
+
+  async codingSession(id: string): Promise<CodingSession | undefined> {
+    const record = await this.codingRows.get(id)
+    return record ? codingSessionFromRecord(record) : undefined
+  }
+
+  createCodingSession(input: Omit<CodingSession, 'id' | 'createdAt' | 'changes' | 'commands'> & { changes?: CodingSession['changes']; commands?: CodingSession['commands'] }): Promise<CodingSession> {
+    const session: CodingSession = { changes: [], commands: [], ...input, id: randomUUID(), createdAt: Date.now() }
+    return this.exclusive(async () => {
+      if (!(await this.project(session.projectId))) throw new Error('Project not found')
+      await this.codingRows.put(codingSessionToRecord(session))
+      return session
+    })
+  }
+
+  /** Patch a session. A finished session stays finished: a late update cannot revive it. */
+  updateCodingSession(id: string, patch: Partial<Omit<CodingSession, 'id' | 'projectId' | 'createdAt'>>): Promise<CodingSession | undefined> {
+    return this.exclusive(async () => {
+      const record = await this.codingRows.get(id)
+      if (!record) return undefined
+      const current = codingSessionFromRecord(record)
+      if (current.status !== 'running' && patch.status === 'running') return current
+      const next: CodingSession = { ...current, ...patch }
+      await this.codingRows.put(codingSessionToRecord(next))
+      return next
+    })
+  }
+
+  /**
+   * Sessions still marked running when the app starts belong to a process that no
+   * longer exists. They become `interrupted`; their history and changes stay.
+   */
+  recoverInterruptedCodingSessions(now = Date.now()): Promise<CodingSession[]> {
+    return this.exclusive(async () => {
+      const interrupted = (await this.codingRows.all()).filter(row => row.status === 'running')
+      const recovered: CodingSession[] = []
+      for (const row of interrupted) {
+        const next: CodingSession = { ...codingSessionFromRecord(row), status: 'interrupted', finishedAt: now, error: 'The app closed while this coding session was running. Its process did not survive.' }
+        await this.codingRows.put(codingSessionToRecord(next))
+        recovered.push(next)
+      }
+      return recovered
+    })
   }
 
   // ───────────────────────────── runtime bindings ─────────────────────────────

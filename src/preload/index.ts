@@ -118,6 +118,14 @@ const api: DouchatApi = {
     ipcRenderer.on('douchat:update-state', handler)
     return () => ipcRenderer.removeListener('douchat:update-state', handler)
   },
+  listProjects: () => ipcRenderer.invoke('douchat:list-projects'),
+  chooseProject: () => ipcRenderer.invoke('douchat:choose-project'),
+  removeProject: (id) => ipcRenderer.invoke('douchat:remove-project', id),
+  projectGitStatus: (id) => ipcRenderer.invoke('douchat:project-git-status', id),
+  projectGitDiff: (id, path) => ipcRenderer.invoke('douchat:project-git-diff', id, path),
+  listCodingSessions: (projectId) => ipcRenderer.invoke('douchat:list-coding-sessions', projectId),
+  startCodingSession: (input) => ipcRenderer.invoke('douchat:start-coding-session', input),
+  cancelCodingSession: (id) => ipcRenderer.invoke('douchat:cancel-coding-session', id),
   onProjection: (listener: (delta: ProjectionDelta) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, delta: ProjectionDelta): void => listener(delta)
     ipcRenderer.on('douchat:projection', handler)

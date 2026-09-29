@@ -43,6 +43,7 @@ import type {
 import { LocalComputerProvider } from './computer'
 import { DouchatRuntime } from './runtime'
 import { RoutineScheduler } from './scheduler'
+import { CodingService } from './coding/service'
 import { DesktopRepository } from './desktopRepository'
 import { DesktopProjection } from './projection'
 import { addCustomLocalAgent, configureLocalAgentRegistry, detectLocalAgents, removeCustomLocalAgent, updateLocalAgent, validateLocalAgent } from './localAgents'
@@ -193,6 +194,7 @@ let scheduler: RoutineScheduler
 let updater: DesktopUpdater
 let emailConnectors: EmailConnectorManager
 let projection: DesktopProjection
+let coding: CodingService
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
@@ -447,6 +449,7 @@ app.whenReady().then(async () => {
   runtime.setInterfaceLanguage(app.getLocale())
   scheduler = new RoutineScheduler(store, runtime)
   runtime.setRoutineCreator((input) => scheduler.createRoutine(input))
+  coding = new CodingService(store, runtime)
   const updateDriver = app.isPackaged
     ? electronUpdater.autoUpdater as unknown as UpdateDriver
     : undefined
@@ -942,6 +945,41 @@ app.whenReady().then(async () => {
     await requireAgent(agentId)
     await computer.stop(agentId)
   })
+  // Projects and coding sessions: a folder agents work in, and what they did there. Read-only views of the
+  // repository (status, diff) are offered; running a command line is not something the renderer can ask for.
+  ipcMain.handle('douchat:list-projects', () => store.projects())
+  ipcMain.handle('douchat:choose-project', async (event) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    if (process.platform === 'darwin') app.focus({ steal: true })
+    BrowserWindow.fromWebContents(event.sender)?.focus()
+    const result = await dialog.showOpenDialog({ title: ui('Choose a project folder', '选择项目文件夹'), buttonLabel: ui('Use this project', '使用此项目'), properties: ['openDirectory'] })
+    if (result.canceled || !result.filePaths[0]) return undefined
+    return coding.addProject(result.filePaths[0])
+  })
+  ipcMain.handle('douchat:remove-project', (event, id: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
+    return store.removeProject(id)
+  })
+  ipcMain.handle('douchat:project-git-status', (event, id: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
+    return coding.gitStatus(id)
+  })
+  ipcMain.handle('douchat:project-git-diff', (event, id: unknown, path?: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (path !== undefined && typeof path !== 'string')) throw new Error('Unauthorized')
+    return coding.gitDiff(id, path as string | undefined)
+  })
+  ipcMain.handle('douchat:list-coding-sessions', (event, projectId?: unknown) => {
+    if (!isDouchatRenderer(event.sender) || (projectId !== undefined && typeof projectId !== 'string')) throw new Error('Unauthorized')
+    return store.codingSessions(projectId as string | undefined)
+  })
+  ipcMain.handle('douchat:start-coding-session', (event, input: { projectId?: unknown; agentId?: unknown; task?: unknown }) => {
+    if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.agentId !== 'string' || typeof input.task !== 'string') throw new Error('Unauthorized')
+    return coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task })
+  })
+  ipcMain.handle('douchat:cancel-coding-session', (event, id: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
+    return coding.cancel(id)
+  })
   ipcMain.handle('douchat:show-computer', async (_event, agentId: string) => {
     await requireAgent(agentId)
     await computer.show(agentId)
@@ -990,11 +1028,14 @@ app.on('before-quit', (event) => {
     cancelLocalModelQueries()
     runtime?.stopAccepting()
     imChannels?.stop()
+    // Coding sessions first, so each records how it ended before FeltDB closes.
+    await coding?.cancelAll().catch(() => undefined)
     runtime?.cancelAll()
     if (localWorkBlocker !== undefined) { powerSaveBlocker.stop(localWorkBlocker); localWorkBlocker = undefined }
     computer?.dispose()
     try {
       await scheduler?.dispose()
+      await coding?.idle()
       await runtime?.games.settled()
       await runtime?.idle()
       await projection?.stop()

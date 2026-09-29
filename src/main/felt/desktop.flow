@@ -48,7 +48,34 @@ app desktop {
     id: text
     path: text
     createdAt: integer
+    name: text?
+    isGit: boolean?
+    testCommand: json?
+    updatedAt: integer?
     index by_path using index path
+  }
+
+  collection CodingSession {
+    id: text
+    workspaceId: text
+    agentId: text
+    sessionId: text
+    topicId: text
+    cwd: text
+    task: text
+    status: text
+    createdAt: integer
+    startedAt: integer?
+    finishedAt: integer?
+    runId: text?
+    error: text?
+    result: text?
+    baseline: json?
+    changes: json?
+    commands: json?
+    index by_workspace using index workspaceId
+    index by_agent using index agentId
+    index by_session using index sessionId
   }
 
   collection RuntimeBinding {
