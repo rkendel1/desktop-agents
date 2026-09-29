@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, readdirSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, readdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DesktopStartupError, startDesktop, stopDesktop } from './desktop'
 import { DesktopRepository } from './desktopRepository'
 import { migrateLegacyState } from './legacy/migrate'
+import { addCustomLocalAgent, detectLocalAgents, removeCustomLocalAgent } from './localAgents'
 import type { SecretCodec } from './credentialVault'
 
 const roots: string[] = []
@@ -129,5 +130,37 @@ describe('legacy migration', () => {
     for (const entry of readdirSync(desktop.databaseDirectory, { withFileTypes: true })) {
       if (entry.isFile()) expect(readFileSync(join(desktop.databaseDirectory, entry.name), 'utf8')).not.toContain('sk-secret-value')
     }
+  })
+})
+
+describe('custom local agents', () => {
+  it('are kept in FeltDB and survive a restart', async () => {
+    const root = userData()
+    const first = await startDesktop({ userData: root, codec })
+    await addCustomLocalAgent({ name: 'My CLI', command: process.execPath, args: ['--flag'] })
+    expect(await first.repository.localAgentDefinitions()).toEqual([expect.objectContaining({ name: 'My CLI', command: process.execPath, args: ['--flag'] })])
+    await stopDesktop(first)
+    expect(existsSync(join(root, 'local-agents.json'))).toBe(false)
+    const second = await startDesktop({ userData: root, codec })
+    try {
+      const agents = await detectLocalAgents({ executable: async () => undefined, desktopApp: async () => undefined, version: async () => undefined })
+      expect(agents.find(agent => agent.name === 'My CLI')).toMatchObject({ custom: true, command: process.execPath })
+    } finally { await stopDesktop(second) }
+  })
+
+  it('import local-agents.json once, leave the file alone, and do not resurrect removed agents', async () => {
+    const root = userData()
+    const id = 'custom:11111111-1111-4111-8111-111111111111'
+    const file = join(root, 'local-agents.json')
+    const original = JSON.stringify([{ id, name: 'Old CLI', command: process.execPath, args: [] }], null, 2)
+    writeFileSync(file, original)
+    const first = await startDesktop({ userData: root, codec })
+    expect((await first.repository.localAgentDefinitions()).map(item => item.id)).toEqual([id])
+    await removeCustomLocalAgent(id)
+    await stopDesktop(first)
+    expect(readFileSync(file, 'utf8')).toBe(original)
+    const second = await startDesktop({ userData: root, codec })
+    try { expect(await second.repository.localAgentDefinitions()).toEqual([]) }
+    finally { await stopDesktop(second) }
   })
 })

@@ -46,7 +46,9 @@ export function AgentPermissionsDialog({ agent, onClose, onSave }: {
   </NativeDialog>
 }
 
-export function AgentPermissionPrompt({ request, agent, onResolve }: { request: PermissionRequest; agent?: AgentConfig; onResolve: (allow: PermissionApproval) => Promise<void> }): ReactElement {
+export interface CodingContext { projectName: string; path: string; task: string; onCancelSession: () => void }
+
+export function AgentPermissionPrompt({ request, agent, coding, onResolve }: { request: PermissionRequest; agent?: AgentConfig; coding?: CodingContext; onResolve: (allow: PermissionApproval) => Promise<void> }): ReactElement {
   const contact = agent?.id === request.agentId ? agent : undefined
   let native: { tool?: string; input?: { command?: string }; arguments?: { command?: string; app?: string } } | undefined
   try { native = JSON.parse(request.details) } catch { /* Plain-text requests remain visible. */ }
@@ -78,6 +80,10 @@ export function AgentPermissionPrompt({ request, agent, onResolve }: { request: 
         <UserAvatar src="" name={requesterName} size={32} />
         <span className="permission-requester-copy"><small className="muted">{t('Requested by')}</small><strong>{requesterName}</strong></span>
       </div> : <p className="muted" title={request.requesterId}>{t('Requested by')}: {requesterName} · {t('Agent')}</p>)}
+      {coding && <div className="permission-coding" aria-label={t('Coding session')}>
+        <p className="muted">{t('Coding session')}: {coding.task}</p>
+        <p className="muted">{t('Project')}: <strong>{coding.projectName}</strong> · <code>{coding.path}</code></p>
+      </div>}
       {room && <p className="muted">{t('Group')}: {room}</p>}
       {!actionLabel && <p>{request.operation}</p>}
       {nativeTool === 'Bash' && <p>{t('This runs the command below on your computer.')}</p>}
@@ -95,7 +101,7 @@ export function AgentPermissionPrompt({ request, agent, onResolve }: { request: 
       {request.sessionScope && <p className="permission-notice">{t('Session approval applies only to this app. Other apps and separate sensitive-action confirmations still require approval.')}<br />{t('Expires when the native session closes, including idle cleanup, stop, reset or app restart.')}</p>}
       <p className="muted">{t(request.sessionScope ? 'Choose once or allow this app for this session. No response within 10 minutes means deny.' : request.taskScope ? 'Allow this operation once, or reuse approval within the scope above for this task. No response within 10 minutes means deny.' : 'This approval is for this operation only. No response within 10 minutes means deny.')}</p>
       {error && <p role="alert">{t(error)}</p>}
-      </div><footer className="edit-contact-footer"><button autoFocus className="secondary-button" disabled={busy} onClick={() => void resolve(false)}>{t('Deny')}</button><button className="primary-button" disabled={busy} onClick={() => void resolve(true)}>{t('Allow once')}</button>{request.taskScope && <button className="primary-button" disabled={busy} onClick={() => void resolve('task')}>{t('Allow for this task')}</button>}{request.sessionScope && <button className="primary-button" disabled={busy} onClick={() => void resolve('session')}>{t('Allow this app for this session')}</button>}</footer>
+      </div><footer className="edit-contact-footer">{coding && <button className="secondary-button danger" disabled={busy} onClick={coding.onCancelSession}>{t('Cancel session')}</button>}<button autoFocus className="secondary-button" disabled={busy} onClick={() => void resolve(false)}>{t('Deny')}</button><button className="primary-button" disabled={busy} onClick={() => void resolve(true)}>{t('Allow once')}</button>{request.taskScope && <button className="primary-button" disabled={busy} onClick={() => void resolve('task')}>{t('Allow for this task')}</button>}{request.sessionScope && <button className="primary-button" disabled={busy} onClick={() => void resolve('session')}>{t('Allow this app for this session')}</button>}</footer>
     </section>
   </NativeDialog>
 }

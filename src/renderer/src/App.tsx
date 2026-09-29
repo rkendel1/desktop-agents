@@ -28,6 +28,7 @@ import { MemberProfilePopover, type ProfileAnchor } from './components/MemberPro
 import { ContactCard, SelfProfileCard } from './components/ContactCard'
 import { ContactList, type ContactSelection } from './components/ContactList'
 import { ChatPane } from './components/ChatPane'
+import { ProjectsView, type ProjectSelection } from './components/ProjectsView'
 import { InspectorRail } from './components/InspectorRail'
 import { AddMembersModal, BotModal, GroupModal } from './components/dialogs'
 import { agentDisplayName, conversationMembers } from './components/common'
@@ -63,6 +64,7 @@ function WorkspaceApp(): ReactElement {
   const detachedId = new URLSearchParams(window.location.search).get('conversation')
   const [activeId, setActiveId] = useState(detachedId || '')
   const [view, setView] = useState<AppView>('chats')
+  const [codingSelection, setCodingSelection] = useState<ProjectSelection>({})
   const [settingsOpen, updateSettingsOpen] = useState(false)
   function setSettingsOpen(open: boolean): void {
     reportDiagnostic(open ? 'settings.open-request' : 'settings.close')
@@ -314,6 +316,15 @@ function WorkspaceApp(): ReactElement {
   }
 
   const uiSnapshot = snapshot
+  // A request from a coding session that is open on screen is answered in that session, with its project in view;
+  // any other request interrupts with a prompt that says which session and project it belongs to.
+  const codingOfRequest = (requestId: string) => {
+    const activity = uiSnapshot.codingActivity?.find(item => item.approval?.id === requestId)
+    const session = activity && uiSnapshot.codingSessions?.find(item => item.id === activity.sessionId)
+    return activity && session ? { activity, session, project: uiSnapshot.projects?.find(item => item.id === session.projectId) } : undefined
+  }
+  const promptRequest = uiSnapshot.permissionRequests?.find(request => !(view === 'projects' && codingOfRequest(request.id)?.session.id === codingSelection.sessionId))
+  const promptCoding = promptRequest ? codingOfRequest(promptRequest.id) : undefined
   const showWelcome = !welcomeDismissed && !snapshot.desktop?.onboardingCompleted && snapshot.agents.length === 0
 
   return (
@@ -330,6 +341,7 @@ function WorkspaceApp(): ReactElement {
       <AppRail
         view={view}
         unread={totalUnread}
+        codingAttention={(snapshot.codingActivity ?? []).filter(item => item.state === 'awaiting-approval').length}
         userName={snapshot.userName}
         userAvatar={snapshot.userAvatar}
         settingsOpen={settingsOpen}
@@ -343,7 +355,9 @@ function WorkspaceApp(): ReactElement {
         }}
       />
 
-      {view === 'contacts' ? (
+      {view === 'projects' ? (
+        <ProjectsView snapshot={uiSnapshot} selection={codingSelection} onSelect={setCodingSelection} />
+      ) : view === 'contacts' ? (
         <>
           <ContactList
             snapshot={uiSnapshot}
@@ -454,8 +468,10 @@ function WorkspaceApp(): ReactElement {
               onTogglePin={togglePin} />
         </MemberProfilePopover>
       )}
-      {uiSnapshot.permissionRequests?.[0] && <AgentPermissionPrompt key={uiSnapshot.permissionRequests[0].id} request={uiSnapshot.permissionRequests[0]} agent={uiSnapshot.agents.find(agent => agent.id === uiSnapshot.permissionRequests![0].agentId)} 
-        onResolve={async (allow) => { await window.douchat.resolveAgentPermission(uiSnapshot.permissionRequests![0].id, allow) }} />}
+      {promptRequest && <AgentPermissionPrompt key={promptRequest.id} request={promptRequest} agent={uiSnapshot.agents.find(agent => agent.id === promptRequest.agentId)}
+        coding={promptCoding && { projectName: promptCoding.project?.name ?? promptCoding.session.projectId, path: promptCoding.session.workingDirectory, task: promptCoding.session.task,
+          onCancelSession: () => { void window.douchat.cancelCodingSession(promptCoding.session.id) } }}
+        onResolve={async (allow) => { await window.douchat.resolveAgentPermission(promptRequest.id, allow) }} />}
       {dialog && ((dialog.kind === 'bot' && dialog.agent) || dialog.kind === 'agent-permissions' || dialog.kind === 'im-channels' || dialog.kind === 'local-model') && <AgentSettingsDialog
         key={dialog.agent!.id} agent={uiSnapshot.agents.find(agent => agent.id === dialog.agent!.id) ?? dialog.agent!}
         localAgents={localAgents}

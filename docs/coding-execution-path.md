@@ -121,7 +121,7 @@ permission prompt; `src/math.js` changed on disk; session `succeeded`; git statu
 | Capability | Exists today | Proven by test | Required work |
 | --- | --- | --- | --- |
 | Select local repo | Yes — `choose-project` dialog → `addProject` (validated folder, Git detection, stable id) | `coding.test` "is not a project until it is added…", "refuses a folder that is not allowed…" | UI to pick and list projects |
-| Explicit cwd | Yes — `CodingSession.workingDirectory`; the runtime takes it from the chat's `workspacePath`, which the service pins before each turn | "reads the project…" (`cwd=` equals the project); `runCommand` refuses an empty cwd | The runtime's cwd is per *chat*, not per topic/session: the service serializes one session per agent, but a user re-pointing the chat mid-session is only guarded at turn start |
+| Explicit cwd | Yes — `CodingSession.workingDirectory`, immutable for the session. The chat's folder cannot be changed while the session runs (repository refuses), and every turn in the session's topic is checked against it first (`setTurnGuard`) | "reads the project…" (`cwd=` equals the project); `runCommand` refuses an empty cwd | The runtime still derives cwd from the chat; the guard makes that safe rather than changing it |
 | Read source | Yes — any CLI agent; hosted agents via `read_workspace_file` | "reads the project…" (agent lists files, runs tests); live Claude test; `runtimeWorkspace.test` for hosted tools | — |
 | Modify source | Yes — Codex (sandbox), Claude (owner-approved `Edit`), hosted `write_workspace_file` | "…changes a real file…" (bytes on disk); live Claude test | Codex live proof (CLI not available here); Grok/Cursor/omp are read-only by design |
 | Execute shell | Only inside CLIs (Codex, approved Claude `Bash`); Douchat itself now via `runCommand` | `runCommand` tests; live Claude ran `npm test` | Hosted-model agents have no shell tool |
@@ -147,9 +147,6 @@ permission prompt; `src/math.js` changed on disk; session `succeeded`; git statu
 - **One session per agent.** A second start for a running agent is refused.
 - **No renderer UI or projection deltas for projects/sessions yet**: the IPC reads them
   on demand.
-- **Custom local agents live in `userData/local-agents.json`**, a configuration file outside
-  FeltDB. It is a second store for that configuration (not for sessions or state) and is
-  listed in `feltdb-audit.md`.
 
 ## The baseline failing test is not a process-cleanup bug
 
@@ -161,3 +158,27 @@ and the test's `process.kill(pid, 0)` still succeeds. With a zombie-aware check 
 test passes (verified against a scratch copy; the test file is unchanged). The new path
 uses the same `killLocalProcess`, and its tests assert *not running* rather than *not
 listed*. No production fix was needed.
+
+## Using it: the coding loop in the app (next PR)
+
+Projects (rail) → pick or add a repository → pick an agent, give a task → the session
+panel shows the state, live activity, approvals, changed files (tracked diff; untracked
+files are labelled as not in the diff), checks and the event history → Continue.
+
+- **State** is the backend's (`running`, `succeeded`, `failed`, `cancelled`, `interrupted`);
+  the UI adds only "Waiting for approval", derived from live permission requests.
+- **Approvals** show "Agent wants to: Run `npm test | head`" / "Edit `src/math.js`" with the
+  agent, project and path; Allow/Deny call the existing permission IPC and "Cancel session"
+  stops the session. A request for a session that is open on screen is answered there; any
+  other interrupts with a prompt that names its session and project. The renderer executes
+  nothing.
+- **Live activity** is ephemeral (from the runtime's activity and permission broker); the
+  durable record keeps outcomes only: started, approval requested/allowed/denied, command and
+  test results, files changed, finished, continued, interrupted.
+- **Checks** run the project's stored `testCommand`. The renderer proposes a command line; the
+  main process asks the owner to confirm it, then stores it as an argument vector.
+- **Continue** goes through the ordinary chat turn on the same conversation, topic and folder.
+  After a restart an `interrupted` session is offered "Continue": a new process starts and
+  Codex/Claude resume from their native thread — the old process is never reattached.
+- **The folder is pinned** for the life of a session (see the matrix).
+- Custom local agents now live in FeltDB (`LocalAgentDefinition`), imported once from `local-agents.json`.

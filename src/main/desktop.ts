@@ -6,6 +6,8 @@ import { FeltIMChannelStorage } from './imChannelStorage'
 import { configureLocalWorkspaces } from './localWorkspaces'
 import { migrateLegacyState, type MigrationReport } from './legacy/migrate'
 import { FeltDatabaseError } from './felt/database'
+import { configureLocalAgentRegistry } from './localAgents'
+import { importLocalAgentFile } from './legacy/localAgentRegistry'
 
 /**
  * The local desktop: FeltDB and everything that hangs directly off it.
@@ -55,6 +57,8 @@ export async function startDesktop(options: StartDesktopOptions): Promise<Deskto
       put: record => repository.putRuntimeBinding({ id: record.id, agentId: record.agent, sessionKey: record.sessionKey, generation: record.generation, fingerprint: record.fingerprint, thread: record.thread, claudeAccountLogin: record.claudeAccountLogin, updatedAt: record.updatedAt ?? Date.now() }),
       all: async () => (await repository.runtimeBindings()).map(binding => ({ ...binding, owner: 'local', agent: binding.agentId }))
     })
+    configureLocalAgentRegistry(repository)
+    await importLocalAgentFile(repository, join(options.userData, 'local-agents.json'))
     // Migration finishes before anything else can read the repository.
     const migration = await migrateLegacyState(repository, { userData: options.userData, codec: options.codec, vault, imStorage })
     return { repository, vault, providers, imStorage, migration, databaseDirectory: repository.felt.directory }

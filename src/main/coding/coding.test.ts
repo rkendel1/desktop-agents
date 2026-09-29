@@ -7,11 +7,12 @@ import type { ComputerProvider } from '../computer'
 import { DesktopRepository } from '../desktopRepository'
 import type { SecretCodec } from '../credentialVault'
 import { startDesktop, stopDesktop, type DesktopState } from '../desktop'
-import { addCustomLocalAgent, configureLocalAgentRegistry, detectLocalAgents } from '../localAgents'
+import { addCustomLocalAgent, detectLocalAgents } from '../localAgents'
 import { DouchatRuntime } from '../runtime'
 import { runCommand } from './commands'
 import { gitDiff, gitStatus, parseGitStatus } from './git'
 import { CodingService } from './service'
+import { DesktopProjection } from '../projection'
 
 /**
  * Real repository, real processes. Nothing here is a mocked tool call: the agent
@@ -42,7 +43,6 @@ function repository(): string {
 }
 
 async function boot(root = temporary('coding-desktop-')): Promise<Booted> {
-  configureLocalAgentRegistry(root)
   const desktop = await startDesktop({ userData: root, codec })
   const runtime = new DouchatRuntime(desktop.repository, idleComputer, () => undefined)
   const booted = { root, desktop, runtime, coding: new CodingService(desktop.repository, runtime) }
@@ -359,6 +359,154 @@ describe('restart', () => {
 
     const second = await boot(root)
     expect((await second.desktop.repository.codingSession(started.id))!.status).toBe('cancelled')
+  }, 60_000)
+})
+
+describe('coding as a usable loop', () => {
+  const pidfile = (): string => join(temporary('coding-ux-pids-'), 'pids')
+  const started = (pids: string): Promise<void> => waitUntil(() => existsSync(pids) && readFileSync(pids, 'utf8').includes('\n'))
+
+  it('pins the working directory: the chat cannot be pointed elsewhere, or used elsewhere, under a session', async () => {
+    const booted = await boot()
+    const { coding, desktop, runtime } = booted
+    const path = repository(), other = repository()
+    const agent = await scriptedAgent(booted)
+    const project = await coding.addProject(path)
+    const pids = pidfile()
+    const running = await coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Hang.', { action: 'hang', pidfile: pids }) })
+    await started(pids)
+
+    // While it runs the chat's folder is fixed: changing it and clearing it are both refused, and nothing moved.
+    await expect(desktop.repository.setConversationWorkspace(running.conversationId, other)).rejects.toThrow(/pinned to/)
+    await expect(desktop.repository.setConversationWorkspace(running.conversationId, undefined)).rejects.toThrow(/pinned to/)
+    expect((await desktop.repository.conversation(running.conversationId))?.workspacePath).toBe(path)
+
+    await coding.cancel(running.id)
+    expect((await coding.settled(running.id))!.status).toBe('cancelled')
+
+    // Once it is over the chat may move, but a turn in the session's topic is then refused before anything is stored.
+    await desktop.repository.setConversationWorkspace(running.conversationId, other)
+    const before = (await desktop.repository.topicMessages(running.conversationId, running.topicId)).length
+    await expect(runtime.sendMessage(running.conversationId, 'Carry on somewhere else.')).rejects.toThrow(/pinned to .*Refusing/)
+    expect((await desktop.repository.topicMessages(running.conversationId, running.topicId)).length).toBe(before)
+
+    // Continuing restores the session's own folder — it never adopts the new one.
+    const continued = await coding.continue(running.id, taskText('Look around.', { action: 'none' }))
+    const done = (await coding.settled(continued.id))!
+    expect(done).toMatchObject({ status: 'succeeded', workingDirectory: path })
+    expect(done.result).toContain(`cwd=${path}`)
+    expect((await desktop.repository.conversation(running.conversationId))?.workspacePath).toBe(path)
+  }, 90_000)
+
+  it('records approvals and the outcome as session events, and shows a waiting approval with its project, agent and session', async () => {
+    const booted = await boot()
+    const { coding, desktop, runtime } = booted
+    const path = repository()
+    const agent = await scriptedAgent(booted)
+    const project = await coding.addProject(path, 'Approvals')
+    const pids = pidfile()
+    const session = await coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Hang.', { action: 'hang', pidfile: pids }) })
+    await started(pids)
+    expect(coding.activity()).toEqual([expect.objectContaining({ sessionId: session.id, state: 'running' })])
+
+    // What a CLI does when it wants to run a command: ask the owner, through the runtime's permission broker.
+    const config = (await desktop.repository.agent(agent.id))!
+    const broker = (runtime as unknown as { permissions: { authorize: (...args: unknown[]) => Promise<void> } }).permissions
+    const decision = broker.authorize(config, { requester: config.name, requesterId: config.id, requesterKind: 'agent', roomName: config.name, context: 'direct', capability: 'otherTools',
+      operation: 'Claude: Bash', details: JSON.stringify({ tool: 'Bash', input: { command: 'npm test | head' } }) }, undefined, true)
+    await waitUntil(() => coding.activity()[0]?.state === 'awaiting-approval')
+    const waiting = coding.activity()[0]
+    expect(waiting).toMatchObject({ sessionId: session.id, label: 'Waiting for approval: Run npm test | head' })
+    expect(waiting.approval).toMatchObject({ agentId: agent.id, agentName: config.name })
+
+    // The renderer sees it: durable project and session, and the live activity, in one snapshot.
+    const projection = new DesktopProjection(desktop.repository, {
+      ephemeral: () => ({ ...runtime.ephemeralState(), codingActivity: coding.activity() }), runtimeStatus: () => ({ mode: 'offline', label: '' }), availableModels: () => [], connectors: async () => []
+    }, () => undefined)
+    const { snapshot } = await projection.snapshot()
+    expect(snapshot.projects).toEqual([expect.objectContaining({ id: project.id, name: 'Approvals', path })])
+    expect(snapshot.codingSessions?.map(item => item.id)).toEqual([session.id])
+    expect(snapshot.codingActivity).toEqual([expect.objectContaining({ sessionId: session.id, state: 'awaiting-approval' })])
+
+    runtime.resolveAgentPermission(waiting.approval!.id, true)
+    await decision
+    await waitUntil(() => coding.activity()[0]?.state === 'running')
+
+    // A second request, denied.
+    const denied = broker.authorize(config, { requester: config.name, requesterId: config.id, requesterKind: 'agent', roomName: config.name, context: 'direct', capability: 'otherTools',
+      operation: 'Claude: Edit', details: JSON.stringify({ tool: 'Edit', input: { file_path: `${path}/src/math.js` } }) }, undefined, true)
+    const rejection = expect(denied).rejects.toThrow('declined')
+    await waitUntil(() => coding.activity()[0]?.state === 'awaiting-approval')
+    expect(coding.activity()[0].label).toBe('Waiting for approval: Edit ' + `${path}/src/math.js`)
+    runtime.resolveAgentPermission(coding.activity()[0].approval!.id, false)
+    await rejection
+
+    await coding.cancel(session.id)
+    const finished = (await coding.settled(session.id))!
+    await coding.idle()
+    const stored = (await desktop.repository.codingSession(session.id))!
+    expect(stored.events.map(event => event.kind)).toEqual(['started', 'approval-requested', 'approval-allowed', 'approval-requested', 'approval-denied', 'changes', 'finished'])
+    expect(stored.events.map(event => event.detail)).toContain('Run npm test | head')
+    expect(finished.status).toBe('cancelled')
+    expect(coding.activity()).toEqual([])
+  }, 90_000)
+
+  it('continues a finished session in the same conversation, topic and folder — the ordinary chat path', async () => {
+    const booted = await boot()
+    const path = repository()
+    const agent = await scriptedAgent(booted)
+    const project = await booted.coding.addProject(path)
+    const first = (await booted.coding.settled((await booted.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Fix add().', { action: 'fix-add' }) })).id))!
+    const again = await booted.coding.continue(first.id, taskText('Now look around again.', { action: 'none' }))
+    expect(again).toMatchObject({ id: first.id, status: 'running' })
+    const second = (await booted.coding.settled(first.id))!
+    expect(second).toMatchObject({ status: 'succeeded', conversationId: first.conversationId, topicId: first.topicId, workingDirectory: path })
+    expect(second.runId).not.toBe(first.runId)
+    const messages = await booted.desktop.repository.topicMessages(first.conversationId, first.topicId)
+    expect(messages.map(message => message.authorId)).toEqual(['user', agent.id, 'user', agent.id])
+    expect(second.events.map(event => event.kind)).toEqual(['started', 'changes', 'finished', 'continued', 'changes', 'finished'])
+    await expect(booted.coding.continue(first.id)).resolves.toBeDefined()
+    await booted.coding.settled(first.id)
+  }, 90_000)
+
+  it('offers Continue for an interrupted session; it starts a new turn on the same conversation and says why', async () => {
+    const root = temporary('coding-interrupted-')
+    const path = repository()
+    const first = await boot(root)
+    const agent = await scriptedAgent(first)
+    const project = await first.coding.addProject(path)
+    const seed = (await first.coding.settled((await first.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Look around.', { action: 'none' }) })).id))!
+    // The app dies mid-turn: the record still says running.
+    await first.desktop.repository.resumeCodingSession(seed.id)
+    await first.desktop.repository.close()
+
+    const second = await boot(root)
+    const interrupted = (await second.desktop.repository.codingSession(seed.id))!
+    expect(interrupted).toMatchObject({ status: 'interrupted', workingDirectory: path })
+    expect(interrupted.events.at(-1)).toMatchObject({ kind: 'finished', label: 'Interrupted when Douchat closed' })
+    expect(interrupted.finishedAt).toBeDefined()
+    await second.coding.continue(seed.id)
+    const done = (await second.coding.settled(seed.id))!
+    expect(done.error).toBeUndefined()
+    expect(done).toMatchObject({ status: 'succeeded', conversationId: seed.conversationId, topicId: seed.topicId })
+    const prompt = (await second.desktop.repository.topicMessages(seed.conversationId, seed.topicId)).filter(message => message.authorId === 'user').at(-1)!
+    expect(prompt.text).toContain('interrupted when Douchat closed')
+  }, 90_000)
+
+  it('records check runs as events: the command, and whether it passed', async () => {
+    const booted = await boot()
+    const path = repository()
+    const agent = await scriptedAgent(booted)
+    const project = await booted.coding.addProject(path)
+    await booted.desktop.repository.setProjectTestCommand(project.id, ['npm', 'test'])
+    const session = (await booted.coding.settled((await booted.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Look around.', { action: 'none' }) })).id))!
+    expect((await booted.coding.runChecks(session.id))!.exitCode).toBe(1)
+    writeFileSync(join(path, 'src', 'math.js'), 'function add(a, b) {\n  return a + b\n}\nmodule.exports = { add }\n')
+    expect((await booted.coding.runChecks(session.id))!.exitCode).toBe(0)
+    await booted.coding.idle()
+    const events = (await booted.desktop.repository.codingSession(session.id))!.events.filter(event => event.kind === 'checks')
+    expect(events.map(event => event.label)).toEqual(['Tests completed ✗', 'Tests completed ✓'])
+    expect(events[0].detail).toBe('npm test — exit 1')
   }, 60_000)
 })
 

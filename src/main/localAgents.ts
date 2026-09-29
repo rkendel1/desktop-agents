@@ -4,24 +4,29 @@ import type { CustomLocalAgentInput, LocalAgent } from '../shared/types'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { access } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { resolveExecutable, executableEnvironment } from './shellPath'
 
 const execFileAsync = promisify(execFile)
-let customRegistryPath: string | undefined
+/** Where the owner's custom agents are kept: the desktop's FeltDB, through the repository. */
+export interface LocalAgentRegistry {
+  localAgentDefinitions(): Promise<{ id: string; name: string; command: string; args?: string[]; avatar?: string }[]>
+  replaceLocalAgentDefinitions(definitions: { id: string; name: string; command: string; args?: string[]; avatar?: string }[]): Promise<void>
+}
+let registry: LocalAgentRegistry | undefined
 
 interface CustomLocalAgentDefinition extends CustomLocalAgentInput { id: string }
 
 const CUSTOM_ID = /^custom:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-export function configureLocalAgentRegistry(userDataPath?: string): void {
-  customRegistryPath = userDataPath ? join(userDataPath, 'local-agents.json') : undefined
+export function configureLocalAgentRegistry(source?: LocalAgentRegistry): void {
+  registry = source
 }
 
-function customDefinition(value: unknown): CustomLocalAgentDefinition | undefined {
+export function customDefinition(value: unknown): CustomLocalAgentDefinition | undefined {
   if (!value || typeof value !== 'object') return undefined
   const input = value as Record<string, unknown>
   const id = String(input.id ?? '').trim()
@@ -31,22 +36,13 @@ function customDefinition(value: unknown): CustomLocalAgentDefinition | undefine
 }
 
 async function customDefinitions(): Promise<CustomLocalAgentDefinition[]> {
-  if (!customRegistryPath) return []
-  try {
-    const parsed = JSON.parse(await readFile(customRegistryPath, 'utf8')) as unknown
-    if (!Array.isArray(parsed)) return []
-    return parsed.map(customDefinition).filter((item): item is CustomLocalAgentDefinition => Boolean(item)).slice(0, 75)
-  } catch {
-    return []
-  }
+  if (!registry) return []
+  return (await registry.localAgentDefinitions()).map(customDefinition).filter((item): item is CustomLocalAgentDefinition => Boolean(item)).slice(0, 75)
 }
 
 async function writeCustomDefinitions(definitions: CustomLocalAgentDefinition[]): Promise<void> {
-  if (!customRegistryPath) throw new Error('Local agent registry is unavailable')
-  await mkdir(dirname(customRegistryPath), { recursive: true })
-  const temporary = `${customRegistryPath}.${randomUUID()}.tmp`
-  await writeFile(temporary, `${JSON.stringify(definitions, null, 2)}\n`, { mode: 0o600 })
-  await rename(temporary, customRegistryPath)
+  if (!registry) throw new Error('Local agent registry is unavailable')
+  await registry.replaceLocalAgentDefinitions(definitions)
 }
 
 export function validateLocalAgentInput(input: CustomLocalAgentInput): CustomLocalAgentInput {

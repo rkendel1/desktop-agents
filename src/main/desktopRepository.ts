@@ -5,7 +5,7 @@ import { lstat, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
-  AgentConfig, AttentionItem, ChatMessage, CodingSession, Conversation, CreateGroupInput, CreateRoutineInput, EmailConnectorAccount, MessageAttachment,
+  AgentConfig, AttentionItem, ChatMessage, CodingEvent, CodingSession, Conversation, CreateGroupInput, CreateRoutineInput, EmailConnectorAccount, MessageAttachment,
   MessageDeliveryReply, PrivateMessage, ResolvedCreateAgentInput, Routine, RunEvent, RunStatus, TaskRun, Topic,
   Project, UpdateAgentInput, UpdateConversationInput
 } from '../shared/types'
@@ -22,7 +22,7 @@ import { DESKTOP_SCHEMA_VERSION, FeltDatabase, FeltDatabaseError, type Batch, ty
 import {
   agentFromRecord, agentToRecord, codingSessionFromRecord, codingSessionToRecord, projectFromRecord, conversationFromParts, conversationParts, eventFromRecord, eventToRecord, messageFromRecord,
   messageToRecord, privateMessageFromRecord, privateMessageToRecord, routineFromRecord, routineToRecord, runFromRecord, runToRecord,
-  type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CodingSessionRecord, type ExecutionEventRecord, type GroupMemberRecord, type GroupRecord,
+  type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CodingSessionRecord, type ExecutionEventRecord, type LocalAgentDefinitionRecord, type GroupMemberRecord, type GroupRecord,
   type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord, type SessionRecord, type TopicRecord, type WorkspaceRecord
 } from './felt/records'
 import { MemoryRepository, type MemoryRecord } from './memoryRepository'
@@ -38,6 +38,7 @@ const DEFAULT_TOPIC_ID = 'main'
 /** Roughly 1.5 MB of base64 — far above a 256px avatar, far below bloat. */
 const AVATAR_LIMIT = 1_500_000
 const PRIVATE_MESSAGE_LIMIT = 400
+const MAX_CODING_EVENTS = 100
 const RUN_LIMIT = 120
 const RUN_EVENT_LIMIT = 2_000
 /** Trim in bursts, so a stream of events does not read the whole log each time. */
@@ -149,6 +150,7 @@ export class DesktopRepository {
   private readonly profiles: Records<AgentProfileRecord>
   private readonly workspaces: Records<WorkspaceRecord>
   private readonly codingRows: Records<CodingSessionRecord>
+  private readonly localAgentRows: Records<LocalAgentDefinitionRecord>
   private readonly sessions: Records<SessionRecord>
   private readonly topics: Records<TopicRecord>
   private readonly groups: Records<GroupRecord>
@@ -182,6 +184,7 @@ export class DesktopRepository {
     this.profiles = felt.collection('AgentProfile')
     this.workspaces = felt.collection('Workspace')
     this.codingRows = felt.collection('CodingSession')
+    this.localAgentRows = felt.collection('LocalAgentDefinition')
     this.sessions = felt.collection('Session')
     this.topics = felt.collection('Topic')
     this.groups = felt.collection('Group')
@@ -849,6 +852,9 @@ export class DesktopRepository {
     return this.exclusive(async () => {
       const conversation = await this.conversation(conversationId)
       if (!conversation) return undefined
+      // A coding session's folder is fixed for as long as it runs; the chat cannot be pointed elsewhere underneath it.
+      const pinned = (await this.codingRows.where({ sessionId: conversationId })).find(row => row.status === 'running' && row.cwd !== workspacePath)
+      if (pinned) throw new Error(`A coding session is running in this chat and is pinned to ${pinned.cwd}. Stop it before changing the folder.`)
       if (workspacePath) conversation.workspacePath = workspacePath
       else delete conversation.workspacePath
       await this.felt.transaction(batch => this.stageConversation(batch, conversation))
@@ -1380,6 +1386,27 @@ export class DesktopRepository {
     return (await this.eventRows.where({ runId })).map(eventFromRecord)
   }
 
+  // ───────────────────────────── custom local agents ─────────────────────────────
+  // The agent CLIs the owner registered (name, command, arguments). Configuration, but desktop state all the same.
+
+  async localAgentDefinitions(): Promise<{ id: string; name: string; command: string; args?: string[]; avatar?: string }[]> {
+    return (await this.localAgentRows.all()).sort((a, b) => a.position - b.position)
+      .map(({ position: _position, updatedAt: _updated, ...definition }) => definition)
+  }
+
+  /** The whole list, in order, in one transaction: entries that are not in it are removed. */
+  replaceLocalAgentDefinitions(definitions: { id: string; name: string; command: string; args?: string[]; avatar?: string }[]): Promise<void> {
+    return this.exclusive(() => this.felt.transaction(async batch => {
+      const keep = new Set(definitions.map(item => item.id))
+      for (const old of await this.localAgentRows.all()) if (!keep.has(old.id)) await batch.delete(this.localAgentRows, old.id)
+      const now = Date.now()
+      for (const [position, definition] of definitions.entries()) {
+        await batch.put(this.localAgentRows, { id: definition.id, name: definition.name, command: definition.command, position, updatedAt: now,
+          ...(definition.args ? { args: definition.args } : {}), ...(definition.avatar ? { avatar: definition.avatar } : {}) })
+      }
+    }))
+  }
+
   // ───────────────────────────── projects and coding sessions ─────────────────────────────
   // A project is a folder Douchat may work in; the folder itself stays the authority for its files.
   // Nothing here stores source code, only that the project and the session exist and what they produced.
@@ -1441,8 +1468,8 @@ export class DesktopRepository {
     return record ? codingSessionFromRecord(record) : undefined
   }
 
-  createCodingSession(input: Omit<CodingSession, 'id' | 'createdAt' | 'changes' | 'commands'> & { changes?: CodingSession['changes']; commands?: CodingSession['commands'] }): Promise<CodingSession> {
-    const session: CodingSession = { changes: [], commands: [], ...input, id: randomUUID(), createdAt: Date.now() }
+  createCodingSession(input: Omit<CodingSession, 'id' | 'createdAt' | 'changes' | 'commands' | 'events'> & { changes?: CodingSession['changes']; commands?: CodingSession['commands']; events?: CodingSession['events'] }): Promise<CodingSession> {
+    const session: CodingSession = { changes: [], commands: [], events: [], ...input, id: randomUUID(), createdAt: Date.now() }
     return this.exclusive(async () => {
       if (!(await this.project(session.projectId))) throw new Error('Project not found')
       await this.codingRows.put(codingSessionToRecord(session))
@@ -1463,6 +1490,32 @@ export class DesktopRepository {
     })
   }
 
+  /** Append a meaningful outcome to a session's history (bounded; older entries fall off). */
+  addCodingEvent(id: string, event: Omit<CodingEvent, 'at'> & { at?: number }): Promise<void> {
+    return this.exclusive(async () => {
+      const record = await this.codingRows.get(id)
+      if (!record) return
+      const session = codingSessionFromRecord(record)
+      await this.codingRows.put(codingSessionToRecord({ ...session, events: [...session.events, { at: Date.now(), ...event }].slice(-MAX_CODING_EVENTS) }))
+    })
+  }
+
+  /** Reopen a finished session for another turn in the same project, chat and topic. Its folder does not change. */
+  resumeCodingSession(id: string): Promise<CodingSession> {
+    return this.exclusive(async () => {
+      const record = await this.codingRows.get(id)
+      if (!record) throw new Error('Coding session not found')
+      const current = codingSessionFromRecord(record)
+      if (current.status === 'running') throw new Error('This coding session is already running.')
+      if ((await this.codingRows.where({ agentId: current.agentId })).some(row => row.status === 'running')) throw new Error('This agent is already working on a coding session.')
+      const { finishedAt: _finished, error: _error, ...rest } = current
+      const next: CodingSession = { ...rest, status: 'running', startedAt: Date.now(),
+        events: [...current.events, { at: Date.now(), kind: 'continued' as const, label: 'Continued' }].slice(-MAX_CODING_EVENTS) }
+      await this.codingRows.put(codingSessionToRecord(next))
+      return next
+    })
+  }
+
   /**
    * Sessions still marked running when the app starts belong to a process that no
    * longer exists. They become `interrupted`; their history and changes stay.
@@ -1472,7 +1525,9 @@ export class DesktopRepository {
       const interrupted = (await this.codingRows.all()).filter(row => row.status === 'running')
       const recovered: CodingSession[] = []
       for (const row of interrupted) {
-        const next: CodingSession = { ...codingSessionFromRecord(row), status: 'interrupted', finishedAt: now, error: 'The app closed while this coding session was running. Its process did not survive.' }
+        const current = codingSessionFromRecord(row)
+        const next: CodingSession = { ...current, status: 'interrupted', finishedAt: now, error: 'The app closed while this coding session was running. Its process did not survive.',
+          events: [...current.events, { at: now, kind: 'finished' as const, label: 'Interrupted when Douchat closed' }].slice(-MAX_CODING_EVENTS) }
         await this.codingRows.put(codingSessionToRecord(next))
         recovered.push(next)
       }

@@ -2298,6 +2298,8 @@ export class DouchatRuntime {
     if (!imTurn && this.aborts.has(conversationId)) throw new Error('This conversation is still replying')
 
     const topicId = imTurn?.receipt?.topicId ?? (await this.store.activeTopicId(conversationId))
+    // A refused turn leaves no trace: nothing has been stored yet.
+    await this.turnGuard?.({ conversationId, topicId })
     const members = (await Promise.all(conversation.agentIds.map((agentId) => this.store.agent(agentId)))).filter((agent): agent is AgentConfig => Boolean(agent))
     const recipients = addressesEveryone(content)
       ? members.map(agent => asMember(agent))
@@ -3119,6 +3121,14 @@ export class DouchatRuntime {
 
   private readonly background = new Set<Promise<unknown>>()
   private closing = false
+
+  private turnGuard?: (turn: { conversationId: string; topicId: string }) => Promise<void>
+
+  /** Something that may veto a turn before anything is stored or started (it throws to refuse). */
+  setTurnGuard(guard: ((turn: { conversationId: string; topicId: string }) => Promise<void>) | undefined): void { this.turnGuard = guard }
+
+  /** Told when a permission request appears and how it ends. */
+  observePermissions(observer: ((event: import('./agentPermissions').PermissionEvent) => void) | undefined): void { this.permissions.observe(observer) }
 
   /** After this, no new work is accepted; work already under way finishes or is cancelled by its owner. */
   stopAccepting(): void { this.closing = true }
