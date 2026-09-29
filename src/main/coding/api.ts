@@ -83,6 +83,11 @@ export class CodingApi {
     return project
   }
 
+  /** The agents a session can be started with: identity only. */
+  async listAgents(): Promise<{ id: string; name: string; local: boolean }[]> {
+    return (await this.repository.agents()).map(agent => ({ id: agent.id, name: agent.name, local: agent.provider === 'local' }))
+  }
+
   // ───────────────────────────── sessions ─────────────────────────────
 
   async listSessions(filter: { projectId?: string; status?: CodingSession['status'] } = {}): Promise<SessionView[]> {

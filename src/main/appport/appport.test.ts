@@ -272,7 +272,7 @@ describe('authority', () => {
     const manifest = await r.client.load()
     const names = manifest.capabilities.map(capability => capability.name).filter(name => name.startsWith('douchat.')).sort()
     expect(names).toEqual([
-      'douchat.coding.approvals.list', 'douchat.coding.approvals.resolve', 'douchat.coding.sessions.cancel', 'douchat.coding.sessions.continue', 'douchat.coding.sessions.get',
+      'douchat.coding.agents.list', 'douchat.coding.approvals.list', 'douchat.coding.approvals.resolve', 'douchat.coding.sessions.cancel', 'douchat.coding.sessions.continue', 'douchat.coding.sessions.get',
       'douchat.coding.sessions.list', 'douchat.coding.sessions.start', 'douchat.projects.add', 'douchat.projects.get', 'douchat.projects.gitstate', 'douchat.projects.list'
     ])
     expect(names.filter(name => /file|read|write|exec|shell|command|run|folder|cwd|directory/.test(name.split('.').slice(1).join('.').replace('projects.add', '')))).toEqual([])

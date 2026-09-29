@@ -84,6 +84,8 @@ export function codingCapabilities(api: CodingApi, remote?: RemoteLookup): AnyCa
     defineCapability({ name: 'douchat.projects.add', version: 1, description: 'Register a folder on the machine running Douchat as a project. The folder must pass the same checks as adding it in the app.', effect: 'consequential', authorization: [PERMISSIONS.projectsWrite],
       input: s.object({ path: s.string({ minLength: 1, maxLength: 4096 }), name: s.optional(s.string({ maxLength: 200 })) }), output: project, handler: input => mapped(() => api.addProject(input.path, input.name)) }),
 
+    defineCapability({ name: 'douchat.coding.agents.list', version: 1, description: 'The agents a coding session can be started with (id and name only).', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: s.empty(), output: s.object({ agents: s.array(s.object({ id: s.string(), name: s.string(), local: s.boolean() })) }), handler: () => mapped(async () => ({ agents: await api.listAgents() })) }),
     defineCapability({ name: 'douchat.coding.sessions.list', version: 1, description: 'Coding sessions, newest first.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
       input: s.object({ projectId: s.optional(s.string()), status: s.optional(s.enum(['running', 'succeeded', 'failed', 'cancelled', 'interrupted'] as const)) }),
       output: s.object({ sessions: s.array(session) }), handler: input => mapped(async () => ({ sessions: await api.listSessions(input) })) }),
