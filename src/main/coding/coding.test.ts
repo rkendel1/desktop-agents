@@ -188,8 +188,8 @@ describe('an agent coding in a real repository', () => {
     // The change is on disk, in the real file.
     expect(readFileSync(join(path, 'src', 'math.js'), 'utf8')).toContain('return a + b')
     // Git shows it, and the session recorded which paths changed (never their contents).
-    expect(session.changes).toEqual([{ path: 'src/math.js', code: ' M' }])
-    expect((await coding.gitStatus(project.id)).changes).toEqual(session.changes)
+    expect(session.changes).toEqual([expect.objectContaining({ path: 'src/math.js', code: ' M', origin: 'session' })])
+    expect((await coding.gitStatus(project.id)).changes.map(change => change.path)).toEqual(session.changes.map(change => change.path))
     expect((await coding.gitDiff(project.id)).diff).toContain('+  return a + b')
 
     // Douchat itself can run the project's check, and the result belongs to the session.
@@ -317,7 +317,7 @@ describe('restart', () => {
     expect(session).toMatchObject({ status: 'succeeded', projectId: project.id, agentId: agent.id, workingDirectory: path, changes: [{ path: 'src/math.js', code: ' M' }] })
     expect((await repositoryAfter.topicMessages(session.conversationId, session.topicId)).map(message => message.authorId)).toEqual(['user', agent.id])
     expect((await repositoryAfter.runs()).find(run => run.id === session.runId)?.status).toBe('succeeded')
-    expect((await second.coding.gitStatus(project.id)).changes).toEqual(session.changes)
+    expect((await second.coding.gitStatus(project.id)).changes.map(change => change.path)).toEqual(session.changes.map(change => change.path))
     // And the reopened desktop can carry on with the same project.
     const next = await second.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Look around.', { action: 'none' }) })
     expect((await second.coding.settled(next.id))!.status).toBe('succeeded')
@@ -483,7 +483,7 @@ describe('coding as a usable loop', () => {
     const second = await boot(root)
     const interrupted = (await second.desktop.repository.codingSession(seed.id))!
     expect(interrupted).toMatchObject({ status: 'interrupted', workingDirectory: path })
-    expect(interrupted.events.at(-1)).toMatchObject({ kind: 'finished', label: 'Interrupted when Douchat closed' })
+    expect(interrupted.events.at(-1)).toMatchObject({ kind: 'interrupted', label: 'Interrupted when Douchat closed' })
     expect(interrupted.finishedAt).toBeDefined()
     await second.coding.continue(seed.id)
     const done = (await second.coding.settled(seed.id))!
@@ -508,6 +508,349 @@ describe('coding as a usable loop', () => {
     expect(events.map(event => event.label)).toEqual(['Tests completed ✗', 'Tests completed ✓'])
     expect(events[0].detail).toBe('npm test — exit 1')
   }, 60_000)
+})
+
+describe('a dirty repository', () => {
+  it('never credits the session with what was already modified, and says exactly what it can establish', async () => {
+    const booted = await boot()
+    const path = repository()
+    const agent = await scriptedAgent(booted)
+    // A working tree someone was in the middle of: edited tracked files, untracked files (one nested, one with spaces).
+    writeFileSync(join(path, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.1', scripts: { test: 'node test.js' } }))
+    writeFileSync(join(path, 'test.js'), '// scratch edit\n')
+    mkdirSync(join(path, 'notes', 'deep'), { recursive: true })
+    writeFileSync(join(path, 'notes', 'deep', 'todo.txt'), 'later\n')
+    writeFileSync(join(path, 'my file with spaces.txt'), 'hello\n')
+    const head = git(path, 'rev-parse', 'HEAD').trim()
+    const project = await booted.coding.addProject(path)
+
+    const task = { action: 'touch', files: {
+      'package.json': '{"name":"fixture","version":"9.9.9"}',       // dirty before, changed again
+      'test.js': readFileSync(join(path, 'test.js'), 'utf8') && git(path, 'show', 'HEAD:test.js'), // dirty before, restored to HEAD: clean now
+      'src/created.js': 'module.exports = 1\n'                       // not there before
+    } }
+    const session = (await booted.coding.settled((await booted.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Touch files.', task) })).id))!
+
+    expect(session.baseline.head).toBe(head)
+    expect(session.baseline.changes.map(change => change.path).sort()).toEqual(['my file with spaces.txt', 'notes/deep/todo.txt', 'package.json', 'test.js'])
+    const origin = Object.fromEntries(session.changes.map(change => [change.path, change.origin]))
+    expect(origin).toEqual({ 'package.json': 'session', 'src/created.js': 'session', 'my file with spaces.txt': 'before', 'notes/deep/todo.txt': 'before' })
+    expect(session.cleaned).toEqual(['test.js'])
+    expect(session.finalHead).toBe(head)
+    const events = (await booted.desktop.repository.codingSession(session.id))!.events
+    expect(events[0].detail).toContain('4 files were already modified')
+    expect(events.find(event => event.kind === 'changes')).toMatchObject({
+      label: '2 files changed during this session', detail: '2 already modified before it started · 1 modified before, clean now' })
+  }, 60_000)
+
+  it('recognizes a file that is untouched, even when its timestamp changed, and one that changed with the same status', async () => {
+    const path = repository()
+    writeFileSync(join(path, 'wip.txt'), 'one\n'); writeFileSync(join(path, 'other.txt'), 'same\n')
+    const before = await gitStatus(path, undefined, { fingerprints: true })
+    writeFileSync(join(path, 'wip.txt'), 'two\n'); writeFileSync(join(path, 'other.txt'), 'same\n')
+    const { accountChanges } = await import('./git')
+    const { changes } = accountChanges(before.changes, (await gitStatus(path, undefined, { fingerprints: true })).changes)
+    expect(Object.fromEntries(changes.map(change => [change.path, change.origin]))).toEqual({ 'wip.txt': 'session', 'other.txt': 'before' })
+  })
+
+  it('reports a commit the session made: HEAD moved', async () => {
+    const booted = await boot()
+    const path = repository()
+    const agent = await scriptedAgent(booted)
+    const project = await booted.coding.addProject(path)
+    const before = git(path, 'rev-parse', 'HEAD').trim()
+    const session = await booted.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Hang.', { action: 'hang', pidfile: join(temporary('coding-head-'), 'pids') }) })
+    git(path, 'commit', '-q', '--allow-empty', '-m', 'made during the session')
+    await booted.coding.cancel(session.id)
+    const done = (await booted.coding.settled(session.id))!
+    expect(done.finalHead).not.toBe(before)
+    expect((await booted.desktop.repository.codingSession(session.id))!.events.find(event => event.kind === 'changes')!.detail).toContain('HEAD moved')
+  }, 60_000)
+})
+
+describe('checks are structured argv, end to end', () => {
+  it('runs the stored argument vector exactly: spaces, quotes and shell characters are data, not syntax', async () => {
+    const { parseCommandLine, formatCommandLine } = await import('../../shared/coding')
+    const line = `node -e "console.log(JSON.stringify(process.argv.slice(1)))" 'a b' "c'd" '$HOME' ';' '*' ""`
+    const argv = parseCommandLine(line)
+    expect(argv).toEqual(['node', '-e', 'console.log(JSON.stringify(process.argv.slice(1)))', 'a b', "c'd", '$HOME', ';', '*', ''])
+    expect(parseCommandLine(formatCommandLine(argv))).toEqual(argv)
+    const directory = temporary('coding folder with spaces ')
+    writeFileSync(join(directory, 'file.txt'), 'x')
+    const result = await runCommand(argv, { cwd: directory })
+    expect(result.argv).toEqual(argv)
+    expect(JSON.parse(result.stdout)).toEqual(['a b', "c'd", '$HOME', ';', '*', ''])
+    expect((await runCommand(['node', '-e', 'console.log(process.cwd())'], { cwd: directory })).stdout.trim()).toBe(directory)
+  })
+
+  it('inherits the environment, lets the caller add to it, and reports non-zero exit, timeout, cancellation and a missing program', async () => {
+    const cwd = temporary('coding-env-')
+    process.env.DOUCHAT_HARDENING_INHERITED = 'from-parent'
+    try {
+      const seen = await runCommand(['node', '-e', 'console.log(process.env.DOUCHAT_HARDENING_INHERITED + "|" + process.env.DOUCHAT_HARDENING_EXTRA)'], { cwd, env: { DOUCHAT_HARDENING_EXTRA: 'added' } })
+      expect(seen.stdout.trim()).toBe('from-parent|added')
+    } finally { delete process.env.DOUCHAT_HARDENING_INHERITED }
+    expect(await runCommand(['node', '-e', 'process.exit(7)'], { cwd })).toMatchObject({ exitCode: 7 })
+    expect(await runCommand(['node', '-e', 'setInterval(() => {}, 1000)'], { cwd, timeoutMs: 200 })).toMatchObject({ timedOut: true, exitCode: null })
+    const controller = new AbortController()
+    const cancelled = runCommand(['node', '-e', 'setInterval(() => {}, 1000)'], { cwd, signal: controller.signal })
+    setTimeout(() => controller.abort(), 100)
+    expect(await cancelled).toMatchObject({ cancelled: true })
+    await expect(runCommand(['no-such-program-xyz', '--flag'], { cwd })).rejects.toThrow()
+    const already = new AbortController(); already.abort()
+    await expect(runCommand(['node', '-v'], { cwd, signal: already.signal })).rejects.toThrow()
+  }, 30_000)
+
+  it('keeps only the end of enormous output, and stays responsive while it is produced', async () => {
+    const cwd = temporary('coding-flood-')
+    const result = await runCommand(['node', '-e', "for (let i = 0; i < 200000; i++) process.stdout.write('line ' + i + ' ' + 'x'.repeat(40) + '\\n'); console.error('finished')"], { cwd, maxOutput: 4096 })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.length).toBeLessThanOrEqual(4097)
+    expect(result.stdout.startsWith('…')).toBe(true)
+    expect(result.stdout).toContain('line 199999')
+    expect(result.stderr).toBe('finished\n')
+  }, 60_000)
+
+  it('proposed → confirmed → stored → executed → persisted, and the persisted result still carries the same argv after a restart', async () => {
+    const root = temporary('coding-checks-')
+    const path = repository()
+    const first = await boot(root)
+    const agent = await scriptedAgent(first)
+    const project = await first.coding.addProject(path)
+    const { parseCommandLine } = await import('../../shared/coding')
+    const proposed = parseCommandLine('npm test')
+    // What the owner confirmed is what is stored.
+    expect((await first.desktop.repository.setProjectTestCommand(project.id, proposed))!.testCommand).toEqual(['npm', 'test'])
+    const session = (await first.coding.settled((await first.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Look.', { action: 'none' }) })).id))!
+    expect((await first.coding.runChecks(session.id))!.argv).toEqual(['npm', 'test'])
+    await first.coding.idle()
+    await shutdown(first)
+    const second = await boot(root)
+    expect((await second.desktop.repository.project(project.id))!.testCommand).toEqual(['npm', 'test'])
+    const stored = (await second.desktop.repository.codingSession(session.id))!.commands
+    expect(stored).toHaveLength(1)
+    expect(stored[0]).toMatchObject({ argv: ['npm', 'test'], exitCode: 1 })
+  }, 60_000)
+})
+
+describe('approvals belong to one running session', () => {
+  const pidfile = (): string => join(temporary('coding-appr-pids-'), 'pids')
+  const started = (pids: string): Promise<void> => waitUntil(() => existsSync(pids) && readFileSync(pids, 'utf8').includes('\n'))
+  const ask = (booted: Booted, agentId: string, command: string): Promise<void> => {
+    const config = booted.desktop.repository.agent(agentId)
+    return config.then(agent => (booted.runtime as unknown as { permissions: { authorize: (...args: unknown[]) => Promise<void> } }).permissions.authorize(agent!, {
+      requester: agent!.name, requesterId: agent!.id, requesterKind: 'agent', roomName: agent!.name, context: 'direct', capability: 'otherTools',
+      operation: 'Claude: Bash', details: JSON.stringify({ tool: 'Bash', input: { command } }) }, undefined, true))
+  }
+
+  it('names the agent, project, session and folder it is for, and an answer is applied once', async () => {
+    const booted = await boot()
+    const path = repository()
+    const agent = await scriptedAgent(booted)
+    const project = await booted.coding.addProject(path, 'Scoped')
+    const pids = pidfile()
+    const session = await booted.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Hang.', { action: 'hang', pidfile: pids }) })
+    await started(pids)
+    const decision = ask(booted, agent.id, 'npm test')
+    await waitUntil(() => booted.coding.activity()[0]?.state === 'awaiting-approval')
+    const request = booted.coding.activity()[0].approval!
+    expect(request).toMatchObject({ agentId: agent.id, codingSession: { id: session.id, projectName: 'Scoped', workingDirectory: path } })
+    booted.runtime.resolveAgentPermission(request.id, true)
+    await decision
+    // The same answer cannot be used a second time.
+    expect(() => booted.runtime.resolveAgentPermission(request.id, true)).toThrow(/no longer available/)
+    await booted.coding.cancel(session.id)
+  }, 60_000)
+
+  it('is withdrawn when the session is cancelled while it waits; a late answer authorizes nothing', async () => {
+    const booted = await boot()
+    const path = repository()
+    const agent = await scriptedAgent(booted)
+    const project = await booted.coding.addProject(path)
+    const pids = pidfile()
+    const session = await booted.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Hang.', { action: 'hang', pidfile: pids }) })
+    await started(pids)
+    const decision = ask(booted, agent.id, 'rm -rf build')
+    const rejected = expect(decision).rejects.toThrow(/cancelled/)
+    await waitUntil(() => booted.coding.activity()[0]?.state === 'awaiting-approval')
+    const stale = booted.coding.activity()[0].approval!.id
+    await booted.coding.cancel(session.id)
+    await rejected
+    expect(booted.runtime.ephemeralState().permissionRequests).toEqual([])
+    expect(() => booted.runtime.resolveAgentPermission(stale, true)).toThrow(/no longer available/)
+    await booted.coding.idle()
+    expect((await booted.desktop.repository.codingSession(session.id))!.events.map(event => event.label)).toContain('Approval cancelled')
+  }, 60_000)
+
+  it('is withdrawn when the session ends by itself while a request is pending', async () => {
+    const booted = await boot()
+    const path = repository()
+    const agent = await scriptedAgent(booted)
+    const project = await booted.coding.addProject(path)
+    const pids = pidfile()
+    const session = await booted.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Hang.', { action: 'hang', pidfile: pids }) })
+    await started(pids)
+    const decision = ask(booted, agent.id, 'npm publish')
+    const rejected = expect(decision).rejects.toThrow(/cancelled/)
+    await waitUntil(() => booted.coding.activity()[0]?.state === 'awaiting-approval')
+    const stale = booted.coding.activity()[0].approval!.id
+    // The agent process dies on its own.
+    for (const pid of readFileSync(pids, 'utf8').split('\n').filter(Boolean).map(Number)) { try { process.kill(pid, 'SIGKILL') } catch { /* gone */ } }
+    const done = (await booted.coding.settled(session.id))!
+    expect(done.status).not.toBe('running')
+    await rejected
+    expect(() => booted.runtime.resolveAgentPermission(stale, true)).toThrow(/no longer available/)
+    expect(booted.coding.activity()).toEqual([])
+  }, 60_000)
+
+  it('does not survive an orderly shutdown, and an approval asked in one session cannot be used in the next', async () => {
+    const root = temporary('coding-appr-shutdown-')
+    const path = repository()
+    const first = await boot(root)
+    const agent = await scriptedAgent(first)
+    const project = await first.coding.addProject(path)
+    const pids = pidfile()
+    const session = await first.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Hang.', { action: 'hang', pidfile: pids }) })
+    await started(pids)
+    const decision = ask(first, agent.id, 'npm test')
+    const rejected = expect(decision).rejects.toThrow(/cancelled/)
+    await waitUntil(() => first.coding.activity()[0]?.state === 'awaiting-approval')
+    const stale = first.coding.activity()[0].approval!.id
+    await shutdown(first)
+    await rejected
+    const second = await boot(root)
+    expect(second.runtime.ephemeralState().permissionRequests).toEqual([])
+    expect(second.coding.activity()).toEqual([])
+    expect(() => second.runtime.resolveAgentPermission(stale, true)).toThrow(/no longer available/)
+    expect((await second.desktop.repository.codingSession(session.id))!.status).toBe('cancelled')
+    // Continuing starts a new run that has to ask again.
+    await second.coding.continue(session.id, taskText('Look.', { action: 'none' }))
+    expect((await second.coding.settled(session.id))!.status).toBe('succeeded')
+  }, 90_000)
+})
+
+describe('the process is ephemeral; the session is not', () => {
+  const pidfile = (): string => join(temporary('coding-orphan-pids-'), 'pids')
+
+  /** A crash: FeltDB stops, the agent process is left running exactly as `kill -9` on the app would leave it. */
+  async function crash(booted: Booted): Promise<void> {
+    void booted.coding.idle() // the abandoned turn will fail against a closed database; nobody is left to care
+    await booted.desktop.repository.close()
+    running.splice(running.indexOf(booted), 1)
+    abandoned.push(booted)
+  }
+  const abandoned: Booted[] = []
+  afterEach(() => { for (const booted of abandoned.splice(0)) booted.runtime.cancelAll() })
+
+  it('after a crash the next start stops the old agent before anything else: it cannot keep changing the repository', async () => {
+    const root = temporary('coding-crash-orphan-')
+    const path = repository()
+    const first = await boot(root)
+    const agent = await scriptedAgent(first)
+    const project = await first.coding.addProject(path)
+    const pids = pidfile()
+    const session = await first.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Keep editing.', { action: 'mutate-forever', pidfile: pids, target: 'growing.log' }) })
+    await waitUntil(() => existsSync(pids) && readFileSync(pids, 'utf8').includes('\n'))
+    const pid = Number(readFileSync(pids, 'utf8').split('\n')[0])
+    const log = join(path, 'growing.log')
+    await waitUntil(() => existsSync(log) && readFileSync(log, 'utf8').length > 10)
+    // The desktop noted the process when it started.
+    for (let attempt = 0; attempt < 200 && !(await first.desktop.repository.processLedger().all()).some(row => row.pid === pid); attempt++) await new Promise(resolve => setTimeout(resolve, 20))
+    expect((await first.desktop.repository.processLedger().all()).some(row => row.pid === pid && row.role === 'agent')).toBe(true)
+
+    await crash(first)
+    expect(alive(pid)).toBe(true)
+
+    const second = await boot(root)
+    expect(second.desktop.reaped.reaped.map(record => record.pid)).toContain(pid)
+    await waitUntil(() => !alive(pid))
+    const size = readFileSync(log, 'utf8').length
+    await new Promise(resolve => setTimeout(resolve, 400))
+    expect(readFileSync(log, 'utf8').length).toBe(size)
+    expect(await second.desktop.repository.processLedger().all()).toEqual([])
+
+    // The session is interrupted, its changes kept, and Continue starts a brand-new process.
+    const interrupted = (await second.desktop.repository.codingSession(session.id))!
+    expect(interrupted.status).toBe('interrupted')
+    expect(second.coding.activity()).toEqual([])
+    expect(second.runtime.ephemeralState().permissionRequests).toEqual([])
+    await second.coding.continue(session.id, taskText('Look.', { action: 'none' }))
+    const again = (await second.coding.settled(session.id))!
+    expect(again.status).toBe('succeeded')
+  }, 90_000)
+
+  it('leaves a process alone whose pid was reused by something else', async () => {
+    const { reapOrphanedProcesses } = await import('../processLedger')
+    const rows = new Map([['a', { id: 'a', pid: process.pid, role: 'agent' as const, identity: 'not-this-process', startedAt: 1 }]])
+    let killed = 0
+    const report = await reapOrphanedProcesses({ put: async () => undefined, remove: async id => { rows.delete(id) }, all: async () => [...rows.values()] }, () => { killed++ })
+    expect(killed).toBe(0)
+    expect(report).toEqual({ reaped: [], stale: 1 })
+    expect(rows.size).toBe(0)
+  })
+})
+
+describe('a large, dirty repository (no model involved)', () => {
+  function bigRepository(): string {
+    const path = temporary('coding big repo ')
+    git(path, 'init', '-q', '-b', 'main'); git(path, 'config', 'user.email', 't@example.com'); git(path, 'config', 'user.name', 'T')
+    for (let i = 0; i < 1200; i++) {
+      const folder = join(path, 'src', `pkg ${i % 12}`, `level${i % 5}`)
+      mkdirSync(folder, { recursive: true })
+      writeFileSync(join(folder, `file ${i}.txt`), `content ${i}\n`.repeat(3))
+    }
+    writeFileSync(join(path, 'big.txt'), 'original line\n'.repeat(10))
+    writeFileSync(join(path, 'ünïcode-名前.txt'), 'x\n')
+    git(path, 'add', '-A'); git(path, 'commit', '-q', '-m', 'big initial')
+    return path
+  }
+
+  it('reads status, diff and accounting correctly on 1,200 tracked files with a messy tree, quickly and boundedly', async () => {
+    const booted = await boot()
+    const path = bigRepository()
+    expect(git(path, 'ls-files').trim().split('\n')).toHaveLength(1202)
+    // Someone's work in progress: edits, a deletion, a staged rename, untracked files nested and with spaces, and a huge change.
+    for (let i = 0; i < 40; i++) writeFileSync(join(path, 'src', `pkg ${i % 12}`, `level${i % 5}`, `file ${i}.txt`), `edited ${i}\n`)
+    rmSync(join(path, 'src', 'pkg 1', 'level1', 'file 1.txt'))
+    git(path, 'mv', join('src', 'pkg 2', 'level2', 'file 2.txt'), join('src', 'pkg 2', 'renamed file 2.txt'))
+    for (let i = 0; i < 25; i++) { mkdirSync(join(path, 'scratch', `dir ${i % 3}`, 'deeper'), { recursive: true }); writeFileSync(join(path, 'scratch', `dir ${i % 3}`, 'deeper', `note ${i}.md`), `n${i}\n`) }
+    writeFileSync(join(path, 'big.txt'), 'a much longer replacement line that makes the patch large\n'.repeat(60_000))
+    writeFileSync(join(path, 'ünïcode-名前.txt'), 'changed\n')
+
+    const started = Date.now()
+    const state = await gitStatus(path, undefined, { fingerprints: true })
+    expect(Date.now() - started).toBeLessThan(15_000)
+    const byPath = new Map(state.changes.map(change => [change.path, change]))
+    expect(state.changes.filter(change => change.code === '??')).toHaveLength(25)
+    expect(byPath.get('src/pkg 1/level1/file 1.txt')?.code).toBe(' D')
+    expect(byPath.get('src/pkg 2/renamed file 2.txt')).toMatchObject({ code: 'RM', from: 'src/pkg 2/level2/file 2.txt' })
+    expect(byPath.get('ünïcode-名前.txt')?.fingerprint).toMatch(/^sha1:/)
+    expect(byPath.get('big.txt')?.fingerprint).toMatch(/^sha1:/)
+    expect(byPath.has('scratch/dir 1/deeper/note 1.md')).toBe(true)
+
+    const patch = await gitDiff(path)
+    expect(patch.truncated).toBe(true)
+    expect(patch.diff.length).toBeLessThanOrEqual(2 * 1024 * 1024 + 1)
+    expect((await gitDiff(path, { path: 'src/pkg 3/level3/file 3.txt' })).diff).toContain('+edited 3')
+
+    // A session on top of that mess is credited only with its own two files.
+    const agent = await scriptedAgent(booted)
+    const project = await booted.coding.addProject(path)
+    const session = (await booted.coding.settled((await booted.coding.start({ projectId: project.id, agentId: agent.id,
+      task: taskText('Touch two files.', { action: 'touch', files: { 'src/pkg 0/level0/file 0.txt': 'agent edit\n', 'scratch/dir 0/deeper/agent output.md': 'new\n' } }) })).id))!
+    expect(session.status).toBe('succeeded')
+    expect(session.changes.filter(change => change.origin === 'session').map(change => change.path).sort()).toEqual(['scratch/dir 0/deeper/agent output.md', 'src/pkg 0/level0/file 0.txt'])
+    expect(session.changes.filter(change => change.origin === 'before')).toHaveLength(state.changes.length - 1)
+    expect(session.baseline.changes).toHaveLength(state.changes.length)
+
+    // Checks: a passing one and a failing one, argv with spaces, in a folder with spaces; then cancellation.
+    const passing = await booted.coding.runCommand(session.id, ['node', '-e', "process.stdout.write(require('node:fs').readdirSync('src').length + ' packages')"], { event: 'checks' })
+    expect(passing).toMatchObject({ exitCode: 0, stdout: '12 packages' })
+    expect(await booted.coding.runCommand(session.id, ['node', '-e', 'process.exit(4)'], { event: 'checks' })).toMatchObject({ exitCode: 4 })
+    const pending = booted.coding.runCommand(session.id, ['node', '-e', 'setInterval(() => {}, 1000)'])
+    setTimeout(() => { void booted.desktop.repository.updateCodingSession(session.id, { status: 'running' }); (booted.coding as unknown as { aborts: Map<string, Set<AbortController>> }).aborts.get(session.id)?.forEach(abort => abort.abort()) }, 200)
+    expect(await pending).toMatchObject({ cancelled: true })
+  }, 120_000)
 })
 
 async function waitUntil(condition: () => boolean, timeoutMs = 20_000): Promise<void> {

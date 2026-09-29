@@ -17,7 +17,7 @@ const session = (patch: Partial<CodingSession> = {}): CodingSession => ({
 })
 const request: PermissionRequest = { id: 'r1', agentId: 'a1', agentName: 'Coder', requester: 'Coder', capability: 'otherTools', operation: 'Claude: Bash', roomName: 'Coder', createdAt: 2000,
   details: JSON.stringify({ tool: 'Bash', input: { command: 'npm test | head' } }) }
-const approval = (): CodingActivity => ({ sessionId: 's1', state: 'awaiting-approval', label: 'Waiting for approval: Run npm test | head', since: 2000, approval: request })
+const approval = (): CodingActivity => ({ sessionId: 's1', state: 'awaiting-approval', label: 'Waiting for approval: Run npm test | head', source: 'douchat', since: 2000, approval: request })
 
 let api: Record<string, ReturnType<typeof vi.fn>>
 let node: HTMLDivElement
@@ -57,7 +57,7 @@ it.each([['failed', 'Failed'], ['cancelled', 'Cancelled'], ['running', 'Running'
 })
 
 it('says a running session is running, with its live activity, and can cancel it', async () => {
-  await panel({ status: 'running', finishedAt: undefined }, { sessionId: 's1', state: 'running', label: 'Running npm test', since: 1 })
+  await panel({ status: 'running', finishedAt: undefined }, { sessionId: 's1', state: 'running', label: 'Running npm test', source: 'agent', since: 1 })
   expect(node.querySelector('.coding-activity')!.textContent).toContain('Running npm test')
   await click('Cancel session')
   expect(api.cancelCodingSession).toHaveBeenCalledWith('s1')
@@ -91,12 +91,20 @@ it('names an edit by its path in the project, and can cancel the whole session f
   expect(api.resolveAgentPermission).not.toHaveBeenCalled()
 })
 
-it('shows changed files from Git, a tracked file’s diff, and says an untracked file has none', async () => {
-  api.projectGitStatus.mockResolvedValue({ branch: 'main', changes: [{ path: 'src/math.js', code: ' M' }, { path: 'src/new-file.js', code: '??' }] })
+it('separates what changed during the session from what was already modified, and shows a tracked diff but not an untracked one', async () => {
   api.projectGitDiff.mockResolvedValue({ diff: '-  return a - b\n+  return a + b\n', truncated: false })
-  await panel()
+  await panel({
+    baseline: { head: 'aaaa1111', changes: [{ path: 'wip.txt', code: ' M' }] },
+    changes: [{ path: 'src/math.js', code: ' M', origin: 'session' }, { path: 'src/new-file.js', code: '??', origin: 'session' }, { path: 'wip.txt', code: ' M', origin: 'before' }],
+    cleaned: ['scratch.txt'], finalHead: 'bbbb2222'
+  })
+  const sections = [...node.querySelectorAll('.coding-subheading')].map(item => item.textContent!.replace(/\s+/g, ' ').trim())
+  expect(sections).toEqual(['Changed during this session (2)', 'Already modified (1)'])
   const rows = [...node.querySelectorAll('.coding-changes li')].map(item => item.textContent!.replace(/\s+/g, ' ').trim())
-  expect(rows).toEqual(['M src/math.js', '?? src/new-file.js'])
+  expect(rows).toEqual(['M src/math.js Modified', '?? src/new-file.js Untracked', 'M wip.txt Modified'])
+  expect(node.textContent).toContain('not who changed them')
+  expect(node.textContent).toContain('scratch.txt')
+  expect(node.textContent).toContain('aaaa1111'); expect(node.textContent).toContain('bbbb2222')
   await click(/src\/math\.js/)
   expect(api.projectGitDiff).toHaveBeenCalledWith('p1', 'src/math.js')
   expect(node.querySelector('.coding-diff')!.textContent).toContain('+  return a + b')
@@ -106,10 +114,17 @@ it('shows changed files from Git, a tracked file’s diff, and says an untracked
   expect(node.textContent).toContain('Untracked — not included in git diff')
 })
 
-it('falls back to the changes the session recorded when Git cannot be read', async () => {
-  api.projectGitStatus.mockRejectedValue(new Error('gone'))
-  await panel({ changes: [{ path: 'a.ts', code: ' M' }] })
-  expect(node.querySelector('.coding-changes')!.textContent).toContain('a.ts')
+it('while running, compares the repository as it is now with how it was at the start', async () => {
+  api.projectGitStatus.mockResolvedValue({ branch: 'main', changes: [{ path: 'wip.txt', code: ' M', fingerprint: 'sha1:same' }, { path: 'agent.ts', code: '??', fingerprint: 'sha1:new' }] })
+  await panel({ status: 'running', finishedAt: undefined, baseline: { changes: [{ path: 'wip.txt', code: ' M', fingerprint: 'sha1:same' }] } })
+  const rows = [...node.querySelectorAll('.coding-changes')].map(list => [...list.querySelectorAll('li')].map(item => item.textContent!.replace(/\s+/g, ' ').trim()))
+  expect(rows).toEqual([['?? agent.ts Untracked'], ['M wip.txt Modified']])
+})
+
+it('says so when nothing changed during the session, even if the tree was dirty before', async () => {
+  await panel({ baseline: { changes: [{ path: 'wip.txt', code: ' M' }] }, changes: [{ path: 'wip.txt', code: ' M', origin: 'before' }] })
+  expect(node.textContent).toContain('No files changed during this session.')
+  expect(node.textContent).toContain('Already modified')
 })
 
 it('runs the project check and shows ✓ or ✗ with bounded output', async () => {
@@ -132,7 +147,8 @@ it('says an interrupted session was interrupted, and Continue starts it again wi
   await panel({ status: 'interrupted', error: 'The app closed while this coding session was running. Its process did not survive.' })
   expect(node.querySelector('[role=status]')!.textContent).toContain('Interrupted')
   expect(node.textContent).toContain('This session was interrupted when Douchat closed.')
-  expect(node.textContent).toContain('does not reattach to the old process')
+  expect(node.textContent).toContain('A new agent process will be started in this project. The previous process will not be resumed.')
+  expect(node.textContent).toContain('Continue will start a new conversation with the existing project/session context.')
   await click('Continue')
   expect(api.continueCodingSession).toHaveBeenCalledWith('s1')
 })

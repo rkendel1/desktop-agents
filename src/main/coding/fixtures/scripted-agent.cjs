@@ -41,6 +41,18 @@ if (task.action === 'fix-add') {
   lines.push(`git-after=${run('git', ['status', '--porcelain']).out.trim()}`)
   console.log(lines.join('\n'))
   if (task.log) appendFileSync(task.log, `end ${task.name} ${Date.now()}\n`)
+} else if (task.action === 'touch') {
+  // Rewrites the named files (creating folders as needed), the way an agent editing a dirty tree would.
+  const { mkdirSync } = require('node:fs')
+  for (const [name, content] of Object.entries(task.files)) {
+    mkdirSync(require('node:path').dirname(`${cwd}/${name}`), { recursive: true })
+    writeFileSync(`${cwd}/${name}`, content)
+  }
+  console.log(lines.join('\n'))
+} else if (task.action === 'mutate-forever') {
+  // An agent that keeps changing the repository until it is stopped — for proving nothing survives the session.
+  writeFileSync(task.pidfile, `${process.pid}\n`)
+  setInterval(() => appendFileSync(`${cwd}/${task.target}`, 'tick\n'), 40)
 } else if (task.action === 'hang') {
   // A child that would outlive its parent if nothing cleaned up the process group.
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })

@@ -89,6 +89,16 @@ app desktop {
     updatedAt: integer
   }
 
+  // A note of the agent/command processes Douchat started, so the next start can stop any the last run left behind.
+  collection AgentProcess {
+    id: text
+    pid: integer
+    role: text
+    identity: text
+    cwd: text?
+    startedAt: integer
+  }
+
   collection RuntimeBinding {
     id: text
     agentId: text

@@ -7,6 +7,7 @@ import { configureLocalWorkspaces } from './localWorkspaces'
 import { migrateLegacyState, type MigrationReport } from './legacy/migrate'
 import { FeltDatabaseError } from './felt/database'
 import { configureLocalAgentRegistry } from './localAgents'
+import { configureProcessLedger, reapOrphanedProcesses, type ReapReport } from './processLedger'
 import { importLocalAgentFile } from './legacy/localAgentRegistry'
 
 /**
@@ -29,6 +30,8 @@ export interface DesktopState {
   providers: CustomModelStore
   imStorage: FeltIMChannelStorage
   migration: MigrationReport
+  /** Agent processes a previous run left behind, stopped before anything else started. */
+  reaped: ReapReport
   /** FeltDB's durable state directory. */
   databaseDirectory: string
 }
@@ -49,6 +52,10 @@ export async function startDesktop(options: StartDesktopOptions): Promise<Deskto
     throw new DesktopStartupError(`The local desktop database could not be opened. ${detail}`, error)
   }
   try {
+    // Before any agent can start: whatever the last run left running in a project folder is stopped first.
+    const ledger = repository.processLedger()
+    const reaped = await reapOrphanedProcesses(ledger)
+    configureProcessLedger(ledger)
     const vault = new CredentialVault(join(options.userData, 'credentials'), options.codec)
     const providers = new CustomModelStore(repository, vault)
     const imStorage = new FeltIMChannelStorage(repository, vault)
@@ -61,7 +68,7 @@ export async function startDesktop(options: StartDesktopOptions): Promise<Deskto
     await importLocalAgentFile(repository, join(options.userData, 'local-agents.json'))
     // Migration finishes before anything else can read the repository.
     const migration = await migrateLegacyState(repository, { userData: options.userData, codec: options.codec, vault, imStorage })
-    return { repository, vault, providers, imStorage, migration, databaseDirectory: repository.felt.directory }
+    return { repository, vault, providers, imStorage, migration, reaped, databaseDirectory: repository.felt.directory }
   } catch (error) {
     await repository.close()
     throw new DesktopStartupError(`The local desktop could not start. ${error instanceof Error ? error.message : String(error)}`, error)
@@ -70,5 +77,6 @@ export async function startDesktop(options: StartDesktopOptions): Promise<Deskto
 
 /** Stop cleanly: finish the writes in flight, close FeltDB and release its lock. */
 export async function stopDesktop(state: DesktopState | undefined): Promise<void> {
+  configureProcessLedger(undefined)
   await state?.repository.close()
 }

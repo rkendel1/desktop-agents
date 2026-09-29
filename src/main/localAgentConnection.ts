@@ -1,3 +1,4 @@
+import { trackProcess } from './processLedger'
 import type { LocalProgress, ProgressListener, LocalToolApproval, LocalApprovalHandler } from '../shared/agentExecutor'
 export type { LocalProgress, ProgressListener, LocalToolApproval, LocalApprovalHandler } from '../shared/agentExecutor'
 import { appendLocalAgentArguments } from '../shared/localAgentArguments'
@@ -67,6 +68,7 @@ export class LocalAgentConnection {
     this.child = spawn(command.file, [...command.prefix, ...appendLocalAgentArguments(this.kind === 'claude' ? withLocalModel('claude', withLocalThinking('claude', args, thinking), model) : args, extraArgs)], {
       cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe']
     })
+    trackProcess(this.child, { role: 'connection', cwd })
     this.child.stdout.setEncoding('utf8')
     this.child.stderr.setEncoding('utf8')
     this.child.stdout.on('data', (chunk: string) => this.read(chunk))

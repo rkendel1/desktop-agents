@@ -22,7 +22,7 @@ import { DESKTOP_SCHEMA_VERSION, FeltDatabase, FeltDatabaseError, type Batch, ty
 import {
   agentFromRecord, agentToRecord, codingSessionFromRecord, codingSessionToRecord, projectFromRecord, conversationFromParts, conversationParts, eventFromRecord, eventToRecord, messageFromRecord,
   messageToRecord, privateMessageFromRecord, privateMessageToRecord, routineFromRecord, routineToRecord, runFromRecord, runToRecord,
-  type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CodingSessionRecord, type ExecutionEventRecord, type LocalAgentDefinitionRecord, type GroupMemberRecord, type GroupRecord,
+  type AgentProcessRow, type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CodingSessionRecord, type ExecutionEventRecord, type LocalAgentDefinitionRecord, type GroupMemberRecord, type GroupRecord,
   type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord, type SessionRecord, type TopicRecord, type WorkspaceRecord
 } from './felt/records'
 import { MemoryRepository, type MemoryRecord } from './memoryRepository'
@@ -151,6 +151,7 @@ export class DesktopRepository {
   private readonly workspaces: Records<WorkspaceRecord>
   private readonly codingRows: Records<CodingSessionRecord>
   private readonly localAgentRows: Records<LocalAgentDefinitionRecord>
+  private readonly processRows: Records<AgentProcessRow>
   private readonly sessions: Records<SessionRecord>
   private readonly topics: Records<TopicRecord>
   private readonly groups: Records<GroupRecord>
@@ -185,6 +186,7 @@ export class DesktopRepository {
     this.workspaces = felt.collection('Workspace')
     this.codingRows = felt.collection('CodingSession')
     this.localAgentRows = felt.collection('LocalAgentDefinition')
+    this.processRows = felt.collection('AgentProcess')
     this.sessions = felt.collection('Session')
     this.topics = felt.collection('Topic')
     this.groups = felt.collection('Group')
@@ -1463,6 +1465,15 @@ export class DesktopRepository {
     return rows.map(codingSessionFromRecord)
   }
 
+  /** Processes Douchat started and is responsible for (see processLedger.ts). Not their state — a note for the next start. */
+  processLedger(): { put(record: AgentProcessRow): Promise<void>; remove(id: string): Promise<void>; all(): Promise<AgentProcessRow[]> } {
+    return {
+      put: async record => { await this.processRows.put(record) },
+      remove: async id => { await this.processRows.delete(id) },
+      all: () => this.processRows.all()
+    }
+  }
+
   async codingSession(id: string): Promise<CodingSession | undefined> {
     const record = await this.codingRows.get(id)
     return record ? codingSessionFromRecord(record) : undefined
@@ -1527,7 +1538,7 @@ export class DesktopRepository {
       for (const row of interrupted) {
         const current = codingSessionFromRecord(row)
         const next: CodingSession = { ...current, status: 'interrupted', finishedAt: now, error: 'The app closed while this coding session was running. Its process did not survive.',
-          events: [...current.events, { at: now, kind: 'finished' as const, label: 'Interrupted when Douchat closed' }].slice(-MAX_CODING_EVENTS) }
+          events: [...current.events, { at: now, kind: 'interrupted' as const, label: 'Interrupted when Douchat closed' }].slice(-MAX_CODING_EVENTS) }
         await this.codingRows.put(codingSessionToRecord(next))
         recovered.push(next)
       }

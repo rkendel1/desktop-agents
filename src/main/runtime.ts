@@ -3130,6 +3130,9 @@ export class DouchatRuntime {
   /** Told when a permission request appears and how it ends. */
   observePermissions(observer: ((event: import('./agentPermissions').PermissionEvent) => void) | undefined): void { this.permissions.observe(observer) }
 
+  /** Withdraw every pending approval and reusable grant of an agent. Nothing granted before this point authorizes anything after it. */
+  expirePermissions(agentId: string): void { this.permissions.cancelAgent(agentId) }
+
   /** After this, no new work is accepted; work already under way finishes or is cancelled by its owner. */
   stopAccepting(): void { this.closing = true }
 

@@ -653,6 +653,14 @@ export interface GitChange {
   code: string
   /** Original path for a rename or copy. */
   from?: string
+  /** Identifies the file's content when the state was read (content hash, or size and time for a large file). Absent for deleted files. */
+  fingerprint?: string
+  /**
+   * Set on a session's final changes. `before`: dirty in the same way when the session started.
+   * `session`: not dirty at the start, or dirty in a different way, so something changed it while the
+   * session was running. Git cannot say *who* — the agent, a person, or a tool — only when.
+   */
+  origin?: 'before' | 'session'
 }
 
 export interface GitState {
@@ -703,13 +711,17 @@ export interface CodingSession {
   /** Repository state when the session began, and what changed by the end. */
   baseline: GitState
   changes: GitChange[]
+  /** Paths that were dirty when the session started and are clean now. */
+  cleaned?: string[]
+  /** HEAD when the session last ended, to show whether commits were made meanwhile. */
+  finalHead?: string
   /** Checks Douchat ran in the project for this session. */
   commands: CommandResult[]
   /** What happened, in order: meaningful outcomes only (never every progress tick). Bounded. */
   events: CodingEvent[]
 }
 
-export type CodingEventKind = 'started' | 'continued' | 'approval-requested' | 'approval-allowed' | 'approval-denied' | 'command' | 'checks' | 'changes' | 'finished'
+export type CodingEventKind = 'started' | 'continued' | 'approval-requested' | 'approval-allowed' | 'approval-denied' | 'command' | 'checks' | 'changes' | 'finished' | 'interrupted'
 
 export interface CodingEvent {
   at: number
@@ -727,6 +739,12 @@ export interface CodingActivity {
   state: 'running' | 'awaiting-approval'
   /** What the agent is doing, in words. */
   label: string
+  /**
+   * Where `label` comes from, so a screen never shows more than is known: `agent` — the CLI reported it itself
+   * (a tool it is running, a step it is on); `douchat` — Douchat knows it (an approval, a check it is running);
+   * `none` — the agent has reported nothing, and the label is only that it is running.
+   */
+  source: 'agent' | 'douchat' | 'none'
   since: number
   /** Present while the session waits for the owner to decide. */
   approval?: PermissionRequest

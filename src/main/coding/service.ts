@@ -5,7 +5,7 @@ import type { DesktopRepository } from '../desktopRepository'
 import { resolveSavedWorkspace, validateWorkspaceFolder } from '../localWorkspaces'
 import type { EphemeralState } from '../projection'
 import { runCommand } from './commands'
-import { gitDiff, gitRoot, gitStatus } from './git'
+import { accountChanges, gitDiff, gitRoot, gitStatus } from './git'
 
 /** What the service needs from the agent runtime: run a turn in a chat, stop it, and tell it what is going on. */
 export interface CodingRuntime {
@@ -13,6 +13,8 @@ export interface CodingRuntime {
   stopConversation(conversationId: string): Promise<void>
   ephemeralState?(): EphemeralState
   setTurnGuard?(guard: ((turn: { conversationId: string; topicId: string }) => Promise<void>) | undefined): void
+  /** Withdraw an agent's pending approvals and reusable grants. */
+  expirePermissions?(agentId: string): void
   observePermissions?(observer: ((event: PermissionEvent) => void) | undefined): void
 }
 
@@ -22,7 +24,7 @@ const RESUME_PROMPT = 'Continue where you left off. Check the repository’s cur
 const INTERRUPTED_PROMPT = 'Your previous turn was interrupted when Douchat closed, so its process is gone. Check the repository’s current state and continue the task.'
 
 /** Live facts about one running session: the process side of it, gone when the app closes. */
-interface Live { sessionId: string; agentId: string; conversationId: string; projectName: string; since: number }
+interface Live { sessionId: string; agentId: string; conversationId: string; projectName: string; workingDirectory: string; task: string; since: number }
 
 /**
  * Coding sessions: an agent working in a project folder.
@@ -72,7 +74,7 @@ export class CodingService {
 
   async gitStatus(projectId: string): Promise<GitState> {
     const { directory } = await this.requireProject(projectId)
-    return gitStatus(directory)
+    return gitStatus(directory, undefined, { fingerprints: true })
   }
 
   async gitDiff(projectId: string, path?: string): Promise<{ diff: string; truncated: boolean }> {
@@ -117,10 +119,10 @@ export class CodingService {
     const topic = await this.repository.createTopic(conversation.id)
     if (!topic) throw new Error('Could not open a topic for this session.')
     await this.repository.renameTopic(conversation.id, topic.id, `Coding: ${task}`.slice(0, 80))
-    const baseline = project.isGit ? await gitStatus(directory) : { changes: [] }
+    const baseline = project.isGit ? await gitStatus(directory, undefined, { fingerprints: true }) : { changes: [] }
     const session = await this.repository.createCodingSession({
       projectId: project.id, agentId: agent.id, conversationId: conversation.id, topicId: topic.id, workingDirectory: directory,
-      task, status: 'running', startedAt: Date.now(), baseline, events: [{ at: Date.now(), kind: 'started', label: 'Agent started', detail: task.slice(0, 200) }]
+      task, status: 'running', startedAt: Date.now(), baseline, events: [{ at: Date.now(), kind: 'started', label: 'Agent started', detail: `${task.slice(0, 200)}${baseline.changes.length ? ` — ${baseline.changes.length} file${baseline.changes.length === 1 ? ' was' : 's were'} already modified` : ''}` }]
     })
     this.turns.set(session.id, this.execute(session, project, directory, task))
     return session
@@ -153,9 +155,11 @@ export class CodingService {
 
   private async execute(session: CodingSession, project: Project, directory: string, prompt: string): Promise<CodingSession> {
     const started = session.startedAt ?? Date.now()
-    this.live.set(session.id, { sessionId: session.id, agentId: session.agentId, conversationId: session.conversationId, projectName: project.name, since: started })
+    this.live.set(session.id, { sessionId: session.id, agentId: session.agentId, conversationId: session.conversationId, projectName: project.name, workingDirectory: directory, task: session.task, since: started })
     this.onActivityChange()
     let failure: string | undefined
+    // Whatever an earlier session was granted or asked is withdrawn: an approval belongs to one running session.
+    this.runtime.expirePermissions?.(session.agentId)
     try {
       // The folder is checked, never changed, before the turn: a mismatch stops the session instead of retargeting it.
       const conversation = await this.repository.conversation(session.conversationId)
@@ -164,18 +168,26 @@ export class CodingService {
       // Cancelled before the agent was ever started: there is nothing to stop.
       if (!this.cancelled.has(session.id)) await this.runtime.sendMessage(session.conversationId, prompt)
     } catch (error) { failure = error instanceof Error ? error.message : String(error) }
+    // The session is over, so anything still waiting for an answer can no longer be approved.
+    this.runtime.expirePermissions?.(session.agentId)
     const run = (await this.repository.runs()).filter(item => item.conversationId === session.conversationId && item.createdAt >= started).sort((a, b) => b.createdAt - a.createdAt)[0]
     const reply = (await this.repository.topicMessages(session.conversationId, session.topicId)).filter(message => message.authorId === session.agentId && message.kind === 'message' && message.createdAt >= started).at(-1)
     let status: CodingSession['status'] = 'succeeded'
     if (this.cancelled.has(session.id) || run?.status === 'cancelled') status = 'cancelled'
     else if (failure || !run || run.status === 'failed' || run.status === 'interrupted') status = 'failed'
-    const changes = project.isGit ? await gitStatus(directory).then(state => state.changes, () => session.changes) : []
+    // Compared with the state at the start of the *first* turn: what was already dirty is never credited to the session.
+    const finalState = project.isGit ? await gitStatus(directory, undefined, { fingerprints: true }).catch(() => undefined) : undefined
+    const { changes, cleaned } = finalState ? accountChanges(session.baseline.changes, finalState.changes) : { changes: session.changes, cleaned: session.cleaned ?? [] }
     this.cancelled.delete(session.id)
     const error = failure ?? run?.error
-    await this.record(session.id, { kind: 'changes', label: changes.length ? `${changes.length} file${changes.length === 1 ? '' : 's'} changed` : 'No files changed' })
+    const during = changes.filter(change => change.origin === 'session').length
+    const already = changes.length - during
+    const headMoved = finalState?.head !== undefined && session.baseline.head !== undefined && finalState.head !== session.baseline.head
+    await this.record(session.id, { kind: 'changes', label: during ? `${during} file${during === 1 ? '' : 's'} changed during this session` : 'No files changed during this session',
+      detail: [already ? `${already} already modified before it started` : '', cleaned.length ? `${cleaned.length} modified before, clean now` : '', headMoved ? 'HEAD moved to a new commit' : ''].filter(Boolean).join(' · ') || undefined })
     await this.record(session.id, { kind: 'finished', label: status === 'succeeded' ? 'Agent finished' : status === 'cancelled' ? 'Cancelled' : 'Failed', ...(error ? { detail: error.slice(0, 300) } : {}) })
     const finished = await this.repository.updateCodingSession(session.id, {
-      status, finishedAt: Date.now(), changes, ...(run ? { runId: run.id } : {}), ...(reply ? { result: reply.text } : {}), ...(error ? { error } : { error: undefined })
+      status, finishedAt: Date.now(), changes, cleaned, ...(finalState?.head ? { finalHead: finalState.head } : {}), ...(run ? { runId: run.id } : {}), ...(reply ? { result: reply.text } : {}), ...(error ? { error } : { error: undefined })
     })
     this.live.delete(session.id)
     this.onActivityChange()
@@ -239,11 +251,14 @@ export class CodingService {
       const approval = state?.permissionRequests.find(request => request.agentId === live.agentId)
       if (approval) {
         const { verb, target } = describeApproval(approval)
-        return { sessionId: live.sessionId, state: 'awaiting-approval', label: `Waiting for approval: ${verb} ${target}`.slice(0, 200), since: approval.createdAt, approval }
+        return { sessionId: live.sessionId, state: 'awaiting-approval', label: `Waiting for approval: ${verb} ${target}`.slice(0, 200), since: approval.createdAt, source: 'douchat',
+          approval: { ...approval, codingSession: { id: live.sessionId, projectName: live.projectName, workingDirectory: live.workingDirectory, task: live.task } } }
       }
       const conversation = state?.activity.find(item => item.conversationId === live.conversationId)
-      const label = conversation?.localProgress?.detail || (conversation?.action ? `Running ${conversation.action.tool}` : undefined) || (conversation ? conversation.label : undefined) || 'Running…'
-      return { sessionId: live.sessionId, state: 'running', label: String(label).slice(0, 200), since: live.since }
+      // Only what the agent itself reported is shown as its activity; with nothing reported, the label says so.
+      const reported = conversation?.localProgress?.detail || (conversation?.action ? `Running ${conversation.action.tool}` : undefined)
+      if (reported) return { sessionId: live.sessionId, state: 'running', label: String(reported).slice(0, 200), source: 'agent', since: live.since }
+      return { sessionId: live.sessionId, state: 'running', label: 'Running…', source: 'none', since: live.since }
     })
   }
 
@@ -251,7 +266,7 @@ export class CodingService {
   private permission(event: PermissionEvent): void {
     const live = [...this.live.values()].find(item => item.agentId === event.request.agentId)
     if (!live) return
-    const { verb, target } = describeApproval(event.request)
+    const { verb, target } = describeApproval(event.request, live.workingDirectory)
     if (event.kind === 'requested') void this.record(live.sessionId, { kind: 'approval-requested', label: 'Approval requested', detail: `${verb} ${target}` })
     else if (event.outcome === 'allowed') void this.record(live.sessionId, { kind: 'approval-allowed', label: 'Allowed', detail: `${verb} ${target}` })
     else void this.record(live.sessionId, { kind: 'approval-denied', label: event.outcome === 'declined' ? 'Denied' : `Approval ${event.outcome}`, detail: `${verb} ${target}` })

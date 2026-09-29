@@ -39,4 +39,6 @@ export interface PermissionRequest {
   operation: string
   details: string
   createdAt: number
+  /** Set on approvals asked during a coding session: exactly which session and folder it is for. */
+  codingSession?: { id: string; projectName: string; workingDirectory: string; task: string }
 }

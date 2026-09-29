@@ -1,3 +1,4 @@
+import { trackProcess } from './processLedger'
 import type { LocalAgentImage, LocalAgentReply, LocalRunOptions } from '../shared/agentExecutor'
 export type { LocalAgentImage, LocalAgentReply, LocalRunOptions } from '../shared/agentExecutor'
 import { appendLocalAgentArguments, customLocalAgentArguments } from '../shared/localAgentArguments'
@@ -372,6 +373,7 @@ async function executeLocalAgent(
         cwd: directory, env: childEnvironment, windowsHide: true, detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe']
       })
+      trackProcess(child, { role: 'agent', cwd: directory })
       let stdout = ''
       let stderr = ''
       let bytes = 0

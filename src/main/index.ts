@@ -999,7 +999,7 @@ app.whenReady().then(async () => {
     if (!argv.length) return store.setProjectTestCommand(id, undefined)
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options = { type: 'question' as const, message: ui('Run this command as the check for this project?', '将此命令设为该项目的检查命令？'),
-      detail: `${formatCommandLine(argv)}\n\n${ui('It will run on this computer in', '点击“运行检查”时将在此电脑上运行，目录：')} ${project.path}`,
+      detail: `${formatCommandLine(argv)}\n\n${ui('Program', '程序')}: ${argv[0]}\n${argv.slice(1).map((part, index) => `${ui('Argument', '参数')} ${index + 1}: ${JSON.stringify(part)}`).join('\n')}\n\n${ui('It will run on this computer in', '点击“运行检查”时将在此电脑上运行，目录：')} ${project.path}`,
       buttons: [ui('Cancel', '取消'), ui('Use this command', '使用此命令')], defaultId: 0, cancelId: 0 }
     const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
     if (result.response !== 1) return project

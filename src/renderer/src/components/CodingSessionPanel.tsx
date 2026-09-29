@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
-import { canContinue, changeLabel, codingDisplayState, codingStateLabels, describeApproval, formatCommandLine, isUntracked } from '../../../shared/coding'
-import type { AgentConfig, CodingActivity, CodingSession, CommandResult, GitState, Project } from '../../../shared/types'
+import { canContinue, changeLabel, codingDisplayState, codingStateLabels, continueSemantics, describeApproval, formatCommandLine, groupChanges, isUntracked } from '../../../shared/coding'
+import type { AgentConfig, CodingActivity, CodingSession, CommandResult, GitChange, GitState, Project } from '../../../shared/types'
 import { t } from '../preferences'
 
 const time = (at?: number): string => at ? new Date(at).toLocaleString() : '—'
@@ -36,22 +36,37 @@ export function ApprovalCard({ activity, session, project, agent, onCancel }: {
 function ChangeList({ session, project, live }: { session: CodingSession; project?: Project; live?: GitState }): ReactElement {
   const [selected, setSelected] = useState<string>()
   const [diff, setDiff] = useState<{ diff: string; truncated: boolean } | { error: string }>()
-  const changes = live?.changes ?? session.changes
+  // A running session is compared with the repository as it is now; a finished one keeps what was true when it ended.
+  const source = session.status === 'running' && live ? live.changes : session.changes
+  const { during, already } = groupChanges(source, session.baseline.changes)
+  const cleaned = session.status === 'running' ? [] : session.cleaned ?? []
+  const all = [...during, ...already]
   const select = async (path: string, untracked: boolean): Promise<void> => {
     setSelected(path); setDiff(undefined)
     if (untracked || !project) return
     try { setDiff(await window.douchat.projectGitDiff(project.id, path)) } catch (error) { setDiff({ error: error instanceof Error ? error.message : String(error) }) }
   }
-  const chosen = changes.find(change => change.path === selected)
+  const chosen = all.find(change => change.path === selected)
+  const list = (changes: GitChange[]): ReactElement => <ul className="coding-changes">
+    {changes.map(change => <li key={change.path}>
+      <button className={change.path === selected ? 'active' : ''} onClick={() => void select(change.path, isUntracked(change))}>
+        <code className="coding-change-code">{change.code.replace(/ /g, ' ')}</code> <span className="coding-change-path">{change.path}</span>{" "}
+        <span className={`coding-change-kind${isUntracked(change) ? ' untracked' : ''}`}>{t(changeLabel(change))}</span>
+      </button>
+    </li>)}
+  </ul>
   return <section className="coding-section" aria-label={t('Changed files')}>
     <h3>{t('Changed files')}</h3>
-    {!changes.length ? <p className="muted">{t('No files changed')}</p> : <ul className="coding-changes">
-      {changes.map(change => <li key={change.path}>
-        <button className={change.path === selected ? 'active' : ''} onClick={() => void select(change.path, isUntracked(change))} title={t(changeLabel(change))}>
-          <code className="coding-change-code">{change.code.replace(/ /g, ' ')}</code> <span>{change.path}</span>
-        </button>
-      </li>)}
-    </ul>}
+    <h4 className="coding-subheading">{t('Changed during this session')} <span className="muted">({during.length})</span></h4>
+    {during.length ? list(during) : <p className="muted">{t('No files changed during this session.')}</p>}
+    {!!during.length && <p className="muted coding-note">{t('Git shows that these changed while the session ran, not who changed them.')}</p>}
+    {!!already.length && <>
+      <h4 className="coding-subheading">{t('Already modified')} <span className="muted">({already.length})</span></h4>
+      <p className="muted coding-note">{t('These were modified before the session started and are unchanged since.')}</p>
+      {list(already)}
+    </>}
+    {!!cleaned.length && <p className="muted coding-note">{t('Modified before the session, clean now:')} {cleaned.join(', ')}</p>}
+    {session.finalHead && session.baseline.head && session.finalHead !== session.baseline.head && <p className="coding-note">{t('HEAD moved:')} <code>{session.baseline.head.slice(0, 8)}</code> → <code>{session.finalHead.slice(0, 8)}</code></p>}
     {chosen && (isUntracked(chosen)
       ? <p className="coding-untracked">{t('Untracked — not included in git diff')}</p>
       : diff && ('error' in diff ? <p role="alert">{diff.error}</p>
@@ -68,6 +83,11 @@ function CheckResult({ result }: { result: CommandResult }): ReactElement {
     <span className={ok ? 'coding-ok' : 'coding-bad'}>{ok ? '✓' : '✗'} {result.cancelled ? t('cancelled') : result.timedOut ? t('timed out') : `exit ${result.exitCode ?? result.signal}`}</span>
     {output && <details><summary>{t('Output')}</summary><pre className="coding-output">{output}</pre></details>}
   </li>
+}
+
+/** What Continue does, in the terms of this agent's CLI: never a reattachment to the old process. */
+function ContinueNote({ agent }: { agent?: AgentConfig }): ReactElement {
+  return <>{continueSemantics(agent?.localAgentId).lines.map(line => <p key={line} className="muted">{t(line)}</p>)}</>
 }
 
 export function CodingSessionPanel({ session, project, agent, activity }: {
@@ -92,7 +112,8 @@ export function CodingSessionPanel({ session, project, agent, activity }: {
   const cancel = (): void => { void act(() => window.douchat.cancelCodingSession(session.id)) }
   return <div className="coding-session" data-state={state}>
     <header className="coding-session-header">
-      <h2>{session.task}</h2>
+      <h2 className="coding-task" title={session.task}>{session.task.split('\n')[0]}</h2>
+      {session.task.includes('\n') && <details className="coding-task-full"><summary>{t('Full task')}</summary><pre className="coding-output">{session.task}</pre></details>}
       <p className="coding-meta">
         <span className={`coding-state coding-state-${state}`} role="status">{t(codingStateLabels[state])}</span>
         {' · '}{agent?.name ?? session.agentId}{' · '}{project?.name ?? session.projectId}{' · '}<code>{session.workingDirectory}</code>
@@ -103,11 +124,12 @@ export function CodingSessionPanel({ session, project, agent, activity }: {
     {session.status === 'running' && (activity?.state === 'awaiting-approval'
       ? <ApprovalCard activity={activity} session={session} project={project} agent={agent} onCancel={cancel} />
       : <section className="coding-activity"><span className="coding-pulse" aria-hidden />{activity?.label ?? t('Running…')}
+        {activity?.source !== 'agent' && <span className="muted coding-note"> {t('This agent has not reported step-by-step activity. Douchat shows approvals, checks and repository changes.')}</span>}
         <button className="secondary-button danger" onClick={cancel} disabled={running}>{t('Cancel session')}</button></section>)}
 
     {session.status === 'interrupted' && <section className="coding-banner" role="status">
       <p>{t('This session was interrupted when Douchat closed.')}</p>
-      <p className="muted">{t('Its process is gone. Continuing starts the agent again on the same conversation; it does not reattach to the old process.')}</p>
+      <ContinueNote agent={agent} />
       <button className="primary-button" disabled={running} onClick={() => void act(() => window.douchat.continueCodingSession(session.id))}>{t('Continue')}</button>
     </section>}
 
@@ -138,6 +160,7 @@ export function CodingSessionPanel({ session, project, agent, activity }: {
       if (!message) return
       void act(async () => { await window.douchat.continueCodingSession(session.id, message); setText('') })
     }}>
+      <ContinueNote agent={agent} />
       <textarea value={text} onChange={event => setText(event.target.value)} rows={2} placeholder={t('Tell the agent what to do next…')} aria-label={t('Continue the conversation')} />
       <button className="primary-button" type="submit" disabled={running || !text.trim()}>{t('Send')}</button>
     </form>}
