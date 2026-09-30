@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
+import { EnvironmentContext } from './EnvironmentPanel'
 import { canContinue, changeLabel, codingDisplayState, codingStateLabels, continueSemantics, describeApproval, formatCommandLine, groupChanges, isUntracked } from '../../../shared/coding'
 import type { AgentConfig, ChatMessage, CodingActivity, CodingSession, CommandResult, GitChange, GitState, Project } from '../../../shared/types'
 import { t } from '../preferences'
@@ -120,6 +121,7 @@ export function CodingSessionPanel({ session, project, agent, activity, messages
         {' · '}{agent?.name ?? session.agentId}{' · '}{project?.name ?? session.projectId}{' · '}<code>{session.workingDirectory}</code>
       </p>
       {session.execution?.kind === 'compute' && <p className="coding-meta">{t('Runs on Computer')} <code>{session.execution.environment}</code> <span className="muted">— {t('the agent, its commands and its changes are on that Computer; this computer’s copy is untouched.')}</span> <button type="button" className="secondary-button" onClick={() => void window.douchat.openComputeUi()}>{t('Open Compute')}</button></p>}
+      {session.execution?.kind === 'compute' && <EnvironmentContext projectId={session.projectId} />}
       <p className="coding-meta muted">{t('Started')} {time(session.startedAt ?? session.createdAt)}{session.finishedAt ? ` · ${t('Finished')} ${time(session.finishedAt)}` : ''}</p>
     </header>
 

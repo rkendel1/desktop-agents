@@ -2,7 +2,9 @@
 export type CustomModelKind = 'openai' | 'anthropic' | 'ollama'
 export interface CustomProviderInput { id: string; name: string; kind: CustomModelKind; apiBase: string; apiKey?: string; models: string[]; modelLabels?: Record<string, string>
   /** Models that accept a thinking/reasoning parameter. Others always run with thinking off. */
-  reasoningModels?: string[] }
+  reasoningModels?: string[]
+  /** What the person knows about a model’s price when the provider’s catalog does not say (an explicit entry): `free`, `beta-free` or `trial`. Never a key or a secret. */
+  pricing?: Record<string, 'free' | 'beta-free' | 'trial'> }
 export interface CustomProviderView extends Omit<CustomProviderInput, 'apiKey'> { hasKey: boolean }
 export interface CustomModelConfig { providers: CustomProviderView[]; defaultModel: string }
 export interface CustomModelTest { provider: CustomProviderInput; model: string }

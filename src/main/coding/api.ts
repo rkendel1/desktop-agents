@@ -1,6 +1,7 @@
 import { describeApproval } from '../../shared/coding'
 import { activityOrigin, checkView, projectView, type ApprovalView, type CodingNotification, type GitStateView, type ProjectView, type SessionView } from '../../shared/codingApi'
-import type { CiPlan, CiRun, CodingSession, Project } from '../../shared/types'
+import type { CiPlan, CiRun, CodingSession, DevelopmentEnvironmentDetail, DevelopmentEnvironmentView, Project, RecipeResolutionView, RecipeSummary } from '../../shared/types'
+import { EnvironmentError, EnvironmentRefusal, type EnvironmentService } from '../environment/service'
 import type { CiService } from '../ci/service'
 import type { DesktopRepository } from '../desktopRepository'
 import type { ComputeClient } from '../compute/client'
@@ -24,6 +25,8 @@ const MAX_TASK = 20_000
 /** The service's own errors are plain messages; sort them into what the caller did wrong. */
 function classify(error: unknown): CodingApiError {
   if (error instanceof CodingApiError) return error
+  if (error instanceof EnvironmentError) return new CodingApiError(error.code === 'compute' ? 'invalid' : error.code, error.message)
+  if (error instanceof EnvironmentRefusal) return new CodingApiError('conflict', error.message)
   const message = error instanceof Error ? error.message : String(error)
   if (/not found|no longer exists/i.test(message)) return new CodingApiError('not-found', message)
   if (/already (running|working|has a CI run)|in progress|pinned|no longer the project|refusing to run/i.test(message)) return new CodingApiError('conflict', message)
@@ -47,7 +50,9 @@ export class CodingApi {
     /** Compute, when installed: read for the inventory of Computers a session can run on. */
     private readonly compute?: ComputeClient,
     /** CI on ephemeral Computers: the same service the desktop calls. */
-    private readonly ci?: CiService
+    private readonly ci?: CiService,
+    /** The project's development environment: the same service the desktop calls. */
+    private readonly environments?: EnvironmentService
   ) {}
 
   private async guarded<T>(work: () => Promise<T>): Promise<T> {
@@ -115,8 +120,8 @@ export class CodingApi {
     if (input.task.length > MAX_TASK) throw new CodingApiError('invalid', `The task is too long (at most ${MAX_TASK} characters).`)
     await this.requireProject(input.projectId)
     if (typeof input.agentId !== 'string' || !(await this.repository.agent(input.agentId))) throw new CodingApiError('not-found', 'Agent not found')
-    if (input.execution?.kind === 'compute' && !input.execution.environment) throw new CodingApiError('invalid', 'Name the Compute environment to run on.')
-    const execution = input.execution?.kind === 'compute' ? { kind: 'compute' as const, environment: input.execution.environment! } : undefined
+    // Compute execution means the project's development environment; a client may name it, but it must be that one.
+    const execution = input.execution?.kind === 'compute' ? { kind: 'compute' as const, ...(input.execution.environment ? { environment: input.execution.environment } : {}) } : undefined
     return this.guarded(async () => this.view(await this.coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task, ...(execution ? { execution } : {}) })))
   }
 
@@ -156,6 +161,49 @@ export class CodingApi {
     await this.requireSession(sessionId)
     if (!PAX_INSPECTIONS.includes(command)) throw new CodingApiError('invalid', `PAX inspection must be one of ${PAX_INSPECTIONS.join(', ')}.`)
     return this.guarded(() => this.coding.pax(sessionId, command))
+  }
+
+  // ───────────────────────────── the development environment ─────────────────────────────
+
+  private requireEnvironments(): EnvironmentService {
+    if (!this.environments) throw new CodingApiError('invalid', 'Compute environments are not available in this build.')
+    return this.environments
+  }
+
+  private async requireProjectId(projectId: string): Promise<void> {
+    if (typeof projectId !== 'string' || !projectId) throw new CodingApiError('invalid', 'A project id is required.')
+    await this.requireProject(projectId)
+  }
+
+  /** The project's environment as Compute reports it now (a reference is all Foundry keeps). */
+  async environment(projectId: string): Promise<DevelopmentEnvironmentView> {
+    await this.requireProjectId(projectId)
+    return this.guarded(() => this.requireEnvironments().view(projectId))
+  }
+
+  async environmentDetail(projectId: string): Promise<DevelopmentEnvironmentDetail> {
+    await this.requireProjectId(projectId)
+    return this.guarded(() => this.requireEnvironments().detail(projectId))
+  }
+
+  environmentRecipes(): Promise<RecipeSummary[]> { return this.guarded(() => this.requireEnvironments().recipes()) }
+
+  environmentResolve(recipe: string, version?: number): Promise<RecipeResolutionView> {
+    if (typeof recipe !== 'string' || !recipe) throw new CodingApiError('invalid', 'Name a recipe.')
+    return this.guarded(() => this.requireEnvironments().resolve(recipe, version))
+  }
+
+  async createEnvironment(input: { projectId: string; recipe: string; version?: number }): Promise<DevelopmentEnvironmentView> {
+    await this.requireProjectId(input.projectId)
+    if (typeof input.recipe !== 'string' || !input.recipe) throw new CodingApiError('invalid', 'Name a recipe.')
+    return this.guarded(() => this.requireEnvironments().create(input))
+  }
+
+  /** Restart, stop, start, retry or destroy. The response is Compute's state after the action, not the requested one. */
+  async environmentAct(projectId: string, action: 'restart' | 'stop' | 'start' | 'retry' | 'destroy'): Promise<DevelopmentEnvironmentView> {
+    await this.requireProjectId(projectId)
+    if (!['restart', 'stop', 'start', 'retry', 'destroy'].includes(action)) throw new CodingApiError('invalid', 'Unknown environment action.')
+    return this.guarded(() => this.requireEnvironments().act(projectId, action))
   }
 
   // ───────────────────────────── CI ─────────────────────────────

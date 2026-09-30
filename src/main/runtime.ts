@@ -21,7 +21,11 @@ import { GroupWorkflowJournal } from './groupWorkflow'
 import { decisionSlot, workflowView, type GroupWorkflow } from '../shared/groupWorkflow'
 import { gameView } from '../shared/groupGame'
 import { validateDecisionSettings, type DecisionSettings } from '../shared/groupDecision'
-import { customModelProvider, type CustomProviderRecord } from './customModels'
+import { customModelDefinition, customModelProvider, type CustomProviderRecord } from './customModels'
+import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
+import type { ModelFabric } from './models/fabric'
+import { requirementsOf, routedStream } from './models/stream'
+import { decisionNotice } from '../shared/modelFabric'
 import { withReplyDeadline } from './replyDeadline'
 import { agentPermissions } from '../shared/agentPermissions'
 import { AgentPermissionBroker, nativeReadPermission, toolCapability } from './agentPermissions'
@@ -401,6 +405,47 @@ export class DouchatRuntime {
     return { provider, model, followDefaultModel: false }
   }
   private readonly models = builtinModels()
+  /** Foundry’s existing model path, for the model fabric’s adapters: the same registry every agent turn streams through. */
+  readonly streamModel = (model: unknown, context: import('@earendil-works/pi-ai').Context, options?: import('@earendil-works/pi-ai').SimpleStreamOptions): import('@earendil-works/pi-ai').AssistantMessageEventStream => this.models.streamSimple(model as never, context, options)
+  private fabric?: ModelFabric
+  /** With the fabric attached and its automatic routing on, a custom-provider agent’s turns go to the best eligible model under the cost policy. Off (the default), nothing changes. */
+  attachModelFabric(fabric: ModelFabric): void { this.fabric = fabric }
+
+  /**
+   * One model call for `config`’s turn: the agent’s own model as always — or, when automatic routing is on, whichever eligible model the
+   * fabric picks, cycling on rate limits and outages before any output. The policy is read each time, so switching it takes effect on
+   * the next call.
+   */
+  private modelCall(config: AgentConfig, sessionKey: string, selectedModel: Parameters<typeof this.models.streamSimple>[0], streamContext: import('@earendil-works/pi-ai').Context, direct: () => import('@earendil-works/pi-ai').AssistantMessageEventStream, options?: import('@earendil-works/pi-ai').SimpleStreamOptions): import('@earendil-works/pi-ai').AssistantMessageEventStream {
+    const fabric = this.fabric
+    if (!fabric || config.localAgentId || !config.provider.startsWith(CUSTOM_PROVIDER_PREFIX)) return direct()
+    const out = createAssistantMessageEventStream()
+    void (async () => {
+      let source: import('@earendil-works/pi-ai').AssistantMessageEventStream
+      try {
+        if (!(await fabric.policy()).automatic) source = direct()
+        else source = routedStream({ fabric, request: fabric.request('general', requirementsOf(streamContext)), context: streamContext, ...(options ? { options } : {}),
+          open: (candidate, context, opts) => {
+            const record = this.decisionProviders.find(item => item.id === candidate.provider)
+            if (!record) return undefined
+            const model = customModelDefinition(record, candidate.model, { ...(candidate.limits.contextTokens ? { contextWindow: candidate.limits.contextTokens } : {}), ...(candidate.limits.maxOutputTokens ? { maxTokens: candidate.limits.maxOutputTokens } : {}), image: candidate.capabilities.vision })
+            return { model, stream: this.models.streamSimple(model as never, context, opts) }
+          },
+          onDecision: decision => {
+            const runId = this.activeRun.get(sessionKey)
+            if (!runId) return
+            // Activity, not an interruption: a switch is recorded in the run’s history; nothing is asked of the person.
+            this.record(sessionKey, async () => {
+              const names = new Map((await fabric.registry()).candidates.map(candidate => [candidate.id, `${candidate.label ?? candidate.model} · ${candidate.providerName}`] as const))
+              const notice = decisionNotice(decision, names)
+              if (notice) await this.store.addRunEvent({ runId, type: 'status', label: notice.title, detail: notice.detail })
+            })
+          } })
+      } catch { source = direct() }
+      try { for await (const event of source) out.push(event) } finally { out.end() }
+    })()
+    return out
+  }
   private readonly localRuns = new Map<string, Set<AbortController>>()
   private readonly permissionTasks = new Map<string, string>()
   private readonly sessions = new Map<string, Session>()
@@ -720,14 +765,14 @@ export class DouchatRuntime {
         const boundedOpenRouterTurn = context === 'group' && selectedModel.api === 'openai-completions'
           && new URL(selectedModel.baseUrl).hostname === 'openrouter.ai'
           && (!agentThinking || agentThinking === 'off')
-        return this.models.streamSimple(selectedModel, streamContext, boundedOpenRouterTurn ? {
+        return this.modelCall(config, sessionKey, selectedModel, streamContext, () => this.models.streamSimple(selectedModel, streamContext, boundedOpenRouterTurn ? {
           ...options,
           onPayload: async (payload, model) => {
             const transformed = await options?.onPayload?.(payload, model)
             return { ...((transformed ?? payload) as Record<string, unknown>),
               reasoning: await this.groupDecisionService.openRouterReasoning(selectedModel.id, options?.signal ?? new AbortController().signal) }
           }
-        } : options)
+        } : options), options)
       }
     })
 

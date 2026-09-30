@@ -203,9 +203,13 @@ Open a project and Foundry shows its real state — branch, upstream, staged / n
 approval waiting — and lets you start an agent, approve, review, run checks, continue, and commit without leaving the app. Local coding needs no
 network or Compute. See [docs/workbench.md](docs/workbench.md).
 
+## Free model fabric
+
+Optionally, Foundry can pick the model for you: it discovers the free, beta and trial models your connected providers offer *now*, routes each request to the best eligible one, and moves on when a model reaches its limit. Under the default **free-only** policy a paid or unknown-priced model can never be called, and if every free model is spent the request fails clearly instead of spending. It is off until you turn on **Settings → Models → Automatic model selection**; `Foundry model list --free | discover | status | test` shows the pool from a terminal. See [docs/model-fabric.md](docs/model-fabric.md).
+
 ## Running on Compute
 
-A coding session can run on a Computer from an installed [Compute Configured](https://github.com/rkendel1/compute)
+Each project can have a development **Environment** created and controlled from Project Home through Compute (recipe → Computer → bootstrap → readiness); Foundry only shows what Compute reports, and workloads never run unless Compute says the environment is ready ([docs/environments.md](docs/environments.md)). It needs a Compute with the environment contract (not Compute Configured 0.1.5). Separately, a coding session can run on a Computer from an installed [Compute Configured](https://github.com/rkendel1/compute)
 (`brew install compute-configured`, then `compute-configured-verify`) instead of on this machine: choose **Execution →
 Compute** and a Computer when you start it. The agent, its files, tests and PAX commands then run on that Computer, and
 there is no fallback to running locally. Foundry shows the platform as Compute states it (Linux x86_64 — Certified, macOS

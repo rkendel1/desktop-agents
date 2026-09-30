@@ -1,9 +1,10 @@
 import { FolderGit2, Plus } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
-import type { AppSnapshot, ComputeInventory, GitState, Project } from '../../../shared/types'
+import type { AppSnapshot, DevelopmentEnvironmentView, GitState, Project } from '../../../shared/types'
 import { t, tr } from '../preferences'
 import { CiPanel } from './CiPanel'
+import { EnvironmentPanel, EnvironmentStatus, type WorkRow } from './EnvironmentPanel'
 import { ApprovalCard, CodingSessionPanel } from './CodingSessionPanel'
 import { BranchLine, GitPanel, ToolingLine } from './GitPanel'
 
@@ -23,8 +24,7 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
   const [task, setTask] = useState('')
   const [command, setCommand] = useState('')
   const [execution, setExecution] = useState<'local' | 'compute'>('local')
-  const [environment, setEnvironment] = useState('')
-  const [inventory, setInventory] = useState<ComputeInventory>()
+  const [environment, setEnvironment] = useState<DevelopmentEnvironmentView>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const sessions = (snapshot.codingSessions ?? []).filter(session => session.projectId === project.id)
@@ -48,15 +48,14 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
     const timer = running ? setInterval(onFocus, 4000) : undefined
     return () => { window.removeEventListener('focus', onFocus); if (timer) clearInterval(timer) }
   }, [refreshGit, running?.id])
-  // Compute's inventory is asked for when Compute is chosen and read from Compute each time: Foundry keeps no list of Computers.
+  // The project's environment is asked of Compute when it is chosen as the place to run: Foundry keeps a reference, not a list of Computers.
   useEffect(() => {
     if (execution !== 'compute') return
     let live = true
-    setInventory(undefined)
-    window.douchat.computeInventory().then(value => { if (live) { setInventory(value); setEnvironment(current => value.environments.some(item => item.name === current) ? current : value.environments.find(item => item.observed === 'running')?.name ?? '') } },
-      cause => { if (live) setInventory({ available: false, reason: cause instanceof Error ? cause.message : String(cause), daemon: { endpoint: '', reachable: false }, environments: [] }) })
+    setEnvironment(undefined)
+    window.douchat.environmentState(project.id).then(value => { if (live) setEnvironment(value) }, () => { if (live) setEnvironment(undefined) })
     return () => { live = false }
-  }, [execution])
+  }, [execution, project.id])
   const guard = async (work: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setError('')
     try { await work() } catch (cause) { setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause)) }
@@ -64,6 +63,11 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
   }
   const recentChecks = sessions.flatMap(session => session.commands.map(result => ({ result, session }))).sort((a, b) => b.result.startedAt - a.result.startedAt).slice(0, 5)
   const lastState = latest ? codingDisplayState(latest) : undefined
+  const workRows: WorkRow[] = [
+    { label: 'Agent', value: running ? `${t('Running')} · ${agentOf(running.agentId)?.name ?? running.agentId}` : latest ? t(codingStateLabels[lastState!]) : '—' },
+    { label: 'Checks', value: recentChecks[0] ? `${recentChecks[0].result.exitCode === 0 ? '✓' : '✗'} ${formatCommandLine(recentChecks[0].result.argv)}` : '—' },
+    { label: 'CI', value: (snapshot.ciRuns ?? []).find(run => run.projectId === project.id) ? t(({ running: 'Running', passed: 'Passed', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted', blocked: 'Blocked' } as const)[(snapshot.ciRuns ?? []).find(run => run.projectId === project.id)!.status]) : '—' }
+  ]
   return <div className="coding-project">
     <header>
       <h2>{project.name}</h2>
@@ -72,11 +76,13 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
       <ToolingLine project={project} refreshKey={signature} />
     </header>
 
+    <EnvironmentPanel project={project} work={workRows} />
+
     <section className="coding-section" aria-label={t('Now')}>
       <h3>{running ? t('Happening now') : t('Last time')}</h3>
       {running ? <>
         <p className="coding-meta"><span className={`coding-state coding-state-${codingDisplayState(running, activity)}`} role="status">{t(codingStateLabels[codingDisplayState(running, activity)])}</span>
-          {' · '}{agentOf(running.agentId)?.name ?? running.agentId}{' · '}{running.execution?.kind === 'compute' ? `${t('Compute')} ${running.execution.environment}` : t('This Computer')}</p>
+          {' · '}{agentOf(running.agentId)?.name ?? running.agentId}{' · '}{running.execution?.kind === 'compute' ? `${t('Environment')} ${running.execution.environment}` : t('This Computer')}</p>
         <p className="coding-task">{running.task.split('\n')[0]}</p>
         {activity?.state === 'awaiting-approval'
           ? <ApprovalCard activity={activity} session={running} project={project} agent={agentOf(running.agentId)} onCancel={() => void guard(() => window.douchat.cancelCodingSession(running.id))} />
@@ -104,7 +110,7 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
       {!agents.length ? <p className="muted">{t('Create an agent first.')}</p> : <form className="coding-start" onSubmit={event => {
         event.preventDefault()
         if (!task.trim()) return
-        void guard(async () => { const session = await window.douchat.startCodingSession({ projectId: project.id, agentId: chosenAgent, task, ...(execution === 'compute' ? { execution: { kind: 'compute' as const, environment } } : {}) }); setTask(''); onOpenSession(session.id) })
+        void guard(async () => { const session = await window.douchat.startCodingSession({ projectId: project.id, agentId: chosenAgent, task, ...(execution === 'compute' ? { execution: { kind: 'compute' as const } } : {}) }); setTask(''); onOpenSession(session.id) })
       }}>
         <label>{t('Agent')}
           <select value={chosenAgent} onChange={event => setAgentId(event.target.value)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>
@@ -112,26 +118,18 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
         <label>{t('Execution')}
           <select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}>
             <option value="local">{t('This Computer')}</option>
-            <option value="compute">{t('Compute')}</option>
+            <option value="compute">{t('Environment')}</option>
           </select>
         </label>
-        <p className="muted coding-note">{execution === 'local' ? t('Local execution: the agent runs on this computer, in this folder. No network or Compute is needed.') : t('Remote Computer: the agent runs on a Compute Computer, on a checkout of the committed revision. If Compute cannot run it, nothing starts here instead.')}</p>
-        {execution === 'compute' && <div className="coding-compute" aria-label={t('Compute')}>
-          {!inventory ? <p className="muted">{t('Asking Compute…')}</p> : <>
-            {inventory.platform && <p className="coding-meta"><span className={`coding-platform coding-platform-${inventory.platform.status}`}>{t(inventory.platform.label)}</span>{inventory.installation ? <span className="muted"> · Compute Configured {inventory.installation.version}</span> : null}</p>}
-            {inventory.available && inventory.environments.length > 0 && <label>{t('Computer')}
-              <select value={environment} onChange={event => setEnvironment(event.target.value)}>
-                <option value="" disabled>{t('Choose a Computer')}</option>
-                {inventory.environments.map(item => <option key={item.environmentId} value={item.name}>{item.name} — {item.observed}</option>)}
-              </select>
-            </label>}
-            {inventory.available && !inventory.environments.length && <p className="muted">{t('Compute has no Computers yet. Create one in Compute.')}</p>}
-            {!inventory.available && <p className="coding-error" role="alert">{inventory.reason}</p>}
-            <button type="button" className="secondary-button" onClick={() => void window.douchat.openComputeUi()}>{t('Open Compute')}</button>
+        <p className="muted coding-note">{execution === 'local' ? t('Local execution: the agent runs on this computer, in this folder. No network or Compute is needed.') : t('Environment: the agent runs on this project’s Compute environment, on a checkout of the committed revision, once Compute reports it ready. If it is not ready, nothing starts here instead.')}</p>
+        {execution === 'compute' && <div className="coding-compute" aria-label={t('Environment')}>
+          {!environment ? <p className="muted">{t('Asking Compute…')}</p> : <>
+            <p className="coding-meta">{environment.reference ? <>{environment.recipe?.name ?? environment.reference.environment}{environment.computer?.platformLabel ? ` · ${environment.computer.platformLabel}` : ''} · </> : null}<EnvironmentStatus view={environment} /></p>
+            {environment.state !== 'ready' && environment.state !== 'degraded' && <p className="coding-error" role="alert">{environment.reason ? `${t(environment.reason.title)} ${t(environment.reason.message)}` : environment.state === 'none' ? t('This project has no development environment yet. Create one above.') : t('The environment is not ready for workloads.')} {t('Nothing will run on this computer instead.')}</p>}
           </>}
         </div>}
         <textarea value={task} onChange={event => setTask(event.target.value)} rows={3} placeholder={t('What should the agent do in this project?')} aria-label={t('Task')} />
-        <button className="primary-button" type="submit" disabled={busy || !!running && running.agentId === chosenAgent || !task.trim() || (execution === 'compute' && !environment)}>{t('Start session')}</button>
+        <button className="primary-button" type="submit" disabled={busy || !!running && running.agentId === chosenAgent || !task.trim() || (execution === 'compute' && environment?.state !== 'ready' && environment?.state !== 'degraded')}>{t('Start session')}</button>
       </form>}
       {error && <p className="coding-error" role="alert">{error}</p>}
     </section>

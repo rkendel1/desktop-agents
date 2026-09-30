@@ -5,7 +5,7 @@ import { lstat, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
-  AgentConfig, AttentionItem, ChatMessage, CiEvent, CiRun, CodingEvent, CodingSession, Conversation, CreateGroupInput, CreateRoutineInput, EmailConnectorAccount, MessageAttachment,
+  AgentConfig, AttentionItem, ChatMessage, CiEvent, CiRun, DevelopmentEnvironmentRef, CodingEvent, CodingSession, Conversation, CreateGroupInput, CreateRoutineInput, EmailConnectorAccount, MessageAttachment,
   MessageDeliveryReply, PrivateMessage, ResolvedCreateAgentInput, Routine, RunEvent, RunStatus, TaskRun, Topic,
   Project, UpdateAgentInput, UpdateConversationInput
 } from '../shared/types'
@@ -20,9 +20,9 @@ import type { GroupWorkflow } from '../shared/groupWorkflow'
 import { mediaName, MAX_IM_FILE_BYTES, IMMediaError } from './imMedia'
 import { DESKTOP_SCHEMA_VERSION, FeltDatabase, FeltDatabaseError, type Batch, type RecordChange, type Records } from './felt/database'
 import {
-  agentFromRecord, agentToRecord, ciRunFromRecord, ciRunToRecord, codingSessionFromRecord, codingSessionToRecord, projectFromRecord, conversationFromParts, conversationParts, eventFromRecord, eventToRecord, messageFromRecord,
+  agentFromRecord, agentToRecord, ciRunFromRecord, ciRunToRecord, developmentEnvironmentFromRecord, developmentEnvironmentToRecord, codingSessionFromRecord, codingSessionToRecord, projectFromRecord, conversationFromParts, conversationParts, eventFromRecord, eventToRecord, messageFromRecord,
   messageToRecord, privateMessageFromRecord, privateMessageToRecord, routineFromRecord, routineToRecord, runFromRecord, runToRecord,
-  type AgentProcessRow, type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CiRunRecord, type CodingSessionRecord, type ExecutionEventRecord, type LocalAgentDefinitionRecord, type GroupMemberRecord, type GroupRecord,
+  type AgentProcessRow, type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CiRunRecord, type CodingSessionRecord, type DevelopmentEnvironmentRecord, type ExecutionEventRecord, type LocalAgentDefinitionRecord, type GroupMemberRecord, type GroupRecord,
   type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord, type SessionRecord, type TopicRecord, type WorkspaceRecord
 } from './felt/records'
 import { MemoryRepository, type MemoryRecord } from './memoryRepository'
@@ -152,6 +152,7 @@ export class DesktopRepository {
   private readonly workspaces: Records<WorkspaceRecord>
   private readonly codingRows: Records<CodingSessionRecord>
   private readonly ciRows: Records<CiRunRecord>
+  private readonly environmentRows: Records<DevelopmentEnvironmentRecord>
   private readonly localAgentRows: Records<LocalAgentDefinitionRecord>
   private readonly processRows: Records<AgentProcessRow>
   /** Coding sessions found still `running` when this desktop opened: their process died with the last run. */
@@ -190,6 +191,7 @@ export class DesktopRepository {
     this.workspaces = felt.collection('Workspace')
     this.codingRows = felt.collection('CodingSession')
     this.ciRows = felt.collection('CiRun')
+    this.environmentRows = felt.collection('DevelopmentEnvironment')
     this.localAgentRows = felt.collection('LocalAgentDefinition')
     this.processRows = felt.collection('AgentProcess')
     this.sessions = felt.collection('Session')
@@ -1588,6 +1590,27 @@ export class DesktopRepository {
       await this.ciRows.put(ciRunToRecord(next))
       return next
     })
+  }
+
+  // ───────────────────────────── development environments (references to Compute) ─────────────────────────────
+
+  /** The Compute environment a project points at. A reference only: what that environment is, and whether it exists, is asked of Compute. */
+  async developmentEnvironment(projectId: string): Promise<DevelopmentEnvironmentRef | undefined> {
+    const record = await this.environmentRows.get(projectId)
+    return record ? developmentEnvironmentFromRecord(record) : undefined
+  }
+
+  /** Point a project at a Compute environment (one per project). */
+  putDevelopmentEnvironment(ref: DevelopmentEnvironmentRef): Promise<DevelopmentEnvironmentRef> {
+    return this.exclusive(async () => {
+      if (!(await this.project(ref.projectId))) throw new Error('Project not found')
+      await this.environmentRows.put(developmentEnvironmentToRecord(ref))
+      return ref
+    })
+  }
+
+  deleteDevelopmentEnvironment(projectId: string): Promise<void> {
+    return this.exclusive(async () => { await this.environmentRows.delete(projectId) })
   }
 
   // ───────────────────────────── runtime bindings ─────────────────────────────

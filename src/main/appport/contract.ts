@@ -87,6 +87,37 @@ const session = s.object({
   history: s.array(s.object({ at: s.number(), kind: s.string(), label: s.string(), detail: s.optional(s.string()) }))
 })
 
+const envState = s.enum(['none', 'creating', 'configuring', 'ready', 'degraded', 'not-ready', 'failed', 'stopping', 'stopped', 'destroying', 'destroyed', 'missing', 'compute-unavailable', 'unknown'] as const)
+const envReason = s.object({
+  category: s.optional(s.string()), title: s.string(), message: s.string(),
+  unsatisfied: s.optional(s.array(s.object({ code: s.string(), required: s.optional(s.string()), available: s.optional(s.string()), detail: s.optional(s.string()) }))),
+  computeSays: s.optional(s.string()), retryable: s.optional(s.boolean())
+})
+const envView = s.object({
+  projectId: s.string(),
+  compute: s.object({ ok: s.boolean(), reason: s.optional(s.string()), message: s.optional(s.string()), installed: s.optional(s.object({ binary: s.string(), version: s.string() })) }),
+  reference: s.optional(s.object({ projectId: s.string(), environment: s.string(), environmentId: s.optional(s.string()), requestedRecipe: s.optional(s.object({ name: s.string(), version: s.optional(s.number()) })), createdAt: s.number() })),
+  state: envState, reason: s.optional(envReason),
+  recipe: s.optional(s.object({ name: s.string(), version: s.number(), digest: s.string() })),
+  computer: s.optional(s.object({ target: s.optional(s.string()), platform: s.optional(s.string()), platformLabel: s.optional(s.string()), lifecycle: s.string(), status: s.string(), certification: s.optional(ciPlatform) })),
+  readiness: s.optional(s.string()), configuration: s.optional(s.string()), lifecycle: s.optional(s.string()), workloads: s.optional(s.number()),
+  progress: s.array(s.object({ id: s.enum(['recipe', 'computer', 'configuration', 'readiness', 'ready'] as const), label: s.string(), status: s.enum(['done', 'active', 'pending', 'failed'] as const) })),
+  actions: s.array(s.enum(['open', 'restart', 'stop', 'start', 'retry', 'destroy', 'create'] as const)),
+  observedAt: s.number()
+})
+const envDetailView = s.object({
+  projectId: s.string(), state: envState, detail: s.optional(s.record(s.unknown())), view: envView
+})
+const recipeSummary = s.object({ name: s.string(), version: s.number(), digest: s.string(), description: s.optional(s.string()), lifecycle: s.string(), author: s.optional(s.string()) })
+const resolutionReasons = s.array(s.object({ code: s.string(), required: s.optional(s.string()), available: s.optional(s.string()), detail: s.optional(s.string()) }))
+const recipeResolution = s.object({
+  recipe: s.optional(s.object({ name: s.string(), version: s.number(), digest: s.string() })),
+  verdict: s.enum(['satisfiable', 'unsatisfied', 'invalid'] as const), problems: s.array(s.string()),
+  requirements: s.optional(s.record(s.unknown())),
+  placement: s.optional(s.object({ selected: s.optional(s.string()), explanation: s.optional(s.string()), targets: s.array(s.object({ id: s.string(), eligible: s.boolean(), selected: s.boolean(), reasons: resolutionReasons })), failure: s.optional(s.string()) })),
+  lifecycle: s.array(s.string()), impliedCapabilities: s.array(s.string())
+})
+
 /** A refusal from the coding service becomes the protocol's own error code, so clients can tell what to do next. */
 async function mapped<T>(work: () => Promise<T>): Promise<T> {
   try { return await work() } catch (error) {
@@ -121,7 +152,7 @@ export function codingCapabilities(api: CodingApi, remote?: RemoteLookup): AnyCa
       output: s.object({ sessions: s.array(session) }), handler: input => mapped(async () => ({ sessions: await api.listSessions(input) })) }),
     defineCapability({ name: 'douchat.coding.sessions.get', version: 1, description: 'One coding session: state, task, agent, changes, checks and history. Reconnecting reads this; it never starts anything.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
       input: idInput, output: session, handler: input => mapped(() => api.getSession(input.id)) }),
-    defineCapability({ name: 'douchat.coding.sessions.start', version: 1, description: 'Start an agent on a project. Returns as soon as the session exists.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
+    defineCapability({ name: 'douchat.coding.sessions.start', version: 1, description: 'Start an agent on a project. Returns as soon as the session exists. With execution kind “compute” it runs on the project’s development environment, and only when Compute reports that environment ready; otherwise it is refused and nothing runs anywhere else.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
       input: s.object({ projectId: s.string(), agentId: s.string(), task: s.string({ minLength: 1, maxLength: 20000 }), execution: s.optional(s.object({ kind: s.enum(['local', 'compute'] as const), environment: s.optional(s.string()) })) }), output: session, handler: input => mapped(() => api.startSession(input)) }),
     defineCapability({ name: 'douchat.coding.sessions.continue', version: 1, description: 'Another turn in a finished or interrupted session. A new agent process starts; the old one is never resumed.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
       input: s.object({ id: s.string(), text: s.optional(s.string({ maxLength: 20000 })) }), output: session, handler: input => mapped(() => api.continueSession(input.id, input.text)) }),
@@ -140,6 +171,24 @@ export function codingCapabilities(api: CodingApi, remote?: RemoteLookup): AnyCa
       input: s.object({ id: s.string(), command: s.enum(PAX_INSPECTIONS) }),
       output: s.object({ command: s.string(), argv: s.array(s.string()), exitCode: s.nullable(s.number()), json: s.optional(s.unknown()), stdout: s.string(), stderr: s.string(), findings: s.object({ ambiguous: s.boolean(), drift: s.boolean(), failedClosed: s.boolean() }) }),
       handler: input => mapped(() => api.pax(input.id, input.command)) }),
+    defineCapability({ name: 'douchat.environment.get', version: 1, description: 'The project’s development environment as Compute reports it now: recipe provenance (name, version, digest), Computer, configuration, readiness and lifecycle. Foundry keeps only a reference; every field is read from Compute, and “ready” is only ever Compute’s readiness.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: s.object({ projectId: s.string() }), output: envView, handler: input => mapped(() => api.environment(input.projectId)) }),
+    defineCapability({ name: 'douchat.environment.detail', version: 1, description: 'The environment’s inspection detail from Compute: readiness conditions, configuration steps, requirements, machine and processes. Not a Compute administration surface.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: s.object({ projectId: s.string() }), output: envDetailView, handler: input => mapped(async () => { const { detail, ...view } = await api.environmentDetail(input.projectId); return { projectId: view.projectId, state: view.state, ...(detail ? { detail: detail as Record<string, unknown> } : {}), view } }) }),
+    defineCapability({ name: 'douchat.environment.recipes', version: 1, description: 'The recipes Compute has (name, version, digest). Foundry writes none.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: s.empty(), output: s.object({ recipes: s.array(recipeSummary) }), handler: () => mapped(async () => ({ recipes: await api.environmentRecipes() })) }),
+    defineCapability({ name: 'douchat.environment.resolve', version: 1, description: 'What Compute says a recipe would do — requirements, placement and whether any target can host it. Read-only: nothing is created.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: s.object({ recipe: s.string(), version: s.optional(s.number()) }), output: recipeResolution, handler: input => mapped(async () => (await api.environmentResolve(input.recipe, input.version)) as never) }),
+    defineCapability({ name: 'douchat.environment.create', version: 1, description: 'Create the project’s development environment from a recipe. Compute resolves it, places the Computer, bootstraps it and verifies readiness; this returns once Compute has recorded the environment, and get follows it to ready.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
+      input: s.object({ projectId: s.string(), recipe: s.string(), version: s.optional(s.number()) }), output: envView, handler: input => mapped(() => api.createEnvironment(input)) }),
+    ...(['restart', 'stop', 'start', 'retry'] as const).map(action => defineCapability({ name: `douchat.environment.${action}`, version: 1,
+      description: action === 'retry' ? 'Ask Compute to retry what failed (`environment reconcile`). Returns Compute’s state afterwards.' : `Ask Compute to ${action} the environment. Returns Compute’s state afterwards — a stop is reported only once Compute confirms it.`,
+      effect: 'consequential', authorization: [PERMISSIONS.codingControl], input: s.object({ projectId: s.string() }), output: envView, handler: input => mapped(() => api.environmentAct(input.projectId, action)) })),
+    defineCapability({ name: 'douchat.environment.destroy', version: 1, description: 'Destroy the project’s environment’s Computer through Compute. Irreversible: pass confirm=true. Reported destroyed only once Compute confirms it.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
+      input: s.object({ projectId: s.string(), confirm: s.boolean() }), output: envView, handler: input => mapped(async () => {
+        if (input.confirm !== true) throw new CodingApiError('invalid', 'Destroying an environment is irreversible: pass confirm=true.')
+        return api.environmentAct(input.projectId, 'destroy')
+      }) }),
     defineCapability({ name: 'douchat.ci.plan', version: 1, description: 'What Run CI would do for a project, before it does anything: the committed revision, the platform Compute states (Certified or Preview) and PAX’s plan of operations. Blockers say why it cannot run (uncommitted changes, PAX ambiguity, Compute unavailable).', effect: 'observation', authorization: [PERMISSIONS.codingRead],
       input: s.object({ projectId: s.string(), tool: s.optional(s.string()) }), output: ciPlan, handler: input => mapped(() => api.ciPlan(input.projectId, input.tool)) }),
     defineCapability({ name: 'douchat.ci.runs.start', version: 1, description: 'Run a project’s CI on an ephemeral Compute Computer: PAX plans, Compute acquires and configures the Computer, the committed revision is checked out, PAX’s operations run there, evidence is kept and the Computer is released. Returns as soon as the run exists.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],

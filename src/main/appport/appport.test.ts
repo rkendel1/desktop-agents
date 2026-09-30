@@ -309,7 +309,8 @@ describe('authority', () => {
       'douchat.ci.plan', 'douchat.ci.runs.cancel', 'douchat.ci.runs.get', 'douchat.ci.runs.list', 'douchat.ci.runs.start',
       'douchat.coding.agents.list', 'douchat.coding.approvals.list', 'douchat.coding.approvals.resolve', 'douchat.coding.compute.inventory', 'douchat.coding.sessions.cancel', 'douchat.coding.sessions.continue', 'douchat.coding.sessions.get',
       'douchat.coding.sessions.list', 'douchat.coding.sessions.pax', 'douchat.coding.sessions.start', 'douchat.projects.add', 'douchat.projects.get', 'douchat.projects.gitstate', 'douchat.projects.list'
-    ])
+    ].concat(['douchat.environment.create', 'douchat.environment.destroy', 'douchat.environment.detail', 'douchat.environment.get', 'douchat.environment.recipes', 'douchat.environment.resolve',
+      'douchat.environment.restart', 'douchat.environment.retry', 'douchat.environment.start', 'douchat.environment.stop']).sort())
     expect(names.filter(name => /file|read|write|exec|shell|command|run|folder|cwd|directory/.test(name.split('.').slice(1).join('.').replace('projects.add', '').replace(/^ci\.runs\./, 'ci.pipelines.')))).toEqual([])
     // A CI run takes a project (and, to resolve a PAX ambiguity, a tool name) — never a command, a folder, an environment or a Computer.
     for (const extra of [{ command: ['rm', '-rf', '/'] }, { workingDirectory: '/etc' }, { environment: 'prod' }, { operations: ['deploy'] }]) {

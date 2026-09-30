@@ -47,6 +47,11 @@ import { DouchatRuntime } from './runtime'
 import { RoutineScheduler } from './scheduler'
 import { CodingService } from './coding/service'
 import { CiService } from './ci/service'
+import { EnvironmentService } from './environment/service'
+import { customProviderAdapters } from './models/adapters'
+import { modelCliInvocation, runModelCli } from './models/cli'
+import { ModelFabric } from './models/fabric'
+import { settingsFabricStore } from './models/store'
 import { CodingApi } from './coding/api'
 import { ComputeClient } from './compute/client'
 import { startAppPortHost, type AppPortHost } from './appport/host'
@@ -98,6 +103,11 @@ const credentialCodec: SecretCodec = {
 async function reloadCustomModels(): Promise<void> {
   try { await runtime.configureCustomModels(await desktop.providers.records(), (await desktop.providers.list()).defaultModel) }
   catch { await runtime.configureCustomModels([]); console.warn('[foundry] Provider keys could not be loaded') }
+  // Providers or credentials may have changed: what was observed of their models is no longer evidence, and the pool is asked again.
+  if (fabric) {
+    for (const record of await desktop.providers.records().catch(() => [])) fabric.ledger.resetProvider(record.id)
+    if ((await fabric.policy().catch(() => undefined))?.automatic) void fabric.discover().catch(error => diagnostics.write('models.discover.failed', error instanceof Error ? error.message : String(error)))
+  }
 }
 const diagnostics = new DiagnosticLog(join(app.getPath('userData'), 'logs'))
 try {
@@ -208,6 +218,8 @@ let emailConnectors: EmailConnectorManager
 let projection: DesktopProjection
 let coding: CodingService
 let ci: CiService
+let environments: EnvironmentService
+let fabric: ModelFabric
 let computeClient: ComputeClient
 let codingApi: CodingApi
 let appPort: AppPortHost | undefined
@@ -215,7 +227,12 @@ let appPortServices: AppPortServices | undefined
 let appPortGitHub: GitHubIntegration | undefined
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
-if (!hasSingleInstanceLock) app.quit()
+/** `Foundry model …` runs the model fabric's command line, headless. */
+const modelCli = modelCliInvocation(process.argv, app.isPackaged)
+if (!hasSingleInstanceLock) {
+  if (modelCli) process.stderr.write('Foundry is already running and owns its data. Use Settings → Models, or quit Foundry and run this again.\n')
+  app.quit()
+}
 
 function focusMainWindow(): void {
   if (quitting) return
@@ -460,6 +477,9 @@ app.whenReady().then(async () => {
     (path) => shell.openPath(path)
   )
   runtime = new DouchatRuntime(store, computer, ephemeralChanged, { snapshot: () => emailConnectors.snapshot(), createTools: id => emailConnectors.createTools(id) })
+  // The model fabric: policy and discovery live in settings, providers are the ones configured in Settings → Models, and calls go through the runtime's own model path.
+  fabric = new ModelFabric(settingsFabricStore(store), async () => customProviderAdapters(await desktop.providers.records(), { stream: runtime.streamModel as never }))
+  runtime.attachModelFabric(fabric)
   // FeltDB announces every durable change; the projection turns each into a small delta for the renderer.
   projection = new DesktopProjection(store, {
     ephemeral: () => ({ ...runtime.ephemeralState(), codingActivity: coding?.activity() ?? [] }),
@@ -482,11 +502,12 @@ app.whenReady().then(async () => {
   scheduler = new RoutineScheduler(store, runtime)
   runtime.setRoutineCreator((input) => scheduler.createRoutine(input))
   computeClient = new ComputeClient()
-  coding = new CodingService(store, runtime, () => ephemeralChanged(), { compute: computeClient })
+  environments = new EnvironmentService(store, computeClient)
+  coding = new CodingService(store, runtime, () => ephemeralChanged(), { compute: computeClient, environments })
   // The one place approvals are answered: the desktop prompt and a remote client both end up here.
   const answerPermission = (id: string, allow: boolean): void => { runtime.resolveAgentPermission(id, allow); ephemeralChanged() }
   ci = new CiService(store, { compute: computeClient })
-  codingApi = new CodingApi(store, coding, answerPermission, computeClient, ci)
+  codingApi = new CodingApi(store, coding, answerPermission, computeClient, ci, environments)
   // A run left `running` by a Foundry that is gone: its Computer is released through Compute now.
   void ci.recover().catch(error => diagnostics.write('ci.recover.failed', error instanceof Error ? error.message : String(error)))
   coding.announceInterrupted(store.recoveredCodingSessions)
@@ -1053,6 +1074,54 @@ app.whenReady().then(async () => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     await shell.openExternal(`${computeClient.daemon.replace(/\/$/, '')}/ui/`)
   })
+  // The project's development environment. Foundry stores a reference; every answer below is read from Compute each time.
+  const environmentGuard = (event: Electron.IpcMainInvokeEvent, ...values: unknown[]): void => {
+    if (!isDouchatRenderer(event.sender) || values.some(value => value !== undefined && typeof value !== 'string' && typeof value !== 'number')) throw new Error('Unauthorized')
+  }
+  ipcMain.handle('douchat:environment-state', (event, projectId: unknown) => { environmentGuard(event, projectId); return environments.view(projectId as string) })
+  ipcMain.handle('douchat:environment-detail', (event, projectId: unknown) => { environmentGuard(event, projectId); return environments.detail(projectId as string) })
+  ipcMain.handle('douchat:environment-recipes', event => { environmentGuard(event); return environments.recipes() })
+  ipcMain.handle('douchat:environment-resolve', (event, recipe: unknown, version?: unknown) => {
+    environmentGuard(event, recipe, version)
+    if (typeof recipe !== 'string' || (version !== undefined && typeof version !== 'number')) throw new Error('Unauthorized')
+    return environments.resolve(recipe, version)
+  })
+  ipcMain.handle('douchat:environment-create', (event, input: { projectId?: unknown; recipe?: unknown; version?: unknown }) => {
+    if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.recipe !== 'string' || (input.version !== undefined && typeof input.version !== 'number')) throw new Error('Unauthorized')
+    return environments.create({ projectId: input.projectId, recipe: input.recipe, ...(input.version !== undefined ? { version: input.version as number } : {}) })
+  })
+  ipcMain.handle('douchat:environment-act', async (event, projectId: unknown, action: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof projectId !== 'string' || !['restart', 'stop', 'start', 'retry', 'destroy'].includes(action as string)) throw new Error('Unauthorized')
+    if (action === 'destroy') {
+      // Destroying removes the Computer and everything on it: the owner confirms in the main process, and only Compute's confirmation ends it.
+      const view = await environments.view(projectId)
+      const parent = BrowserWindow.fromWebContents(event.sender)
+      const options = { type: 'warning' as const, message: ui('Destroy this environment?', '销毁此环境？'),
+        detail: `${view.reference?.environment ?? ''}${view.recipe ? ` · ${view.recipe.name} v${view.recipe.version}` : ''}\n\n${ui('Compute will stop everything running on its Computer and remove the Computer. This cannot be undone.', 'Compute 会停止其 Computer 上运行的所有内容并移除该 Computer，此操作无法撤销。')}`,
+        buttons: [ui('Cancel', '取消'), ui('Destroy', '销毁')], defaultId: 0, cancelId: 0 }
+      const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+      if (result.response !== 1) return view
+    }
+    return environments.act(projectId, action as 'restart' | 'stop' | 'start' | 'retry' | 'destroy')
+  })
+  // The model fabric: policy and discovery are settings; health is observed at run time; nothing here holds a credential.
+  ipcMain.handle('douchat:model-fabric-status', event => { if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized'); return fabric.status() })
+  ipcMain.handle('douchat:model-fabric-discover', async event => { if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized'); await fabric.discover(); return fabric.status() })
+  ipcMain.handle('douchat:model-fabric-policy', async (event, patch: { automatic?: unknown; failover?: unknown; useBeta?: unknown }) => {
+    if (!isDouchatRenderer(event.sender) || !patch || typeof patch !== 'object') throw new Error('Unauthorized')
+    await fabric.setPolicy({ ...(typeof patch.automatic === 'boolean' ? { automatic: patch.automatic } : {}), ...(typeof patch.failover === 'boolean' ? { failover: patch.failover } : {}), ...(typeof patch.useBeta === 'boolean' ? { useBeta: patch.useBeta } : {}) })
+    if (patch.automatic === true && !(await fabric.registry()).discoveredAt) await fabric.discover().catch(() => undefined)
+    return fabric.status()
+  })
+  ipcMain.handle('douchat:model-fabric-enable', async (event, id: unknown, enabled: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || typeof enabled !== 'boolean') throw new Error('Unauthorized')
+    await fabric.setEnabled(id, enabled); return fabric.status()
+  })
+  ipcMain.handle('douchat:model-fabric-test', async event => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    const { response, decision } = await fabric.complete(fabric.request('general'), 'Reply with the single word: pong.')
+    return { reply: response.text.slice(0, 200), decision }
+  })
   ipcMain.handle('douchat:ci-plan', (event, projectId: unknown, tool?: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof projectId !== 'string' || (tool !== undefined && typeof tool !== 'string')) throw new Error('Unauthorized')
     return ci.plan(projectId, tool as string | undefined)
@@ -1071,7 +1140,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('douchat:start-coding-session', (event, input: { projectId?: unknown; agentId?: unknown; task?: unknown; execution?: { kind?: unknown; environment?: unknown } }) => {
     if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.agentId !== 'string' || typeof input.task !== 'string') throw new Error('Unauthorized')
-    const execution = input.execution?.kind === 'compute' && typeof input.execution.environment === 'string' ? { kind: 'compute' as const, environment: input.execution.environment } : undefined
+    const execution = input.execution?.kind === 'compute' ? { kind: 'compute' as const, ...(typeof input.execution.environment === 'string' ? { environment: input.execution.environment } : {}) } : undefined
     return coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task, ...(execution ? { execution } : {}) })
   })
   ipcMain.handle('douchat:continue-coding-session', (event, id: unknown, text?: unknown) => {
@@ -1110,6 +1179,16 @@ app.whenReady().then(async () => {
   // Windows open on the local desktop immediately. Nothing waits on a network,
   // an account, or a provider: models are configured when the person wants them.
   await reloadCustomModels()
+  if (modelCli) {
+    // Headless: no window, no channels, no scheduler. Print, close the data cleanly, exit.
+    let code = 1
+    try { code = await runModelCli(modelCli, fabric, process.stdout) } finally { quitting = true; await stopDesktop(desktop).catch(() => undefined) }
+    app.exit(code)
+    return
+  }
+  // Discovery is scheduled while automatic routing is on: providers' free pools change, and a stale classification is not assumed to still be free.
+  const discovery = setInterval(() => { void fabric.policy().then(policy => policy.automatic ? fabric.discover() : undefined).catch(error => diagnostics.write('models.discover.failed', error instanceof Error ? error.message : String(error))) }, 30 * 60_000)
+  discovery.unref()
   try { await imChannels.activate() } catch { console.warn('[foundry] IM credentials could not be loaded') }
   // Update checks contact the release feed, so they run only when asked for.
   scheduler.start()

@@ -1,3 +1,4 @@
+import { ModelFabricPanel } from './ModelFabricPanel'
 import { UserMemoryPanel } from './UserMemoryPanel'
 import { LocalAgentEditor } from './LocalAgentEditor'
 import { CustomModelSettings } from './CustomModelSettings'
@@ -160,7 +161,7 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
         </section>
         {desktopOnly.length > 0 && <section aria-label={t('Desktop apps needing a CLI')}><h2>{t('Desktop app only')} <span>{desktopOnly.length}</span></h2>{desktopOnly.map(row)}</section>}
         {missing.length > 0 && <section aria-label={t('Other supported agents')}><h2>{t('Not detected')} <span>{missing.length}</span></h2>{missing.map(row)}</section>}
-      </> : tab === 'models' ? <CustomModelSettings /> : tab === 'scheduling' ? <SchedulingSettings /> : <AboutTab />}
+      </> : tab === 'models' ? <><ModelFabricPanel /><CustomModelSettings /></> : tab === 'scheduling' ? <SchedulingSettings /> : <AboutTab />}
     </main>
     </section>
   </NativeDialog>

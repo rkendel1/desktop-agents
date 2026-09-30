@@ -1,0 +1,190 @@
+{
+  "recipe": {
+    "name": "developer",
+    "version": 1,
+    "digest": "sha256:b155af4c8aa40b41a5ed5af064140e21b52210ca0e638ab9f46a6c742361c08a"
+  },
+  "verdict": "unsatisfied",
+  "resolved": {
+    "computer": {
+      "lifecycle": "persistent",
+      "requirements": {
+        "network": "network",
+        "isolation": "process",
+        "capabilities": [
+          "terminal"
+        ]
+      }
+    }
+  },
+  "implied_capabilities": [
+    "claim"
+  ],
+  "lifecycle": [
+    "persistent: the computer is kept until it is destroyed; Compute never expires it",
+    "no `persistent_storage` capability is required: the computer does not expire, but the recipe does not ask the target to promise the disk survives the machine",
+    "isolation: process; network: network"
+  ],
+  "primitives": [
+    {
+      "operation": "environment create (computer)",
+      "effect": "records the environment and its computer, places it on a target that satisfies the requirements, and provisions a session there"
+    },
+    {
+      "operation": "environment destroy",
+      "effect": "the only release: explicit; the record stays as evidence"
+    }
+  ],
+  "placement": {
+    "placement_version": "compute.placement@1",
+    "placement_id": "sha256:d810733e02b84ea8fbccc9c048a084430448ad96faf100dae556d35091a2b139",
+    "outcome": "placement_failed",
+    "selection_mode": "pool",
+    "placement_policy": {
+      "mode": "auto"
+    },
+    "policy_id": "sha256:6524d537d9bdab39bb4b29746e5e924b1f9fad7fe853db76ecd67117c37d4b9d",
+    "providers": [
+      {
+        "provider_id": "local",
+        "provider_kind": "local",
+        "priority": 0,
+        "discovery": "discovered",
+        "health": "healthy",
+        "capability_version": "sha256:c9cbe1f1d8a9bd5b24ce37ed7690992998650ba8923a426c1e0712bee34ab424",
+        "provider_identity": {
+          "kind": "local",
+          "id": "local"
+        },
+        "runtime_lifecycle": "available",
+        "platform": {
+          "os": "linux",
+          "architecture": "x86_64"
+        },
+        "resources": {
+          "capacity": {
+            "cpu_count": 4,
+            "memory_bytes": 16876515328,
+            "disk_bytes": 270553174016
+          },
+          "available": {
+            "cpu_count": 4,
+            "memory_bytes": 8442908672,
+            "disk_bytes": 25525628928
+          }
+        },
+        "status": "incompatible",
+        "capacity_status": "available",
+        "candidate": {
+          "eligible": false,
+          "selected": false,
+          "reasons": [
+            "sessions_unsupported",
+            "incompatible"
+          ]
+        },
+        "reasons": [
+          {
+            "code": "sessions_unsupported",
+            "dimension": "execution",
+            "required": "sessions",
+            "available": [
+              "run"
+            ],
+            "detail": "the provider does not host sessions"
+          }
+        ]
+      },
+      {
+        "provider_id": "this-machine",
+        "provider_kind": "remote",
+        "priority": 0,
+        "endpoint": "http://127.0.0.1:34703",
+        "discovery": "discovered",
+        "health": "healthy",
+        "capability_version": "sha256:d896d20a2efa2e0e029645699cec5a02d060561e029542f7e3c5a25b16e8be6c",
+        "provider_identity": {
+          "kind": "remote",
+          "id": "http://127.0.0.1:34703",
+          "endpoint": "http://127.0.0.1:34703"
+        },
+        "runtime_lifecycle": "available",
+        "platform": {
+          "os": "linux",
+          "architecture": "x86_64"
+        },
+        "resources": {
+          "capacity": {
+            "cpu_count": 4,
+            "memory_bytes": 16876515328,
+            "disk_bytes": 270553174016
+          },
+          "available": {
+            "cpu_count": 4,
+            "memory_bytes": 16876515328,
+            "disk_bytes": 270553174016
+          }
+        },
+        "status": "incompatible",
+        "capacity_status": "available",
+        "candidate": {
+          "eligible": false,
+          "selected": false,
+          "reasons": [
+            "session_capability_unsupported",
+            "incompatible"
+          ]
+        },
+        "reasons": [
+          {
+            "code": "session_capability_unsupported",
+            "dimension": "session",
+            "required": [
+              "terminal"
+            ],
+            "available": [
+              "exec",
+              "filesystem",
+              "network",
+              "suspend",
+              "resume",
+              "claim",
+              "process_tree_termination"
+            ],
+            "detail": "the provider's session environments do not offer these"
+          }
+        ]
+      }
+    ],
+    "compatible_providers": [],
+    "capacity_available_providers": [],
+    "capacity_unavailable_providers": [],
+    "incompatible_providers": [
+      "local",
+      "this-machine"
+    ],
+    "excluded_providers": [],
+    "failure": {
+      "code": "no_compatible_provider",
+      "message": "no provider proved it satisfies this workload contract and is admitted by policy (2 evaluated: 2 incompatible, 0 policy-denied, 0 excluded)"
+    },
+    "explanation": {
+      "requires": [
+        "runtime shell (any version)",
+        "distribution: not pinned by the caller",
+        "dependency capsule: none",
+        "isolation process",
+        "network network",
+        "resources: no enforced limits requested",
+        "platform: any",
+        "artifact bundle transport of 9582 bytes, session submission",
+        "session capabilities: claim, network, terminal"
+      ],
+      "considered": [
+        "local (local, priority 0, health healthy), runtime shell available, distribution sha256:498edccd6e794775505e5cc4ed6bd692208f2a14d4c4341804a6b3be10272fa2: incompatible (policy would admit): sessions_unsupported (required \"sessions\", available [\"run\"]); candidate: not ranked, not selected; reasons: sessions_unsupported, incompatible",
+        "this-machine (remote, priority 0, health healthy), runtime shell available, distribution sha256:498edccd6e794775505e5cc4ed6bd692208f2a14d4c4341804a6b3be10272fa2: incompatible (policy would admit): session_capability_unsupported (required [\"terminal\"], available [\"exec\",\"filesystem\",\"network\",\"suspend\",\"resume\",\"claim\",\"process_tree_termination\"]); candidate: not ranked, not selected; reasons: session_capability_unsupported, incompatible"
+      ],
+      "selection": "placement_failed: no_compatible_provider: no provider proved it satisfies this workload contract and is admitted by policy (2 evaluated: 2 incompatible, 0 policy-denied, 0 excluded)"
+    }
+  }
+}

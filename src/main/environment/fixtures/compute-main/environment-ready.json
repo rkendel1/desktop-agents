@@ -1,0 +1,132 @@
+{
+  "version": "compute.environment@1",
+  "environment_id": "env_10744a7ff05405657df4912b",
+  "name": "ready1",
+  "desired_state": "running",
+  "actual_state": "running",
+  "health": "healthy",
+  "created_at": "2026-09-30T11:29:30.640594317Z",
+  "policy_id": "sha256:6524d537d9bdab39bb4b29746e5e924b1f9fad7fe853db76ecd67117c37d4b9d",
+  "config": {},
+  "project_count": 0,
+  "workload_count": 0,
+  "service_count": 0,
+  "projects": [],
+  "disk_bytes": 0,
+  "computer": {
+    "environment": "ready1",
+    "environment_id": "env_10744a7ff05405657df4912b",
+    "owner": "development",
+    "lifecycle": "persistent",
+    "requested_lifecycle": "persistent",
+    "status": "running",
+    "requirements": {
+      "network": "network",
+      "isolation": "process"
+    },
+    "spec_generation": 1,
+    "running_generation": 1,
+    "target": "this-machine",
+    "placement_id": "sha256:3c6683684c082f3d19a739d337c2e13267f192183c74f806161abeac0612c3dc",
+    "session_id": "ses_393f54650dbe242fc14641cec69c762ad6e9975aaba23edaf03979b967fe91a0",
+    "provider_kind": "workspace",
+    "capabilities": {
+      "exec": true,
+      "terminal": false,
+      "filesystem": true,
+      "network": true,
+      "public_endpoint": false,
+      "persistent_storage": false,
+      "suspend": true,
+      "resume": true,
+      "claim": true,
+      "process_tree_termination": true
+    },
+    "connection": {
+      "mode": "exec"
+    },
+    "machine": {
+      "target": "this-machine",
+      "session_id": "ses_393f54650dbe242fc14641cec69c762ad6e9975aaba23edaf03979b967fe91a0",
+      "provider_kind": "workspace",
+      "resource": "wks_2374aa5ee948268edf3e09b7e8403d90c98f134e78bbd37bdc15a5b6847be51b"
+    },
+    "config": {},
+    "configuration": {
+      "environment": "ready1",
+      "generation": 0,
+      "variables": []
+    },
+    "desired": {
+      "generation": 1
+    },
+    "observed": {
+      "converged_generation": 1
+    },
+    "converged": true,
+    "generation": 5,
+    "created_at": "2026-09-30T11:29:30.640594317Z",
+    "ready_at": "2026-09-30T11:29:31.461929987Z",
+    "reality": {
+      "desired": "running",
+      "observed": "running",
+      "confirmed_at": "2026-09-30T11:29:31.471479079Z",
+      "explanation": "Running on this-machine, confirmed by the target."
+    },
+    "readiness": {
+      "state": "ready",
+      "conditions": [
+        {
+          "name": "machine",
+          "satisfied": true,
+          "detail": "running on this-machine, confirmed by the target"
+        },
+        {
+          "name": "requirements",
+          "satisfied": true,
+          "detail": "this-machine satisfies the requirements now"
+        },
+        {
+          "name": "bootstrap",
+          "satisfied": true,
+          "detail": "succeeded"
+        },
+        {
+          "name": "contents",
+          "satisfied": true,
+          "detail": "holds what the environment declares"
+        },
+        {
+          "name": "processes",
+          "satisfied": true,
+          "detail": "every declared process that should run is running"
+        }
+      ],
+      "explanation": "ready1 is ready: verified against this-machine.",
+      "configuration": {
+        "target": "this-machine",
+        "distribution": "sha256:fcce2ccc2315d8e733e9dc5267f8d330307df19cf6ec9f6953f27442ce9e1a46",
+        "runtime": "shell@1.37.0",
+        "platform": "linux/x86_64"
+      },
+      "evaluated_at": "2026-09-30T11:29:32.558278439Z"
+    },
+    "bootstrap": {
+      "state": "succeeded",
+      "contents_generation": 1,
+      "converged_generation": 1,
+      "steps": [],
+      "completed_at": "2026-09-30T11:29:31.461929987Z"
+    }
+  },
+  "recipe": {
+    "name": "basic",
+    "version": 1,
+    "digest": "sha256:dd46e874c76dd0dbf7f1835a31e2d354a37840506c8c8d28162d160887f042cd"
+  },
+  "machine": {
+    "kind": "computer",
+    "target": "this-machine",
+    "status": "running"
+  }
+}

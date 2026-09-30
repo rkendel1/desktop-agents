@@ -310,3 +310,7 @@ sha256-verified archives laid out as Homebrew lays them out.
 
 Real Electron window (the Run CI panel is covered by renderer tests and the service by real-product tests), production
 deployment, domains, persistent Computers, scaling, monitoring, replacing GitHub Actions, Computer replacement.
+
+## 12. Environments
+
+The project's development environment — recipes, bootstrap, readiness, lifecycle and provenance — is described in [environments.md](environments.md). It needs a Compute that declares that contract; Compute Configured 0.1.5 does not, and Foundry says so instead of emulating it. Coding sessions that run on Compute now run on that environment and are admitted only when Compute reports it ready.

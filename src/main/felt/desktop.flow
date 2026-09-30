@@ -104,6 +104,18 @@ app desktop {
     index by_workspace using index workspaceId
   }
 
+  // A project's development environment: a *reference* to a Compute environment (its name, its id, the recipe that was asked for) and
+  // nothing else. The environment's state, readiness, recipe provenance and lifecycle are Compute's and are asked of it every time.
+  collection DevelopmentEnvironment {
+    id: text
+    workspaceId: text
+    environment: text
+    environmentId: text?
+    recipe: json?
+    createdAt: integer
+    index by_workspace using index workspaceId
+  }
+
   collection LocalAgentDefinition {
     id: text
     name: text

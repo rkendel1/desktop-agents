@@ -54,7 +54,8 @@ export function CustomModelSettings() {
   function input(): CustomProviderInput {
     const d = draft!
     const models = [...new Set(d.models.map(m => m.trim()).filter(Boolean))]
-    return { id: d.id, name: d.name, kind: d.kind, apiBase: d.apiBase, apiKey: d.apiKey || undefined, models, modelLabels: Object.fromEntries(models.map(model => [model, d.modelLabels?.[model]?.trim() || '']).filter(([, label]) => label)), reasoningModels: models.filter(model => d.reasoningModels?.includes(model)) }
+    return { id: d.id, name: d.name, kind: d.kind, apiBase: d.apiBase, apiKey: d.apiKey || undefined, models, modelLabels: Object.fromEntries(models.map(model => [model, d.modelLabels?.[model]?.trim() || '']).filter(([, label]) => label)), reasoningModels: models.filter(model => d.reasoningModels?.includes(model)),
+      ...(models.some(model => d.pricing?.[model]) ? { pricing: Object.fromEntries(models.filter(model => d.pricing?.[model]).map(model => [model, d.pricing![model]!])) } : {}) }
   }
   async function persist(providers: CustomProviderInput[], defaultModel: string) {
     setBusy(true); setError('')
@@ -132,6 +133,10 @@ export function CustomModelSettings() {
               <input aria-label={t("Model ID ") + (index + 1)} value={model} disabled={busy || testing} placeholder={t("Model ID, e.g. org/model")} onChange={e => change({ models: draft.models.map((value, i) => i === index ? e.target.value : value) })} />
               <input aria-label={t("Model display name ") + (index + 1)} value={draft.modelLabels?.[model] || ''} disabled={busy || testing} placeholder={t("Display name (optional)")} onChange={e => change({ modelLabels: { ...draft.modelLabels, [model]: e.target.value } })} />
               <label className="custom-model-reasoning" title={t("The model accepts a thinking level")}><input type="checkbox" aria-label={t("Supports thinking ") + (index + 1)} checked={Boolean(model.trim() && draft.reasoningModels?.includes(model.trim()))} disabled={busy || testing || !model.trim()} onChange={e => { const id = model.trim(); const rest = (draft.reasoningModels ?? []).filter(item => item !== id); change({ reasoningModels: e.target.checked ? [...rest, id] : rest }) }} />{t("Thinking")}</label>
+              <select className="custom-model-pricing" aria-label={t("Pricing ") + (index + 1)} title={t("What you know about this model’s price, when the provider’s catalog does not say. Unknown models are never used by free-only routing.")} value={draft.pricing?.[model.trim()] ?? ''} disabled={busy || testing || !model.trim()}
+                onChange={e => { const id = model.trim(); const { [id]: _removed, ...rest } = draft.pricing ?? {}; change({ pricing: e.target.value ? { ...rest, [id]: e.target.value as 'free' | 'beta-free' | 'trial' } : rest }) }}>
+                <option value="">{t("Price unknown")}</option><option value="free">{t("Free")}</option><option value="beta-free">{t("Free (beta)")}</option><option value="trial">{t("Free trial")}</option>
+              </select>
               <button className="icon-button" type="button" aria-label={t("Remove model ") + (index + 1)} disabled={busy || testing || draft.models.length === 1} onClick={() => change({ models: draft.models.filter((_, i) => i !== index) })}><Trash2 size={16} /></button>
             </div>)}
           </div>
