@@ -45,6 +45,7 @@ import { LocalComputerProvider } from './computer'
 import { DouchatRuntime } from './runtime'
 import { RoutineScheduler } from './scheduler'
 import { CodingService } from './coding/service'
+import { CiService } from './ci/service'
 import { CodingApi } from './coding/api'
 import { ComputeClient } from './compute/client'
 import { startAppPortHost, type AppPortHost } from './appport/host'
@@ -205,6 +206,7 @@ let updater: DesktopUpdater
 let emailConnectors: EmailConnectorManager
 let projection: DesktopProjection
 let coding: CodingService
+let ci: CiService
 let computeClient: ComputeClient
 let codingApi: CodingApi
 let appPort: AppPortHost | undefined
@@ -482,7 +484,10 @@ app.whenReady().then(async () => {
   coding = new CodingService(store, runtime, () => ephemeralChanged(), { compute: computeClient })
   // The one place approvals are answered: the desktop prompt and a remote client both end up here.
   const answerPermission = (id: string, allow: boolean): void => { runtime.resolveAgentPermission(id, allow); ephemeralChanged() }
-  codingApi = new CodingApi(store, coding, answerPermission, computeClient)
+  ci = new CiService(store, { compute: computeClient })
+  codingApi = new CodingApi(store, coding, answerPermission, computeClient, ci)
+  // A run left `running` by a Foundry that is gone: its Computer is released through Compute now.
+  void ci.recover().catch(error => diagnostics.write('ci.recover.failed', error instanceof Error ? error.message : String(error)))
   coding.announceInterrupted(store.recoveredCodingSessions)
   // Remote control is off unless the owner turns it on. It listens on loopback only and needs the API key in `appport-api-key`.
   if (process.env.DOUCHAT_APPPORT === '1') {
@@ -1028,6 +1033,18 @@ app.whenReady().then(async () => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     await shell.openExternal(`${computeClient.daemon.replace(/\/$/, '')}/ui/`)
   })
+  ipcMain.handle('douchat:ci-plan', (event, projectId: unknown, tool?: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof projectId !== 'string' || (tool !== undefined && typeof tool !== 'string')) throw new Error('Unauthorized')
+    return ci.plan(projectId, tool as string | undefined)
+  })
+  ipcMain.handle('douchat:start-ci', (event, input: { projectId?: unknown; tool?: unknown }) => {
+    if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || (input.tool !== undefined && typeof input.tool !== 'string')) throw new Error('Unauthorized')
+    return ci.start({ projectId: input.projectId, ...(input.tool ? { tool: input.tool as string } : {}) })
+  })
+  ipcMain.handle('douchat:cancel-ci', (event, id: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
+    return ci.cancel(id)
+  })
   ipcMain.handle('douchat:list-coding-sessions', (event, projectId?: unknown) => {
     if (!isDouchatRenderer(event.sender) || (projectId !== undefined && typeof projectId !== 'string')) throw new Error('Unauthorized')
     return store.codingSessions(projectId as string | undefined)
@@ -1116,7 +1133,9 @@ app.on('before-quit', (event) => {
     // Remote clients stop being served first; a session they started is cancelled below like any other.
     await appPort?.close().catch(() => undefined)
     await appPortServices?.apiKeys.close().catch(() => undefined)
-    // Coding sessions first, so each records how it ended before FeltDB closes.
+    // CI workloads first: each is stopped and its ephemeral Computer released before Foundry goes.
+    await ci?.shutdown().catch(() => undefined)
+    // Coding sessions next, so each records how it ended before FeltDB closes.
     await coding?.cancelAll().catch(() => undefined)
     runtime?.cancelAll()
     if (localWorkBlocker !== undefined) { powerSaveBlocker.stop(localWorkBlocker); localWorkBlocker = undefined }

@@ -39,6 +39,32 @@ const approval = s.object({
   id: s.string(), sessionId: s.string(), projectId: s.string(), projectName: s.string(), agentId: s.string(), agentName: s.string(),
   workingDirectory: s.string(), action: s.object({ verb: s.string(), target: s.string() }), requestedAt: s.number()
 })
+const ciOperation = s.object({
+  operation: s.string(), kind: s.enum(['prepare', 'check'] as const), tool: s.optional(s.string()), command: s.array(s.string()),
+  status: s.enum(['passed', 'failed', 'cancelled', 'timed-out', 'interrupted'] as const), exitCode: s.nullable(s.number()), startedAt: s.number(), durationMs: s.number(),
+  stdout: s.string(), stderr: s.string(), truncated: s.boolean()
+})
+const ciSource = s.object({ repository: s.string(), revision: s.string(), branch: s.optional(s.string()), workspaceSource: s.enum(['committed-revision'] as const) })
+const ciPlatform = s.object({ platform: s.string(), status: s.enum(['certified', 'preview', 'unverified'] as const), label: s.string(), computeVersion: s.optional(s.string()), evidence: s.string() })
+const ciPlanBody = s.object({
+  operations: s.array(s.object({ operation: s.string(), supported: s.boolean(), tool: s.optional(s.string()), command: s.optional(s.array(s.string())), selectionReason: s.optional(s.string()), evidence: s.optional(s.array(s.string())), reason: s.optional(s.string()) })),
+  tool: s.optional(s.string()), ambiguous: s.boolean(), drift: s.boolean(), note: s.optional(s.string())
+})
+const ciRun = s.object({
+  id: s.string(), projectId: s.string(), number: s.number(),
+  status: s.enum(['running', 'passed', 'failed', 'cancelled', 'interrupted', 'blocked'] as const),
+  phase: s.enum(['planning', 'acquiring', 'preparing', 'executing', 'capturing', 'releasing', 'done'] as const),
+  createdAt: s.number(), startedAt: s.optional(s.number()), finishedAt: s.optional(s.number()),
+  source: ciSource, platform: s.optional(ciPlatform),
+  computer: s.optional(s.object({ environment: s.string(), environmentId: s.optional(s.string()), target: s.optional(s.string()), lifecycle: s.enum(['ephemeral'] as const), ttlSeconds: s.number(), repository: s.optional(s.string()), released: s.boolean(), releasedAt: s.optional(s.number()), releaseNote: s.optional(s.string()) })),
+  plan: s.optional(ciPlanBody), operations: s.array(ciOperation),
+  failure: s.optional(s.object({ kind: s.enum(['operation', 'timeout', 'plan', 'ambiguous', 'drift', 'source', 'compute', 'interrupted', 'cancelled'] as const), message: s.string(), operation: s.optional(s.string()) })),
+  events: s.array(s.object({ at: s.number(), label: s.string(), detail: s.optional(s.string()) }))
+})
+const ciPlan = s.object({
+  projectId: s.string(), projectName: s.string(), ready: s.boolean(), blockers: s.array(s.string()), source: s.optional(ciSource), platform: s.optional(ciPlatform), plan: s.optional(ciPlanBody),
+  computer: s.object({ lifecycle: s.enum(['ephemeral'] as const) })
+})
 const session = s.object({
   id: s.string(),
   project: s.object({ id: s.string(), name: s.string(), path: s.string(), isGit: s.boolean(), branch: s.optional(s.string()) }),
@@ -114,6 +140,17 @@ export function codingCapabilities(api: CodingApi, remote?: RemoteLookup): AnyCa
       input: s.object({ id: s.string(), command: s.enum(PAX_INSPECTIONS) }),
       output: s.object({ command: s.string(), argv: s.array(s.string()), exitCode: s.nullable(s.number()), json: s.optional(s.unknown()), stdout: s.string(), stderr: s.string(), findings: s.object({ ambiguous: s.boolean(), drift: s.boolean(), failedClosed: s.boolean() }) }),
       handler: input => mapped(() => api.pax(input.id, input.command)) }),
+    defineCapability({ name: 'douchat.ci.plan', version: 1, description: 'What Run CI would do for a project, before it does anything: the committed revision, the platform Compute states (Certified or Preview) and PAX’s plan of operations. Blockers say why it cannot run (uncommitted changes, PAX ambiguity, Compute unavailable).', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: s.object({ projectId: s.string(), tool: s.optional(s.string()) }), output: ciPlan, handler: input => mapped(() => api.ciPlan(input.projectId, input.tool)) }),
+    defineCapability({ name: 'douchat.ci.runs.start', version: 1, description: 'Run a project’s CI on an ephemeral Compute Computer: PAX plans, Compute acquires and configures the Computer, the committed revision is checked out, PAX’s operations run there, evidence is kept and the Computer is released. Returns as soon as the run exists.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
+      input: s.object({ projectId: s.string(), tool: s.optional(s.string()) }), output: ciRun, handler: input => mapped(() => api.startCi(input)) }),
+    defineCapability({ name: 'douchat.ci.runs.get', version: 1, description: 'One CI run: revision, PAX plan, each operation with its bounded output, failure, and whether the Computer was released. Readable after the Computer is gone.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: idInput, output: ciRun, handler: input => mapped(() => api.getCi(input.id)) }),
+    defineCapability({ name: 'douchat.ci.runs.list', version: 1, description: 'CI runs, newest first.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: s.object({ projectId: s.optional(s.string()), status: s.optional(s.enum(['running', 'passed', 'failed', 'cancelled', 'interrupted', 'blocked'] as const)) }),
+      output: s.object({ runs: s.array(ciRun) }), handler: input => mapped(async () => ({ runs: await api.listCi(input) })) }),
+    defineCapability({ name: 'douchat.ci.runs.cancel', version: 1, description: 'Stop a running CI workload on its Computer, keep the evidence and release the Computer. Returns the run once it has ended.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
+      input: idInput, output: ciRun, handler: input => mapped(() => api.cancelCi(input.id)) }),
     defineCapability({ name: 'douchat.coding.approvals.list', version: 1, description: 'Approvals waiting for an answer now, each with its agent, project, session and folder.', effect: 'observation', authorization: [PERMISSIONS.approvalsRead],
       input: s.object({ sessionId: s.optional(s.string()) }), output: s.object({ approvals: s.array(approval) }), handler: input => mapped(async () => ({ approvals: await api.pendingApprovals(input.sessionId) })) }),
     defineCapability({ name: 'douchat.coding.approvals.resolve', version: 1, description: 'Approve or deny one pending approval, once. It must belong to the named session and still be pending.', effect: 'consequential', authorization: [PERMISSIONS.approvalsResolve],

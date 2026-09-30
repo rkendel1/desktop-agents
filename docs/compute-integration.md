@@ -151,15 +151,17 @@ Foundry installs no other binary and downloads no runtime.
 | Approvals and their outcomes | The checkout on the Computer (Compute's workspace) |
 | — | Source (the repository) and credentials (never in FeltDB) |
 
-## 9. Known limits (findings, not fixed here)
+## 9. Known limits of the coding-session path (findings, not fixed here)
 
 * `pax` here reports 0.1.0 while its source is 0.2.0. PAX drift/reality is presence-level; `--live` adds no runtime drift.
 * Under contradictory lockfiles `pax info` selects a manager by lockfile precedence while `pax test` fails closed and
   `drift` says ambiguous. Foundry shows each as PAX says it.
 * Compute agent processes are service-style: an instant exit reports `start_failed` with exit 0; the reported pid is the
   agent's parent; a stalled target reports no exit code.
-* `environment exec` jobs cannot be cancelled through the CLI, so a running check on a Computer is not cancellable beyond
-  ending Foundry's call.
+* `environment exec` jobs cannot be cancelled through the CLI or the environment API (measured: the job's `cancellation` stays
+  `requested: false`, and the `/compute/jobs/{job}/cancel` route is the remote-provider protocol and answers `unknown_job`), so
+  a coding-session check on a Computer is not cancellable beyond ending Foundry's call. CI does not use `exec` for its
+  workload for this reason (see §11).
 * The `local` provider here cannot enforce `network none`.
 * The agent CLI and PAX must exist on the Computer; the `this-machine` target shares this host's PATH.
 * Uncommitted local changes are not on the Computer.
@@ -173,3 +175,138 @@ them, PAX, edit and tests there, local repository untouched, Compute's API and U
 in the ledger, only a reference stored); PAX ambiguity and drift; unmet runtime requirement; failing command;
 cancellation; Computer disconnect; and the same session through AppPort. Set `FOUNDRY_COMPUTE` and `FOUNDRY_PAX` to
 point at an install outside the usual places.
+
+## 11. CI workloads on ephemeral Computers
+
+The first workload beyond an interactive coding session. **Run CI** on a project runs PAX's operations for it on a Computer that
+exists only for the run.
+
+### Workload lifecycle
+
+```text
+Foundry
+  ↓
+PAX plan                     pax --json --dry-run <operation>, read as PAX wrote it
+  ↓
+Compute acquire              compute environment create --ephemeral --ttl
+  ↓
+Configured environment       the installed Compute Configured; its platform statement is recorded
+  ↓
+workspace                    compute environment repo add <url> --revision <sha>, verified to be that commit
+  ↓
+PAX/native operations        one Compute process per operation: pax install, then typecheck, lint, test, build
+  ↓
+evidence                     exit status, bounded output, PAX plan/drift, Computer reference
+  ↓
+Compute release              stop what runs, compute environment destroy, confirmed `destroyed`
+```
+
+**A Compute Computer is infrastructure for a workload. It is not Foundry application state.** Foundry keeps the run — what
+was tested, what PAX planned, what each operation printed, whether the Computer was released — and after release nothing of
+the Computer remains in Foundry: only the evidence.
+
+### Nothing new is built
+
+| Need | Compute/PAX primitive used |
+| --- | --- |
+| Acquire a Computer | `environment create --ephemeral --ttl` (Compute also expires an unreleased one when the TTL ends) |
+| Environment | the installed Compute Configured; platform label from `compute-configured-verify` |
+| Workspace | `environment repo add` at a commit; Foundry verifies the Computer's `commit` equals the revision |
+| Run a workload | `environment process add` — the same `ComputeChild` that carries coding agents, with role `process` |
+| Observe completion | `environment computer` (process state, `last_failure.exit_code`) and `environment logs` |
+| Cancel | `environment process stop` |
+| Release | `environment process stop` for anything still running, then `environment destroy`, then poll until Compute observes `destroyed` |
+
+There is no CI engine, runner protocol or process manager in Foundry. `src/main/ci/service.ts` sequences these calls.
+
+### What PAX decides
+
+Which operations exist, which tool runs each and the exact command are PAX's answers (`pax --json --dry-run install|typecheck|lint|test|build`).
+Foundry never detects a package manager, orders lockfiles or builds a native command. An operation PAX does not support is shown
+with PAX's reason and not run. The plan is taken here on the clean checkout (so it can be shown before anything is acquired
+and can stop the run before a Computer exists), then taken again by PAX **on the Computer**, and the run fails with kind `plan`
+if the two disagree.
+
+* **Ambiguous** (for example two JavaScript lockfiles): the run is `blocked` before any Computer is acquired. The person may
+  resolve it by choosing a tool (`--tool`); that choice is recorded. Foundry never picks one.
+* **Drift**: after `pax install` (the declared preparation) `pax drift` is asked on the Computer. Drift fails the run with
+  kind `drift` and PAX's issue text; nothing is repaired. Unknown is not drift. `pax drift` does not accept `--tool` (measured), so
+  when the person has chosen a tool the package-manager ambiguity it still prints is recorded as resolved by that choice, and
+  only real drift findings gate the run.
+
+### Source and revision semantics
+
+CI is reproducible from an explicitly identified source: **a committed revision**. The run records `repository`, `revision`
+(commit SHA), `branch` and `workspaceSource: committed-revision`.
+
+* The project must be a Git repository with no uncommitted changes. Otherwise CI refuses to start (and `plan` says why): local
+  state is never tested and never silently ignored.
+* The revision is fetched from `origin` when it is on a remote-tracking branch, otherwise from the project's own folder
+  (`file://`), which works when the Computer is on this machine (`this-machine` target). A Computer elsewhere needs a pushed
+  revision. Credentials in a remote URL are never recorded.
+* The Computer's checkout must report exactly the requested commit, or the run fails with kind `source`.
+
+### What is persisted
+
+One `CiRun` collection in the shared `desktop.flow`: number, status, phase, times, source, platform, the Computer *reference*
+(environment name/id, target, TTL, `released`, `releasedAt`, note), PAX's plan (commands, tools, evidence names, ambiguity/drift),
+each operation (command, tool, exit code, duration, the last 16 KiB of output per stream) and a bounded event list. Not stored:
+source, diffs, artifacts, dependency trees, Computer state. Compute's process log is a single stream; stdout carries it and
+stderr carries the tail plus the exit status when a process failed.
+
+### Cleanup guarantees
+
+Release is in a `finally`: it runs after success, a failing operation, cancellation, timeout, a Compute error, PAX
+ambiguity found on the Computer, drift, and Foundry closing. The Computer reference is persisted **before** the create request,
+so a Foundry that dies mid-request can still release it. `released` is only true once Compute observes `destroyed`
+(destroy is asynchronous — `reconciling` comes first).
+
+| End | Status | Failure kind | Computer |
+| --- | --- | --- | --- |
+| All operations pass | `passed` | — | released |
+| An operation exits non-zero | `failed` | `operation` | released |
+| Operation/run exceeds its time limit | `failed` | `timeout` | process stopped, released |
+| User cancels | `cancelled` | `cancelled` | process stopped through Compute, evidence kept, released |
+| Compute cannot place/start a Computer | `failed` | `compute` | nothing to release (or released) |
+| PAX ambiguous | `blocked` | `ambiguous` | none acquired (or released if found on the Computer) |
+| PAX drift | `failed` | `drift` | released |
+| Computer stops answering | `interrupted` | `interrupted` | release attempted |
+| Foundry closes | `interrupted` | `interrupted` | workload stopped, released before exit |
+| Foundry died | `interrupted` on next start | `interrupted` | `recover()` releases it through Compute |
+
+If Compute cannot confirm a release the run says so (`released: false`, with Compute's note) and the Computer's TTL is the
+backstop; the UI shows this as an error, not as success.
+
+### Recovery
+
+Compute gives a safe recovery primitive here: `environment destroy` is idempotent and addressable by name. At start-up `CiService.recover()` releases the
+Computer of every run still `running` and marks it `interrupted`. If Compute is not answering, the run keeps
+`released: false`, and Compute expires the ephemeral Computer at the end of its TTL (run limit + 15 minutes by default).
+
+### Compute gaps this exposed
+
+* **`environment destroy` does not stop processes on the `this-machine` target**: it removes the workspace but leaves the
+  processes running on the host (measured, 0.1.5). Foundry's release therefore stops every running process through Compute before
+  destroying. A Compute fix would make that step redundant.
+* **`environment exec` jobs cannot be cancelled**, so CI runs its operations as Compute processes, which can.
+* A finished process reports as `failed`/`start_failed` with `exit_code` 0 when it exits quickly; Foundry reads the exit code, not the label.
+* `pax drift` reports a lockfile with no `node_modules` as drift even for a project that depends on nothing; the CI fixtures declare a local dependency.
+* `pax install` for npm is `npm install`, which may rewrite the lockfile on the Computer.
+
+### AppPort
+
+`douchat.ci.plan`, `douchat.ci.runs.start | get | list | cancel` call the same `CiService` as the desktop (`CodingApi` gets it as a
+dependency). A start takes a project and, to resolve an ambiguity, a tool name — never a command, folder, environment or Computer.
+
+### Platforms
+
+The run records the platform label as Compute states it. On Linux x86_64 it is **Certified**; on macOS ARM64 it would be **Preview**
+and stays Preview whatever the run does. **macOS was not executed.** This PR again ran only on Linux x86_64. Homebrew could not be
+used: its installer clones (with the environment's CA bundle) but Homebrew ≥ 4.3 requires Ruby 4.0 downloaded from `ghcr.io`, which
+the network policy refuses (HTTP 403), and the container has Ruby 3.3. Compute Configured therefore remains the formula-pinned,
+sha256-verified archives laid out as Homebrew lays them out.
+
+### Not covered
+
+Real Electron window (the Run CI panel is covered by renderer tests and the service by real-product tests), production
+deployment, domains, persistent Computers, scaling, monitoring, replacing GitHub Actions, Computer replacement.

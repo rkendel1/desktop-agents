@@ -191,6 +191,59 @@ export class ComputeClient {
     return (await this.computer(environment)).processes[name]
   }
 
+  // ─────────────── ephemeral Computers ───────────────
+
+  /**
+   * A temporary Computer: `compute environment create --ephemeral --ttl`. Compute expires it on its own if nobody releases it, which is the
+   * backstop for a Foundry that died. Waits until Compute observes it running.
+   */
+  async acquireEphemeral(name: string, options: { cpu?: number; memory?: string; ttlSeconds: number; signal?: AbortSignal; timeoutMs?: number }): Promise<ComputeComputer> {
+    await this.json(['environment', 'create', name, '--cpu', String(options.cpu ?? 1), '--memory', options.memory ?? '1Gi', '--ephemeral', '--ttl', `${Math.ceil(options.ttlSeconds / 60)}m`, '--json', ...this.daemonArgs()], { timeoutMs: 120_000 })
+    const deadline = Date.now() + (options.timeoutMs ?? 120_000)
+    for (;;) {
+      options.signal?.throwIfAborted()
+      const computer = await this.computer(name)
+      if (computer.observed === 'running') return computer
+      if (['destroyed', 'lost', 'failed'].includes(computer.observed)) throw new ComputeError('failed', `Compute could not start the Computer "${name}": it is ${computer.observed}${computer.explanation ? ` (${computer.explanation})` : ''}.`)
+      if (Date.now() > deadline) throw new ComputeError('failed', `The Computer "${name}" was not running ${Math.round((options.timeoutMs ?? 120_000) / 1000)} seconds after it was requested (it is ${computer.observed}).`)
+      await new Promise(resolve => setTimeout(resolve, 300))
+    }
+  }
+
+  /**
+   * Release a Computer: `compute environment destroy`, which stops everything on it and destroys the machine (Compute keeps the record as
+   * evidence). Idempotent — an environment that is not there is already released. The answer is what Compute *observes* afterwards.
+   */
+  async release(name: string, timeoutMs = 60_000): Promise<{ released: boolean; observed: string; note?: string }> {
+    // `environment destroy` on the this-machine target removes the Computer's workspace but leaves the processes running on the host (measured
+    // against Compute Configured 0.1.5). Release is therefore stop-then-destroy, both Compute's own verbs: every process Compute reports
+    // running on the Computer is stopped through Compute first, so nothing outlives the machine it belonged to.
+    try {
+      const running = Object.entries((await this.computer(name)).processes).filter(([, state]) => state.state === 'running').map(([process_]) => process_)
+      for (const process_ of running) await this.stopProcess(name, process_).catch(() => undefined)
+      const deadline = Date.now() + 20_000
+      while (running.length && Date.now() < deadline && Object.values((await this.computer(name)).processes).some(state => state.state === 'running')) await new Promise(resolve => setTimeout(resolve, 300))
+    } catch { /* the Computer may already be gone or unreachable; destroy below reports what is true */ }
+    const result = await this.cli(['environment', 'destroy', name, '--json', ...this.daemonArgs()], { timeoutMs: 120_000 })
+    if (result.exitCode !== 0) {
+      const failure = this.failure(['environment', 'destroy'], result)
+      if (failure.code === 'not-found') return { released: true, observed: 'absent', note: 'Compute has no such environment.' }
+      return { released: false, observed: 'unknown', note: failure.message }
+    }
+    // Destroying is asynchronous in Compute (the Computer is `reconciling` first), so "released" is what Compute observes, waited for.
+    const deadline = Date.now() + timeoutMs
+    let observed = 'unknown'
+    for (;;) {
+      try { observed = (await this.computer(name)).observed } catch (error) {
+        if (error instanceof ComputeError && error.code === 'not-found') return { released: true, observed: 'absent' }
+        return { released: false, observed: 'unknown', note: error instanceof Error ? error.message : String(error) }
+      }
+      if (observed === 'destroyed') return { released: true, observed }
+      if (Date.now() > deadline) return { released: false, observed, note: `Compute still reports the Computer as ${observed} ${Math.round(timeoutMs / 1000)} seconds after it was released.` }
+      await new Promise(resolve => setTimeout(resolve, 300))
+    }
+  }
+
   // ─────────────── repositories ───────────────
 
   async addRepository(environment: string, name: string, url: string, revision: string): Promise<void> {
@@ -218,6 +271,13 @@ export class ComputeClient {
     const flags = Object.entries(options.env ?? {}).flatMap(([key, value]) => ['--env', `${key}=${value}`])
     const result = await this.cli(['environment', 'agent', 'add', environment, name, '--repository', options.repository, '--restart', 'never', ...flags, ...this.daemonArgs(), '--', ...argv])
     if (result.exitCode !== 0) throw this.failure(['environment', 'agent'], result)
+  }
+
+  /** A plain process on the Computer (`environment process add`): a build step, not an agent. Run in a repository's checkout; never restarted. */
+  async startProcess(environment: string, name: string, argv: string[], options: { repository?: string; env?: Record<string, string> } = {}): Promise<void> {
+    const flags = Object.entries(options.env ?? {}).flatMap(([key, value]) => ['--env', `${key}=${value}`])
+    const result = await this.cli(['environment', 'process', 'add', environment, name, ...(options.repository ? ['--repository', options.repository] : []), '--restart', 'never', ...flags, ...this.daemonArgs(), '--', ...argv])
+    if (result.exitCode !== 0) throw this.failure(['environment', 'process', 'add'], result)
   }
 
   async logs(environment: string, name: string, lines = 5000): Promise<string> {

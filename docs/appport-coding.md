@@ -108,6 +108,9 @@ Two capabilities reach the Compute integration ([compute-integration.md](compute
 (read-only PAX inspections of a session's project on its Computer). `sessions.start` takes an optional `execution`, and a
 session view reports it. No route to the Computer's filesystem or to running commands is added.
 
+CI ([compute-integration.md §11](compute-integration.md)) adds `douchat.ci.plan` and `douchat.ci.runs.start | get | list | cancel`. They call the
+same `CiService` as the desktop. A start takes a project and, to resolve a PAX ambiguity, a tool name — never a command, folder, environment or Computer.
+
 ## What is intentionally not exposed
 
 No read or write of files, no command execution, no shell, no change of a session's folder, no reusable "allow" grants, no

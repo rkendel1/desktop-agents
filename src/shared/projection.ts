@@ -1,4 +1,4 @@
-import type { AgentConfig, AppSnapshot, AttentionItem, ChatMessage, CodingSession, Conversation, PrivateMessage, Project, Routine, RunEvent, TaskRun } from './types'
+import type { AgentConfig, AppSnapshot, AttentionItem, ChatMessage, CiRun, CodingSession, Conversation, PrivateMessage, Project, Routine, RunEvent, TaskRun } from './types'
 import type { GameView } from './groupGame'
 import type { GroupWorkflowView } from './groupWorkflow'
 
@@ -24,6 +24,7 @@ export type ProjectionChange =
   | { kind: 'groupWorkflow'; id: string; value: GroupWorkflowView | null }
   | { kind: 'project'; id: string; value: Project | null }
   | { kind: 'codingSession'; id: string; value: CodingSession | null }
+  | { kind: 'ciRun'; id: string; value: CiRun | null }
   /** Whole named parts of the snapshot: settings-derived state and what only exists while the app runs. */
   | { kind: 'slice'; value: Partial<AppSnapshot> }
 
@@ -124,6 +125,9 @@ export function applyProjection(snapshot: AppSnapshot, changes: ProjectionChange
         break
       case 'codingSession':
         next = { ...next, codingSessions: upsert(next.codingSessions ?? [], change.id, change.value).sort((a, b) => b.createdAt - a.createdAt) }
+        break
+      case 'ciRun':
+        next = { ...next, ciRuns: upsert(next.ciRuns ?? [], change.id, change.value).sort((a, b) => b.createdAt - a.createdAt) }
         break
       case 'slice': {
         const { groupMemberHealth, ...rest } = change.value

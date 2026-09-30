@@ -7039,3 +7039,14 @@ html.native-dialog-window,
 .coding-platform-preview { color: #8a5a00; background: #fff1cc; }
 .coding-platform-unverified { color: var(--muted); }
 
+
+/* CI on an ephemeral Compute Computer: the plan, the run, and each operation as it ended. */
+.ci-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0; }
+.ci-facts dt { color: var(--muted); }
+.ci-facts dd { margin: 0; }
+.ci-operations { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ci-operation-passed > details > summary > span[aria-hidden] { color: #16794a; }
+.ci-operation-failed > details > summary > span[aria-hidden], .ci-operation-timed-out > details > summary > span[aria-hidden], .ci-operation-interrupted > details > summary > span[aria-hidden] { color: #b3261e; }
+.ci-run { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ci-plan-card { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.coding-output { max-height: 240px; overflow: auto; white-space: pre-wrap; font-size: 12px; }

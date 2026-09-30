@@ -420,6 +420,8 @@ export interface AppSnapshot {
   permissionRequests?: PermissionRequest[]
   projects?: Project[]
   codingSessions?: CodingSession[]
+  /** CI runs on ephemeral Compute Computers, newest first. Evidence and references only. */
+  ciRuns?: CiRun[]
   /** Live state of running coding sessions. */
   codingActivity?: CodingActivity[]
   agents: AgentConfig[]
@@ -625,6 +627,9 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   computeInventory: () => Promise<ComputeInventory>
   openComputeUi: () => Promise<void>
   cancelCodingSession: (id: string) => Promise<void>
+  ciPlan: (projectId: string, tool?: string) => Promise<CiPlan>
+  startCi: (input: { projectId: string; tool?: string }) => Promise<CiRun>
+  cancelCi: (id: string) => Promise<void>
   continueCodingSession: (id: string, text?: string) => Promise<CodingSession>
   runCodingChecks: (id: string) => Promise<CommandResult | undefined>
   /** Asks the owner to confirm before saving: the command runs on this computer. */
@@ -763,6 +768,87 @@ export interface CodingSession {
   commands: CommandResult[]
   /** What happened, in order: meaningful outcomes only (never every progress tick). Bounded. */
   events: CodingEvent[]
+}
+
+/**
+ * A project's CI workload on an ephemeral Compute Computer. Foundry keeps what happened and the *references* needed to see it again —
+ * the revision that was tested, the Computer that was used, what PAX planned, what each operation printed (bounded) and whether the
+ * Computer was released. It keeps no copy of the source, no artifacts and no Computer state: Compute owns the Computer, and after it
+ * is released only this evidence remains.
+ */
+/** What Run CI would do, before it does anything: the revision, the platform Compute states, and PAX's plan. */
+export interface CiPlan {
+  projectId: string
+  projectName: string
+  ready: boolean
+  /** Why it cannot run: not a Git project, uncommitted changes, PAX ambiguity, Compute unavailable… */
+  blockers: string[]
+  source?: CiRun['source']
+  platform?: ComputePlatformView
+  plan?: NonNullable<CiRun['plan']>
+  computer: { lifecycle: 'ephemeral' }
+}
+
+export type CiRunStatus = 'running' | 'passed' | 'failed' | 'cancelled' | 'interrupted' | 'blocked'
+export type CiPhase = 'planning' | 'acquiring' | 'preparing' | 'executing' | 'capturing' | 'releasing' | 'done'
+export type CiFailureKind = 'operation' | 'timeout' | 'plan' | 'ambiguous' | 'drift' | 'source' | 'compute' | 'interrupted' | 'cancelled'
+
+/** One operation PAX planned. Everything about it is PAX's own answer to `pax --dry-run --json <operation>`. */
+export interface CiPlannedOperation {
+  operation: string
+  /** PAX supports it for this project. When it does not, `reason` is PAX's own message and the operation is not run. */
+  supported: boolean
+  tool?: string
+  command?: string[]
+  selectionReason?: string
+  evidence?: string[]
+  reason?: string
+}
+
+export interface CiOperationResult {
+  operation: string
+  kind: 'prepare' | 'check'
+  tool?: string
+  command: string[]
+  status: 'passed' | 'failed' | 'cancelled' | 'timed-out' | 'interrupted'
+  exitCode: number | null
+  startedAt: number
+  durationMs: number
+  /** The tail of what the operation printed, bounded (see CI_OUTPUT_LIMIT). */
+  stdout: string
+  stderr: string
+  truncated: boolean
+}
+
+export interface CiEvent { at: number; label: string; detail?: string }
+
+export interface CiRun {
+  id: string
+  projectId: string
+  /** 1, 2, 3… within the project. */
+  number: number
+  status: CiRunStatus
+  phase: CiPhase
+  createdAt: number
+  startedAt?: number
+  finishedAt?: number
+  /** What was tested — explicit, so the run can be reproduced. */
+  source: {
+    /** Where the revision was taken from: the project's origin URL when the revision is on it, else the project's own folder. */
+    repository: string
+    revision: string
+    branch?: string
+    /** Always a clean, committed revision: uncommitted local state is never tested. */
+    workspaceSource: 'committed-revision'
+  }
+  platform?: ComputePlatformView
+  /** A reference to the Computer that ran it. `released` is what Compute confirmed, not what Foundry intended. */
+  computer?: { environment: string; environmentId?: string; target?: string; lifecycle: 'ephemeral'; ttlSeconds: number; repository?: string; released: boolean; releasedAt?: number; releaseNote?: string }
+  /** PAX's plan for this project, and the tool PAX was told to use when the person resolved an ambiguity. */
+  plan?: { operations: CiPlannedOperation[]; tool?: string; ambiguous: boolean; drift: boolean; note?: string }
+  operations: CiOperationResult[]
+  failure?: { kind: CiFailureKind; message: string; operation?: string }
+  events: CiEvent[]
 }
 
 export type CodingEventKind = 'started' | 'continued' | 'approval-requested' | 'approval-allowed' | 'approval-denied' | 'command' | 'checks' | 'changes' | 'finished' | 'interrupted'

@@ -1,6 +1,7 @@
 import { describeApproval } from '../../shared/coding'
 import { activityOrigin, checkView, projectView, type ApprovalView, type CodingNotification, type GitStateView, type ProjectView, type SessionView } from '../../shared/codingApi'
-import type { CodingSession, Project } from '../../shared/types'
+import type { CiPlan, CiRun, CodingSession, Project } from '../../shared/types'
+import type { CiService } from '../ci/service'
 import type { DesktopRepository } from '../desktopRepository'
 import type { ComputeClient } from '../compute/client'
 import { PAX_INSPECTIONS, type PaxInspection, type PaxRun } from '../compute/pax'
@@ -25,7 +26,7 @@ function classify(error: unknown): CodingApiError {
   if (error instanceof CodingApiError) return error
   const message = error instanceof Error ? error.message : String(error)
   if (/not found|no longer exists/i.test(message)) return new CodingApiError('not-found', message)
-  if (/already (running|working)|pinned|no longer the project|refusing to run/i.test(message)) return new CodingApiError('conflict', message)
+  if (/already (running|working|has a CI run)|in progress|pinned|no longer the project|refusing to run/i.test(message)) return new CodingApiError('conflict', message)
   return new CodingApiError('invalid', message)
 }
 
@@ -44,7 +45,9 @@ export class CodingApi {
     /** The runtime's permission answer — the one path desktop and remote approvals share. */
     private readonly answer: (approvalId: string, allow: boolean) => void,
     /** Compute, when installed: read for the inventory of Computers a session can run on. */
-    private readonly compute?: ComputeClient
+    private readonly compute?: ComputeClient,
+    /** CI on ephemeral Computers: the same service the desktop calls. */
+    private readonly ci?: CiService
   ) {}
 
   private async guarded<T>(work: () => Promise<T>): Promise<T> {
@@ -152,6 +155,42 @@ export class CodingApi {
     await this.requireSession(sessionId)
     if (!PAX_INSPECTIONS.includes(command)) throw new CodingApiError('invalid', `PAX inspection must be one of ${PAX_INSPECTIONS.join(', ')}.`)
     return this.guarded(() => this.coding.pax(sessionId, command))
+  }
+
+  // ───────────────────────────── CI ─────────────────────────────
+
+  private requireCi(): CiService {
+    if (!this.ci) throw new CodingApiError('invalid', 'CI is not available in this build.')
+    return this.ci
+  }
+
+  /** What Run CI would do for a project: its revision, the platform Compute states and PAX's plan — before anything runs. */
+  ciPlan(projectId: string, tool?: string): Promise<CiPlan> {
+    if (typeof projectId !== 'string' || !projectId) throw new CodingApiError('invalid', 'A project id is required.')
+    return this.guarded(() => this.requireCi().plan(projectId, tool))
+  }
+
+  startCi(input: { projectId: string; tool?: string }): Promise<CiRun> {
+    if (typeof input.projectId !== 'string' || !input.projectId) throw new CodingApiError('invalid', 'A project id is required.')
+    return this.guarded(() => this.requireCi().start(input))
+  }
+
+  async getCi(id: string): Promise<CiRun> {
+    const run = await this.requireCi().get(id)
+    if (!run) throw new CodingApiError('not-found', 'CI run not found')
+    return run
+  }
+
+  listCi(input: { projectId?: string; status?: CiRun['status'] } = {}): Promise<CiRun[]> {
+    return this.requireCi().list(input.projectId).then(runs => input.status ? runs.filter(run => run.status === input.status) : runs)
+  }
+
+  /** Stops the workload, keeps the evidence and releases the Computer; the response is the run once it has ended. */
+  async cancelCi(id: string): Promise<CiRun> {
+    const run = await this.getCi(id)
+    if (run.status !== 'running') throw new CodingApiError('conflict', `This CI run is ${run.status}, not running.`)
+    await this.guarded(() => this.requireCi().cancel(id))
+    return (await this.requireCi().settled(id)) ?? this.getCi(id)
   }
 
   // ───────────────────────────── approvals ─────────────────────────────

@@ -121,3 +121,11 @@ export async function gitRemoteUrl(cwd: GitLocation): Promise<string | undefined
     return result.exitCode === 0 ? result.stdout.trim() || undefined : undefined
   } catch { return undefined }
 }
+
+/** Is the commit on a remote-tracking branch — that is, could a checkout from `origin` find it? Reads only. */
+export async function gitRevisionIsPublished(cwd: GitLocation, revision: string): Promise<boolean> {
+  try {
+    const result = await git(cwd, ['branch', '--remotes', '--contains', revision])
+    return result.exitCode === 0 && result.stdout.trim().length > 0
+  } catch { return false }
+}
