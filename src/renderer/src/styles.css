@@ -7050,3 +7050,11 @@ html.native-dialog-window,
 .ci-run { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .ci-plan-card { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .coding-output { max-height: 240px; overflow: auto; white-space: pre-wrap; font-size: 12px; }
+
+/* Project home: a file row with its own Stage / Unstage action beside it. */
+.coding-changes li { display: flex; align-items: center; gap: 8px; }
+.coding-changes li > button:first-child { flex: 1; min-width: 0; }
+.coding-change-kind.session { color: #8a5a00; }
+.coding-conversation { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.coding-conversation li[data-author='user'] { border-left: 3px solid var(--line); padding-left: 10px; }
+.coding-changes li > button.secondary-button { width: auto; flex: none; }

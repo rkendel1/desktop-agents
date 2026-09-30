@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { CommandResult, GitState } from '../../shared/types'
+import type { CommandResult, GitDiffMode, GitState } from '../../shared/types'
 export { accountChanges } from '../../shared/coding'
 import { runCommand } from './commands'
 
@@ -44,7 +44,17 @@ export function parseGitStatus(output: string): GitState {
     if (!entry) continue
     if (entry.startsWith('## ')) {
       const head = entry.slice(3)
-      if (!head.startsWith('HEAD (no branch)')) state.branch = head.replace(/^No commits yet on /, '').split('...')[0]
+      if (!head.startsWith('HEAD (no branch)')) {
+        const [name, ...rest] = head.replace(/^No commits yet on /, '').split('...')
+        state.branch = name
+        // "origin/main [ahead 1, behind 2]" — Git's own words for how the branch relates to its upstream.
+        const tracking = /^(\S+)(?: \[(.*)\])?$/.exec(rest.join('...'))
+        if (tracking) {
+          state.upstream = tracking[1]
+          state.ahead = Number(/ahead (\d+)/.exec(tracking[2] ?? '')?.[1] ?? 0)
+          state.behind = Number(/behind (\d+)/.exec(tracking[2] ?? '')?.[1] ?? 0)
+        }
+      }
       continue
     }
     const code = entry.slice(0, 2), path = entry.slice(3)
@@ -106,9 +116,11 @@ export async function gitStatus(cwd: GitLocation, signal?: AbortSignal, options:
  * together), or from the index when there is no commit yet. Untracked files
  * appear in `gitStatus`, not here. Bounded, so a huge change cannot flood the app.
  */
-export async function gitDiff(cwd: GitLocation, options: { path?: string; signal?: AbortSignal } = {}): Promise<{ diff: string; truncated: boolean }> {
+export async function gitDiff(cwd: GitLocation, options: { path?: string; signal?: AbortSignal; mode?: GitDiffMode } = {}): Promise<{ diff: string; truncated: boolean }> {
   const head = await git(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD'], options.signal)
-  const target = head.exitCode === 0 ? ['HEAD'] : []
+  const mode = options.mode ?? 'head'
+  // `head`: everything since the last commit; `staged`: index against HEAD; `unstaged`: working tree against the index.
+  const target = mode === 'staged' ? ['--cached'] : mode === 'unstaged' ? [] : head.exitCode === 0 ? ['HEAD'] : []
   const result = await git(cwd, ['diff', '--no-color', '--no-ext-diff', '--no-textconv', ...target, ...(options.path ? ['--', options.path] : [])], options.signal, MAX_DIFF)
   if (result.exitCode !== 0) throw new Error(`git diff failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`)
   return { diff: result.stdout, truncated: result.stdout.startsWith('…') }
@@ -128,4 +140,45 @@ export async function gitRevisionIsPublished(cwd: GitLocation, revision: string)
     const result = await git(cwd, ['branch', '--remotes', '--contains', revision])
     return result.exitCode === 0 && result.stdout.trim().length > 0
   } catch { return false }
+}
+
+const inside = (paths: string[], state: GitState): string[] => {
+  const known = new Set(state.changes.flatMap(change => [change.path, ...(change.from ? [change.from] : [])]))
+  if (!paths.length) throw new Error('Choose at least one file.')
+  const unknown = paths.filter(path => !known.has(path))
+  if (unknown.length) throw new Error(`Git shows no change to ${unknown[0]}${unknown.length > 1 ? ` (and ${unknown.length - 1} more)` : ''}.`)
+  return paths
+}
+
+/** `git add -- <paths>`. Only paths Git itself lists as changed; Foundry keeps no index of its own. */
+export async function gitStage(cwd: string, paths: string[]): Promise<GitState> {
+  inside(paths, await gitStatus(cwd))
+  const result = await git(cwd, ['add', '--', ...paths])
+  if (result.exitCode !== 0) throw new Error(`git add failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`)
+  return gitStatus(cwd)
+}
+
+/** Take paths out of the index without touching the working tree (`git restore --staged`, or `git rm --cached` before the first commit). */
+export async function gitUnstage(cwd: string, paths: string[]): Promise<GitState> {
+  const before = await gitStatus(cwd)
+  inside(paths, before)
+  const result = await git(cwd, before.head ? ['restore', '--staged', '--', ...paths] : ['rm', '--cached', '-r', '-q', '--', ...paths])
+  if (result.exitCode !== 0) throw new Error(`git unstage failed: ${result.stderr.trim() || `exit ${result.exitCode}`}`)
+  return gitStatus(cwd)
+}
+
+/**
+ * `git commit -m <message>` of exactly what is staged — never `-a`. The repository's own hooks run, as they do when a developer commits;
+ * the message is one argument, not shell text.
+ */
+export async function gitCommit(cwd: string, message: string): Promise<{ state: GitState; commit: string; summary: string }> {
+  const text = message.trim()
+  if (!text) throw new Error('Write a commit message.')
+  if (text.length > 20_000) throw new Error('The commit message is too long.')
+  const before = await gitStatus(cwd)
+  if (!before.changes.some(change => change.code[0] !== ' ' && change.code !== '??')) throw new Error('Nothing is staged. Stage the files to commit first.')
+  const result = await runCommand(['git', ...SAFE, 'commit', '-m', text], { cwd, env: GIT_ENVIRONMENT, timeoutMs: 120_000 })
+  if (result.exitCode !== 0) throw new Error(`git commit failed: ${(result.stderr.trim() || result.stdout.trim()).slice(-600) || `exit ${result.exitCode}`}`)
+  const state = await gitStatus(cwd)
+  return { state, commit: state.head ?? '', summary: text.split('\n')[0] }
 }

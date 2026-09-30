@@ -80,6 +80,7 @@ export class CodingApi {
     return this.guarded(async () => {
       const state = await this.coding.gitStatus(projectId)
       return { projectId, ...(state.branch ? { branch: state.branch } : {}), ...(state.head ? { head: state.head } : {}),
+        ...(state.upstream ? { upstream: state.upstream, ahead: state.ahead ?? 0, behind: state.behind ?? 0 } : {}),
         changes: state.changes.map(change => ({ path: change.path, code: change.code, ...(change.from ? { from: change.from } : {}) })) }
     })
   }

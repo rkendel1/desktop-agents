@@ -197,6 +197,12 @@ authorize a folder for a conversation. Moves do not overwrite existing files, an
 deletion is not exposed. Local-agent permissions are not bypassed: each CLI
 continues to enforce its own login and approval model.
 
+## The coding workbench
+
+Open a project and Foundry shows its real state — branch, upstream, staged / not staged / untracked files with diffs, the last session and any
+approval waiting — and lets you start an agent, approve, review, run checks, continue, and commit without leaving the app. Local coding needs no
+network or Compute. See [docs/workbench.md](docs/workbench.md).
+
 ## Running on Compute
 
 A coding session can run on a Computer from an installed [Compute Configured](https://github.com/rkendel1/compute)

@@ -33,7 +33,7 @@ const project = s.object({
   id: s.string(), name: s.string(), path: s.string(), isGit: s.boolean(), checkCommand: s.optional(s.array(s.string()))
 })
 const change = s.object({ path: s.string(), code: s.string(), from: s.optional(s.string()) })
-const gitState = s.object({ projectId: s.string(), branch: s.optional(s.string()), head: s.optional(s.string()), changes: s.array(change) })
+const gitState = s.object({ projectId: s.string(), branch: s.optional(s.string()), head: s.optional(s.string()), upstream: s.optional(s.string()), ahead: s.optional(s.number()), behind: s.optional(s.number()), changes: s.array(change) })
 const origin = s.enum(['agent', 'douchat', 'unknown'] as const)
 const approval = s.object({
   id: s.string(), sessionId: s.string(), projectId: s.string(), projectName: s.string(), agentId: s.string(), agentName: s.string(),

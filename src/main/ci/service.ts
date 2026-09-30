@@ -92,6 +92,15 @@ export class CiService {
     return { operations, runs, ambiguous }
   }
 
+  /** PAX missing is a plain statement, not a crash: CI needs PAX to say what a project's operations are. */
+  private async paxPlanOrStop(directory: string, tool: string | undefined, execute: Parameters<CiService['paxPlan']>[2]): ReturnType<CiService['paxPlan']> {
+    try { return await this.paxPlan(directory, tool, execute) }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' || /ENOENT/.test(error instanceof Error ? error.message : '')) throw new CiStop('plan', 'PAX is not installed, so CI cannot plan this project\'s operations. Nothing was started.', undefined, 'blocked')
+      throw error
+    }
+  }
+
   private localExecute = (directory: string) => (argv: string[], options: { signal?: AbortSignal }): Promise<CommandResult> =>
     runCommand(argv, { cwd: directory, signal: options.signal, timeoutMs: 60_000 })
 
@@ -122,10 +131,11 @@ export class CiService {
     result.blockers.push(...blockers)
     if (source) {
       result.source = source
-      const planned = await this.paxPlan(directory, tool, this.localExecute(directory))
-      result.plan = { operations: planned.operations, ...(tool ? { tool } : {}), ambiguous: planned.ambiguous, drift: false }
-      if (planned.ambiguous) result.blockers.push('PAX cannot choose one native tool for this project (ambiguous). Choose a tool explicitly to run CI.')
-      else if (!planned.operations.some(item => item.supported && CHECKS.includes(item.operation as typeof CHECKS[number]))) result.blockers.push('PAX plans no CI operation (typecheck, lint, test or build) for this project.')
+      let planned: Awaited<ReturnType<CiService['paxPlan']>> | undefined
+      try { planned = await this.paxPlanOrStop(directory, tool, this.localExecute(directory)) } catch (error) { result.blockers.push(error instanceof Error ? error.message : String(error)) }
+      if (planned) result.plan = { operations: planned.operations, ...(tool ? { tool } : {}), ambiguous: planned.ambiguous, drift: false }
+      if (planned?.ambiguous) result.blockers.push('PAX cannot choose one native tool for this project (ambiguous). Choose a tool explicitly to run CI.')
+      else if (planned && !planned.operations.some(item => item.supported && CHECKS.includes(item.operation as typeof CHECKS[number]))) result.blockers.push('PAX plans no CI operation (typecheck, lint, test or build) for this project.')
     }
     result.ready = result.blockers.length === 0
     return result
@@ -223,7 +233,7 @@ export class CiService {
     }
     try {
       // 1 ── PAX plans the project. Ambiguity stops the run before any Computer exists.
-      const planned = await this.paxPlan(directory, tool, this.localExecute(directory))
+      const planned = await this.paxPlanOrStop(directory, tool, this.localExecute(directory))
       plan = { operations: planned.operations, ...(tool ? { tool } : {}), ambiguous: planned.ambiguous, drift: false }
       await save({ plan }, { label: 'PAX planned the project', detail: planned.operations.filter(item => item.supported).map(item => `${item.operation}: ${item.command?.join(' ')}`).join('\n') || 'no supported operation' })
       if (planned.ambiguous) throw new CiStop('ambiguous', `PAX cannot choose one native tool for this project: ${planned.operations.find(item => !item.supported && item.reason)?.reason ?? 'ambiguous'}. Nothing was started. Choose a tool explicitly to run CI.`, undefined, 'blocked')

@@ -31,6 +31,11 @@ AuthBoundry    authority boundary when authority/agency is required
 Foundry does not require AuthBoundry, PAX or Compute to work: a session runs locally unless Compute is chosen, and
 then it never falls back to running locally.
 
+## The workbench
+
+Foundry is the developer workbench where agents build software. The daily loop — project home, start coding, approvals, activity, changed
+files and diffs, checks, Continue, Git, history — and the authority behind each part are described in [workbench.md](workbench.md).
+
 ## Where the old name still appears
 
 Foundry was previously named Douchat. The rename is of the product a person sees; identifiers that would need a

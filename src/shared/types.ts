@@ -621,7 +621,11 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   chooseProject: () => Promise<Project | undefined>
   removeProject: (id: string) => Promise<boolean>
   projectGitStatus: (id: string, sessionId?: string) => Promise<GitState>
-  projectGitDiff: (id: string, path?: string, sessionId?: string) => Promise<{ diff: string; truncated: boolean }>
+  projectGitDiff: (id: string, path?: string, sessionId?: string, mode?: GitDiffMode) => Promise<{ diff: string; truncated: boolean }>
+  projectPax: (id: string, command: 'info' | 'drift') => Promise<PaxAnswer>
+  projectGitStage: (id: string, paths: string[]) => Promise<GitState>
+  projectGitUnstage: (id: string, paths: string[]) => Promise<GitState>
+  projectGitCommit: (id: string, message: string) => Promise<{ state: GitState; commit: string; summary: string }>
   listCodingSessions: (projectId?: string) => Promise<CodingSession[]>
   startCodingSession: (input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment: string } }) => Promise<CodingSession>
   computeInventory: () => Promise<ComputeInventory>
@@ -674,8 +678,26 @@ export interface GitState {
   /** Current branch, or undefined when detached or unborn. */
   branch?: string
   head?: string
+  /** The branch it tracks (`origin/main`), when it has one. */
+  upstream?: string
+  /** Commits ahead of / behind the upstream, as Git reports them (absent when there is no upstream). */
+  ahead?: number
+  behind?: number
   changes: GitChange[]
 }
+
+/** PAX's answer to a read-only inspection, as PAX gave it. */
+export interface PaxAnswer {
+  command: string
+  exitCode: number | null
+  json?: unknown
+  stdout: string
+  stderr: string
+  findings: { ambiguous: boolean; drift: boolean; failedClosed: boolean }
+}
+
+/** Which comparison a diff shows: everything since HEAD (default), only what is staged, or only what is not staged yet. */
+export type GitDiffMode = 'head' | 'staged' | 'unstaged'
 
 export interface CommandResult {
   argv: string[]
