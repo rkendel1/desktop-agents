@@ -251,7 +251,7 @@ export class ComputeClient {
    * bootstrap/readiness on `environment inspect`, and lifecycle — and whether its daemon answers. An older Compute is reported as needing
    * an update; nothing is emulated for it (no recipes, bootstrap or readiness are inferred from what it does have).
    */
-  private contractDeclared?: { binary: string; version: string }
+  private contractDeclared?: { binary: string; version: string; buildId?: string }
   async environmentContract(options: { daemon?: boolean } = {}): Promise<ComputeContractStatus> {
     if (!this.contractDeclared) {
       let binary: string
@@ -264,11 +264,39 @@ export class ComputeClient {
       if (recipe?.exitCode !== 0 || !create || !/--recipe\b/.test(create.stdout)) {
         return { ok: false, reason: 'upgrade-required', installed: { binary, version }, message: `Compute update required. This version of Foundry requires Compute with Environment Recipes, Bootstrap, Readiness and lifecycle support. Installed: Compute Configured ${version}.` }
       }
+      let buildId: string | undefined
+      try {
+        const result = await this.cli(['version', '--json'], { timeoutMs: 15_000 })
+        if (result.exitCode === 0) {
+          const identity = JSON.parse(result.stdout) as { version?: string; build_id?: string }
+          version = identity.version ?? version
+          buildId = identity.build_id
+        }
+      } catch { /* controller compatibility below still catches an old daemon */ }
       // What the installed binary declares does not change while Foundry runs; whether the daemon answers does, so that is asked every time.
-      this.contractDeclared = { binary, version }
+      this.contractDeclared = { binary, version, ...(buildId ? { buildId } : {}) }
     }
-    if (options.daemon !== false && !(await this.reachable())) return { ok: false, reason: 'daemon-unreachable', installed: this.contractDeclared, message: `The Compute daemon is not answering at ${this.daemon}. Start it with \`compute start\`.` }
-    return { ok: true, installed: this.contractDeclared }
+    const installed = { binary: this.contractDeclared.binary, version: this.contractDeclared.version }
+    if (options.daemon === false) return { ok: true, installed }
+    if (!(await this.reachable())) return { ok: false, reason: 'daemon-unreachable', installed, message: `The Compute daemon is not answering at ${this.daemon}. Start it with \`compute start\`.` }
+
+    // A package update does not replace a controller that is already running. Compare build identities before using newer routes: otherwise
+    // the 0.1.6 CLI can successfully answer `--help` while its pre-upgrade daemon fails later with "no such operation: GET /recipes".
+    try {
+      const node = await this.json<{ controller?: { version?: string; build_id?: string; executable?: string } }>(['node', 'info', '--json', ...this.daemonArgs()], { timeoutMs: 15_000 })
+      const controller = node.controller
+      if (!controller?.build_id || !this.contractDeclared.buildId || controller.build_id !== this.contractDeclared.buildId) {
+        const running = controller?.version ? `Compute ${controller.version}` : 'an older Compute build'
+        const source = controller?.executable ? ` from ${controller.executable}` : ''
+        return { ok: false, reason: 'upgrade-required', installed,
+          message: `Compute was updated to ${this.contractDeclared.version}, but the running controller is ${running}${source}. Restart the control plane with \`compute-configured down\`, then \`compute-configured up\`, so the daemon and CLI use the same build.` }
+      }
+    } catch (error) {
+      if (error instanceof ComputeError && error.code === 'daemon-unreachable') return { ok: false, reason: 'daemon-unreachable', installed, message: error.message }
+      return { ok: false, reason: 'upgrade-required', installed,
+        message: `Compute was updated to ${this.contractDeclared.version}, but the running controller does not expose the matching node identity contract. Restart the control plane with \`compute-configured down\`, then \`compute-configured up\`.` }
+    }
+    return { ok: true, installed }
   }
 
   /** Recipes at their current version, as Compute lists them. */

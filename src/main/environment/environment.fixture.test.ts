@@ -191,6 +191,16 @@ describe('a Compute older than the contract (Compute Configured 0.1.5)', () => {
   })
 })
 
+describe('an updated CLI with a pre-update controller still running', () => {
+  it('reports the exact mismatch before calling a route the old controller does not have', async () => {
+    const backend = new FixtureCompute({ extra: { FIXTURE_CONTROLLER_VERSION: '0.1.0' } }); backends.push(backend)
+    const contract = await backend.client.environmentContract()
+    expect(contract).toMatchObject({ ok: false, reason: 'upgrade-required', installed: { version: '0.1.6' },
+      message: expect.stringMatching(/running controller is Compute 0\.1\.0.*compute-configured down.*compute-configured up/) })
+    expect(await backend.calls()).not.toContain('recipe list')
+  })
+})
+
 describe('concurrent requests', () => {
   it('refuses a second operation on the same project while one is in flight', async () => {
     const { service, projectId } = await world({ auto: true })

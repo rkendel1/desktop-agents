@@ -9,6 +9,7 @@
  *
  *   FIXTURE_STATE   path of the state file (required)
  *   FIXTURE_LEGACY  =1: behave like Compute Configured 0.1.5, which has no recipes, bootstrap or readiness
+ *   FIXTURE_CONTROLLER_VERSION: report a different running controller version/build than the installed CLI
  *   FIXTURE_AUTO    =1: an environment is `ready` as soon as it is created (default: it advances only through `__fixture advance`)
  *   FIXTURE_SLOW_START / FIXTURE_SLOW_STOP  =1: start stays `configuring`, stop stays `stopping`, until the test advances them
  *   `compute __fixture …` is the tests' hand on the world: advance NAME | set NAME <json> | daemon up|down | controller-restart | recipe NAME <json>
@@ -91,9 +92,10 @@ const environment = name => state.environments[name] ?? (save(state), fail(`runt
 const persist = value => { save(state); if (value !== undefined) out(value) }
 
 const [a, b] = args
-if (a === '--version') { out('compute 0.1.5'); process.exit(0) }
+if (a === '--version') { out('compute 0.1.6'); process.exit(0) }
 if (a === 'recipe' && args.includes('--help')) { out('Lifecycle policy as data: list, inspect, write, validate, and explain recipes'); process.exit(0) }
 if (a === 'environment' && b === 'create' && args.includes('--help')) { out('Usage: compute environment create [OPTIONS] <NAME>\n      --recipe <RECIPE>  Ask for the computer a recipe resolves to\n      --stopped'); process.exit(0) }
+if (a === 'version' && json) { persist({ version: '0.1.6', build_id: 'sha256:fixture-0.1.6' }); process.exit(0) }
 
 // ───────── the tests' hand on the world ─────────
 if (a === '__fixture') {
@@ -110,6 +112,10 @@ if (a === '__fixture') {
 
 if (a === 'status') { needDaemon(); out('Compute daemon: running'); persist(); process.exit(0) }
 needDaemon()
+if (a === 'node' && b === 'info') {
+  const version = process.env.FIXTURE_CONTROLLER_VERSION ?? '0.1.6'
+  persist({ controller: { version, build_id: `sha256:fixture-${version}`, executable: '/fixture/compute' } }); process.exit(0)
+}
 
 if (a === 'recipe' && b === 'list') { persist(Object.values(state.recipes).map(({ satisfiable, ...recipe }) => recipe)); process.exit(0) }
 if (a === 'recipe' && b === 'resolve') {
