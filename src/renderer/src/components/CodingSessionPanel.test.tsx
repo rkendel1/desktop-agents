@@ -26,6 +26,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   api = {
     resolveAgentPermission: vi.fn(async () => undefined), cancelCodingSession: vi.fn(async () => undefined), continueCodingSession: vi.fn(async () => session({ status: 'running' })),
+    projectPax: vi.fn(async () => { throw new Error('PAX is not installed, so project tooling is not shown.') }),
     ciPlan: vi.fn(async () => ({ projectId: 'p1', projectName: 'Fixture', ready: false, blockers: ['not now'], computer: { lifecycle: 'ephemeral' } })), startCi: vi.fn(), cancelCi: vi.fn(),
     runCodingChecks: vi.fn(async () => undefined), openComputeUi: vi.fn(async () => undefined),
     computeInventory: vi.fn(async () => ({ available: true, daemon: { endpoint: 'http://127.0.0.1:8787', reachable: true }, installation: { binary: '/x/compute-configured', version: '0.1.5', configured: true },

@@ -36,6 +36,7 @@ import type {
   MessageFileInput,
   CreateGroupInput,
   CreateRoutineInput,
+  GitDiffMode,
   UpdateAgentInput,
   UpdateConversationInput,
   UpdateProfileInput,
@@ -1020,9 +1021,28 @@ app.whenReady().then(async () => {
     if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (sessionId !== undefined && typeof sessionId !== 'string')) throw new Error('Unauthorized')
     return coding.gitStatus(id, sessionId as string | undefined)
   })
-  ipcMain.handle('douchat:project-git-diff', (event, id: unknown, path?: unknown, sessionId?: unknown) => {
-    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (path !== undefined && typeof path !== 'string') || (sessionId !== undefined && typeof sessionId !== 'string')) throw new Error('Unauthorized')
-    return coding.gitDiff(id, path as string | undefined, sessionId as string | undefined)
+  ipcMain.handle('douchat:project-git-diff', (event, id: unknown, path?: unknown, sessionId?: unknown, mode?: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (path !== undefined && typeof path !== 'string') || (sessionId !== undefined && typeof sessionId !== 'string')
+      || (mode !== undefined && mode !== 'head' && mode !== 'staged' && mode !== 'unstaged')) throw new Error('Unauthorized')
+    return coding.gitDiff(id, path as string | undefined, sessionId as string | undefined, mode as GitDiffMode | undefined)
+  })
+  ipcMain.handle('douchat:project-pax', (event, id: unknown, command: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (command !== 'info' && command !== 'drift')) throw new Error('Unauthorized')
+    return coding.paxProject(id, command)
+  })
+  // The developer's own Git actions. Git stays the authority; the service refuses them while a session runs in the project.
+  const isPaths = (value: unknown): value is string[] => Array.isArray(value) && value.length > 0 && value.length <= 5000 && value.every(item => typeof item === 'string' && item.length > 0 && !item.includes('\0'))
+  ipcMain.handle('douchat:project-git-stage', (event, id: unknown, paths: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || !isPaths(paths)) throw new Error('Unauthorized')
+    return coding.gitStage(id, paths)
+  })
+  ipcMain.handle('douchat:project-git-unstage', (event, id: unknown, paths: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || !isPaths(paths)) throw new Error('Unauthorized')
+    return coding.gitUnstage(id, paths)
+  })
+  ipcMain.handle('douchat:project-git-commit', (event, id: unknown, message: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || typeof message !== 'string') throw new Error('Unauthorized')
+    return coding.gitCommit(id, message)
   })
   // What Compute says it has — read from Compute each time, never kept here. Compute's own UI is where Computers are managed.
   ipcMain.handle('douchat:compute-inventory', event => {

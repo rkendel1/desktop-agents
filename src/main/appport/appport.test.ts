@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AppPortError } from '@appport/protocol'
@@ -58,6 +58,22 @@ describe('projects', () => {
     expect((await booted.desktop.repository.projects()).map(item => item.id)).toContain(added.id)
     await import('node:fs').then(fs => fs.writeFileSync(join(path, 'notes.txt'), 'x'))
     expect(await call(r, 'douchat.projects.gitstate', { id: project.id })).toMatchObject({ projectId: project.id, branch: 'main', changes: [{ path: 'notes.txt', code: '??' }] })
+    await r.close()
+  }, 60_000)
+
+  it('reports the same Git state as the desktop, including the upstream and how far ahead it is', async () => {
+    const { booted, project, r } = await setup()
+    const remote = kit.temporary('appport-remote-')
+    kit.git(remote, 'init', '-q', '--bare', '-b', 'main')
+    kit.git(project.path, 'remote', 'add', 'origin', remote); kit.git(project.path, 'push', '-q', '-u', 'origin', 'main')
+    writeFileSync(join(project.path, 'staged.txt'), 's\n'); kit.git(project.path, 'add', 'staged.txt')
+    kit.git(project.path, 'commit', '-q', '-m', 'ahead')
+    writeFileSync(join(project.path, 'staged2.txt'), 's\n'); kit.git(project.path, 'add', 'staged2.txt')
+    const desktop = await booted.coding.gitStatus(project.id)
+    const remoteView = await call<{ upstream?: string; ahead?: number; behind?: number; branch?: string; head?: string; changes: { path: string; code: string }[] }>(r, 'douchat.projects.gitstate', { id: project.id })
+    expect(remoteView).toMatchObject({ branch: desktop.branch, head: desktop.head, upstream: 'origin/main', ahead: 1, behind: 0 })
+    expect(remoteView.changes.map(item => [item.path, item.code])).toEqual(desktop.changes.map(item => [item.path, item.code]))
+    expect(remoteView.changes).toContainEqual(expect.objectContaining({ path: 'staged2.txt', code: 'A ' }))
     await r.close()
   }, 60_000)
 

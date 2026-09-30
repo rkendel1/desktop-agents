@@ -21,6 +21,9 @@ export interface GitStateView {
   projectId: string
   branch?: string
   head?: string
+  upstream?: string
+  ahead?: number
+  behind?: number
   changes: { path: string; code: string; from?: string }[]
 }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { canContinue, changeLabel, codingDisplayState, codingStateLabels, continueSemantics, describeApproval, formatCommandLine, groupChanges, isUntracked } from '../../../shared/coding'
-import type { AgentConfig, CodingActivity, CodingSession, CommandResult, GitChange, GitState, Project } from '../../../shared/types'
+import type { AgentConfig, ChatMessage, CodingActivity, CodingSession, CommandResult, GitChange, GitState, Project } from '../../../shared/types'
 import { t } from '../preferences'
 
 const time = (at?: number): string => at ? new Date(at).toLocaleString() : '—'
@@ -75,12 +75,13 @@ function ChangeList({ session, project, live }: { session: CodingSession; projec
   </section>
 }
 
-function CheckResult({ result }: { result: CommandResult }): ReactElement {
+function CheckResult({ result, where }: { result: CommandResult; where: string }): ReactElement {
   const ok = result.exitCode === 0
   const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
   return <li className="coding-check">
     <code>{formatCommandLine(result.argv)}</code>
     <span className={ok ? 'coding-ok' : 'coding-bad'}>{ok ? '✓' : '✗'} {result.cancelled ? t('cancelled') : result.timedOut ? t('timed out') : `exit ${result.exitCode ?? result.signal}`}</span>
+    <span className="muted"> · {(result.durationMs / 1000).toFixed(1)}s · {time(result.startedAt)} · <code>{where}</code></span>
     {output && <details><summary>{t('Output')}</summary><pre className="coding-output">{output}</pre></details>}
   </li>
 }
@@ -90,8 +91,8 @@ function ContinueNote({ agent }: { agent?: AgentConfig }): ReactElement {
   return <>{continueSemantics(agent?.localAgentId).lines.map(line => <p key={line} className="muted">{t(line)}</p>)}</>
 }
 
-export function CodingSessionPanel({ session, project, agent, activity }: {
-  session: CodingSession; project?: Project; agent?: AgentConfig; activity?: CodingActivity
+export function CodingSessionPanel({ session, project, agent, activity, messages = [] }: {
+  session: CodingSession; project?: Project; agent?: AgentConfig; activity?: CodingActivity; messages?: ChatMessage[]
 }): ReactElement {
   const state = codingDisplayState(session, activity)
   const [live, setLive] = useState<GitState>()
@@ -144,8 +145,16 @@ export function CodingSessionPanel({ session, project, agent, activity }: {
       <p className="muted">{project?.testCommand ? <code>{formatCommandLine(project.testCommand)}</code> : t('No check command is set for this project.')}</p>
       <button className="secondary-button" disabled={!project?.testCommand || session.status === 'running' || running}
         onClick={() => void act(() => window.douchat.runCodingChecks(session.id))}>{running ? t('Running…') : t('Run checks')}</button>
-      {!!session.commands.length && <ul className="coding-checks">{[...session.commands].reverse().map((result, index) => <CheckResult key={`${result.startedAt}-${index}`} result={result} />)}</ul>}
+      {!!session.commands.length && <ul className="coding-checks">{[...session.commands].reverse().map((result, index) => <CheckResult key={`${result.startedAt}-${index}`} result={result} where={session.execution?.kind === 'compute' ? `${t('Computer')} ${session.execution.environment}` : session.workingDirectory} />)}</ul>}
     </section>
+
+    {!!messages.length && <section className="coding-section" aria-label={t('Conversation')}>
+      <h3>{t('Conversation')}</h3>
+      <ol className="coding-conversation">{messages.filter(message => message.kind === 'message').map(message => <li key={message.id} data-author={message.authorId === 'user' ? 'user' : 'agent'}>
+        <strong>{message.authorId === 'user' ? t('You') : message.authorName}</strong> <time className="muted">{time(message.createdAt)}</time>
+        <pre className="coding-output">{message.text.split('\nCODING-TASK ')[0]}</pre>
+      </li>)}</ol>
+    </section>}
 
     <section className="coding-section" aria-label={t('Activity')}>
       <h3>{t('Activity')}</h3>

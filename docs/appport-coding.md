@@ -111,6 +111,10 @@ session view reports it. No route to the Computer's filesystem or to running com
 CI ([compute-integration.md §11](compute-integration.md)) adds `douchat.ci.plan` and `douchat.ci.runs.start | get | list | cancel`. They call the
 same `CiService` as the desktop. A start takes a project and, to resolve a PAX ambiguity, a tool name — never a command, folder, environment or Computer.
 
+## Git state and the workbench
+
+`douchat.projects.gitstate` reports what the desktop's project home shows: branch, commit, the upstream and ahead/behind, and the changed files with Git's porcelain codes (so staged and unstaged are distinguishable). The developer's Git *writes* — stage, unstage, commit — are not capabilities: see [workbench.md](workbench.md).
+
 ## What is intentionally not exposed
 
 No read or write of files, no command execution, no shell, no change of a session's folder, no reusable "allow" grants, no

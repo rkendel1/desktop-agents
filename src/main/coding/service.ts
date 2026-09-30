@@ -1,5 +1,5 @@
 import type { PermissionEvent } from '../agentPermissions'
-import type { CodingActivity, CodingEvent, CodingSession, CommandResult, ExecutionTarget, GitState, Project } from '../../shared/types'
+import type { CodingActivity, CodingEvent, CodingSession, CommandResult, ExecutionTarget, GitDiffMode, GitState, Project } from '../../shared/types'
 import type { LocalLauncher } from '../../shared/agentExecutor'
 import { ComputeClient } from '../compute/client'
 import { computeLauncher, ComputeInterruption } from '../compute/launcher'
@@ -10,7 +10,7 @@ import type { DesktopRepository } from '../desktopRepository'
 import { resolveSavedWorkspace, validateWorkspaceFolder } from '../localWorkspaces'
 import type { EphemeralState } from '../projection'
 import { runCommand } from './commands'
-import { accountChanges, gitDiff, gitRemoteUrl, gitRoot, gitStatus, type GitLocation } from './git'
+import { accountChanges, gitCommit, gitDiff, gitRemoteUrl, gitRoot, gitStage, gitStatus, gitUnstage, type GitLocation } from './git'
 
 /** What the service needs from the agent runtime: run a turn in a chat, stop it, and tell it what is going on. */
 export interface CodingRuntime {
@@ -122,9 +122,27 @@ export class CodingService {
     return gitStatus(await this.gitWhere(projectId, sessionId), undefined, { fingerprints: true })
   }
 
-  async gitDiff(projectId: string, path?: string, sessionId?: string): Promise<{ diff: string; truncated: boolean }> {
-    return gitDiff(await this.gitWhere(projectId, sessionId), { path })
+  async gitDiff(projectId: string, path?: string, sessionId?: string, mode?: GitDiffMode): Promise<{ diff: string; truncated: boolean }> {
+    return gitDiff(await this.gitWhere(projectId, sessionId), { path, mode })
   }
+
+  /**
+   * The developer's own Git actions on the project's folder. Git is the only authority: these run `git add`, `git restore --staged` and
+   * `git commit` and return what Git then says. They are refused while a coding session runs in the project, because staging or committing
+   * under a running agent would change what the session's change accounting compares against.
+   */
+  private async gitWritable(projectId: string): Promise<string> {
+    const { project, directory } = await this.requireProject(projectId)
+    if (!project.isGit) throw new Error('This project is not a Git repository.')
+    if ((await this.repository.codingSessions(projectId)).some(session => session.status === 'running')) {
+      throw new Error('A coding session is running in this project. Stage and commit when it has finished, or cancel it first.')
+    }
+    return directory
+  }
+
+  async gitStage(projectId: string, paths: string[]): Promise<GitState> { return gitStage(await this.gitWritable(projectId), paths) }
+  async gitUnstage(projectId: string, paths: string[]): Promise<GitState> { return gitUnstage(await this.gitWritable(projectId), paths) }
+  async gitCommit(projectId: string, message: string): Promise<{ state: GitState; commit: string; summary: string }> { return gitCommit(await this.gitWritable(projectId), message) }
 
   // ───────────────────────────── running on a Compute Computer ─────────────────────────────
 
@@ -149,6 +167,16 @@ export class CodingService {
       return runPax((argv, o) => compute.exec(target.environment, argv, { repository: target.repository, signal: o.signal, timeoutMs: 10 * 60_000 }), this.paxPath, command, options)
     }
     return runPax((argv, o) => runCommand(argv, { cwd: session.workingDirectory, signal: o.signal, timeoutMs: 10 * 60_000 }), this.paxPath, command, options)
+  }
+
+  /** PAX's read-only answer about the project folder on this computer (`info`, `drift`). Not installed → a plain message, not a failure of the workbench. */
+  async paxProject(projectId: string, command: 'info' | 'drift'): Promise<PaxRun> {
+    const { directory } = await this.requireProject(projectId)
+    try { return await runPax((argv, o) => runCommand(argv, { cwd: directory, signal: o.signal, timeoutMs: 30_000 }), this.paxPath, command) }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' || /ENOENT|not found|spawn/i.test(error instanceof Error ? error.message : '')) throw new Error('PAX is not installed, so project tooling is not shown.')
+      throw error
+    }
   }
 
   /**
@@ -229,19 +257,22 @@ export class CodingService {
     if ((await this.repository.codingSessions()).some(session => session.agentId === agent.id && session.status === 'running')) {
       throw new Error('This agent is already working on a coding session.')
     }
+    // An explicit Compute choice is honoured or refused, before anything else is created: it never becomes a local session.
+    let execution: ExecutionTarget | undefined
+    let where: GitLocation = directory
+    const notes: string[] = []
+    if (input.execution?.kind === 'compute') {
+      let prepared: Awaited<ReturnType<CodingService['prepareCompute']>>
+      try { prepared = await this.prepareCompute(project, directory, input.execution.environment) }
+      catch (error) { throw new Error(`Compute was selected, so nothing was started on this computer. ${error instanceof Error ? error.message : String(error)}`) }
+      execution = prepared.target; where = this.remoteGit(prepared.target); notes.push(`runs on Computer "${prepared.target.environment}" in ${prepared.workingDirectory}`, ...prepared.notes)
+    }
     const { conversation } = await this.repository.ensureDirectConversation(agent.id)
     // The runtime takes its working directory from the chat, so the chat is pointed at the project first.
     if (conversation.workspacePath !== directory) await this.repository.setConversationWorkspace(conversation.id, directory)
     const topic = await this.repository.createTopic(conversation.id)
     if (!topic) throw new Error('Could not open a topic for this session.')
     await this.repository.renameTopic(conversation.id, topic.id, `Coding: ${task}`.slice(0, 80))
-    let execution: ExecutionTarget | undefined
-    let where: GitLocation = directory
-    const notes: string[] = []
-    if (input.execution?.kind === 'compute') {
-      const prepared = await this.prepareCompute(project, directory, input.execution.environment)
-      execution = prepared.target; where = this.remoteGit(prepared.target); notes.push(`runs on Computer "${prepared.target.environment}" in ${prepared.workingDirectory}`, ...prepared.notes)
-    }
     const baseline = project.isGit || execution ? await gitStatus(where, undefined, { fingerprints: true }) : { changes: [] }
     const session = await this.repository.createCodingSession({
       projectId: project.id, agentId: agent.id, conversationId: conversation.id, topicId: topic.id, workingDirectory: directory,
