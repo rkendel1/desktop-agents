@@ -51,6 +51,7 @@ export interface AgentConfig {
   followDefaultModel?: boolean
   /** Route each request to the best eligible configured model for its requirements. */
   automaticModelSelection?: boolean
+  modelSelectionStrategy?: 'best' | 'lowest-cost'
   permissions?: AgentPermissions
   localAgentId?: string
   /** Snapshot of a custom local runtime's display name for durable contact labels. */
@@ -448,6 +449,7 @@ export interface CreateAgentInput {
   systemFiles?: import('./agentCustomization').AgentFiles
   thinkingLevel?: ThinkingLevel | 'default'
   automaticModelSelection?: boolean
+  modelSelectionStrategy?: 'best' | 'lowest-cost'
   customModel?: { providerId: string; model: string }
   localAgentId?: string
   localAgentName?: string
@@ -475,6 +477,7 @@ export interface UpdateAgentInput {
   skills?: import('./agentCustomization').AgentSkill[]
   followDefaultModel?: boolean
   automaticModelSelection?: boolean
+  modelSelectionStrategy?: 'best' | 'lowest-cost'
   customModel?: { providerId: string; model: string }
   permissions?: AgentPermissions
   localAgentId?: string
@@ -558,7 +561,7 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   getUpdateState: () => Promise<UpdateState>
   checkForUpdates: () => Promise<UpdateState>
   installUpdate: () => Promise<UpdateState>
-  listLocalAgentModels: (agentId: string) => Promise<import('./localModels').LocalModelList>
+  listLocalAgentModels: (agentId: string, localAgentId?: string) => Promise<import('./localModels').LocalModelList>
   detectLocalAgents: () => Promise<LocalAgent[]>
   maintainLocalAgent: (id: string) => Promise<boolean>
   openLocalAgentTerminal: (id: 'claude') => Promise<{ terminal: 'termany' | 'system' }>

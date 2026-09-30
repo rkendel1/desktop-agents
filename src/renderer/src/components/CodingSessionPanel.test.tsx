@@ -193,6 +193,25 @@ it('lists projects with their path, Git status, check command and sessions, and 
   expect(node.querySelector('[aria-label="Check command"]')!.textContent).toContain('npm test')
 })
 
+it('uses the standard searchable sidebar and filters by project, path, or session task', async () => {
+  const second = { ...project, id: 'p2', name: 'Second', path: '/work/second' }
+  await render(<ProjectsView snapshot={snapshot({ projects: [project, second] })} selection={{}} onSelect={vi.fn()} />)
+  expect(node.querySelector('.sidebar-resizer')).not.toBeNull()
+  const search = node.querySelector<HTMLInputElement>('input[placeholder="Search projects"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'second')
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(node.querySelector('.contact-list')?.textContent).toContain('Second')
+  expect(node.querySelector('.contact-list')?.textContent).not.toContain('Fixture')
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'Old task')
+    search.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(node.querySelector('.contact-list')?.textContent).toContain('Fixture')
+  expect(node.querySelector<HTMLButtonElement>('[aria-label="Clear search"]')).not.toBeNull()
+})
+
 it('adds a project through the folder picker and starts a session with the chosen agent and task', async () => {
   const select = vi.fn()
   await render(<ProjectsView snapshot={snapshot({ projects: [], codingSessions: [] })} selection={{}} onSelect={select} />)

@@ -16,12 +16,14 @@ export function CustomModelSelection({ config, providerId, model, disabled, allo
   options.sort((a, b) => a.label.localeCompare(b.label, 'en', { sensitivity: 'base', numeric: true }))
   const isDefault = providerId === '@default'
   const isAutomatic = providerId === '@automatic'
-  const selected = isAutomatic ? 'automatic' : isDefault ? 'default' : JSON.stringify([providerId, model])
-  const available = isAutomatic || isDefault || options.some(item => item.providerId === providerId && item.model === model)
+  const isLowestCost = providerId === '@lowest-cost'
+  const selected = isLowestCost ? 'lowest-cost' : isAutomatic ? 'automatic' : isDefault ? 'default' : JSON.stringify([providerId, model])
+  const available = isLowestCost || isAutomatic || isDefault || options.some(item => item.providerId === providerId && item.model === model)
   return <div className="custom-model-selection">
     <label className="field-row"><span>{t('Model')}</span>
       <select aria-label={t('Custom model')} value={selected} disabled={disabled} onChange={event => {
-        if (event.target.value === 'automatic') onChange('@automatic', 'automatic')
+        if (event.target.value === 'lowest-cost') onChange('@lowest-cost', 'lowest-cost')
+        else if (event.target.value === 'automatic') onChange('@automatic', 'automatic')
         else if (event.target.value === 'default') onChange('@default', 'default')
         else {
           const option = options.find(item => JSON.stringify([item.providerId, item.model]) === event.target.value)
@@ -29,6 +31,7 @@ export function CustomModelSelection({ config, providerId, model, disabled, allo
         }
       }}>
         {allowAutomatic && <option value="automatic" disabled={!defaultAvailable}>{t('Choose the best model for the job')}</option>}
+        {allowAutomatic && <option value="lowest-cost" disabled={!defaultAvailable}>{t('Choose the best price available')}</option>}
         <option value="default" disabled={!defaultAvailable}>{t('Default model')}</option>
         {!available && <option value={selected} disabled>{tr('{name} (unavailable)', { name: model || t('Choose a model') })}</option>}
         {options.map(item => <option key={JSON.stringify([item.providerId, item.model])} value={JSON.stringify([item.providerId, item.model])}>{item.label}</option>)}

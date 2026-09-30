@@ -1,16 +1,15 @@
 import { useContext, useEffect, useRef, useState, type ReactElement } from 'react'
 import { X } from 'lucide-react'
-import type { AgentConfig } from '../../../shared/types'
-import { CustomModelSelection } from './CustomModelSelection'
+import type { AgentConfig, LocalAgent } from '../../../shared/types'
 import { configurableLocalAgents, localModelId, type LocalModelList } from '../../../shared/localModels'
 import type { CustomModelConfig } from '../../../shared/customModels'
 import { DEFAULT_CLOUD_THINKING_LEVEL, THINKING_LEVELS, THINKING_LEVEL_LABELS, localThinkingLevels, type ThinkingLevel } from '../../../shared/thinkingLevels'
 import { t, tr } from '../preferences'
 import { EmbeddedAgentSettings, AgentDialogSurface as NativeDialog } from './AgentDialogSurface'
-import { localAgentDisplayName } from './common'
 
-export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
-  agent: AgentConfig; onModelSettings?: () => void; onClose: () => void; onSave: (model: string, provider: string | undefined, thinkingLevel: ThinkingLevel | 'default', automaticModelSelection: boolean) => Promise<void>
+export function LocalModelDialog({ agent, localAgents = [], onModelSettings, onClose, onSave }: {
+  agent: AgentConfig; localAgents?: LocalAgent[]; onModelSettings?: () => void; onClose: () => void
+  onSave: (model: string, provider: string | undefined, thinkingLevel: ThinkingLevel | 'default', modelSelectionStrategy: 'best' | 'lowest-cost' | undefined, localAgentId: string | undefined) => Promise<void>
 }): ReactElement {
   const embedded = useContext(EmbeddedAgentSettings)
   const [model, setModel] = useState(agent.model && agent.model !== 'default' ? agent.model : '')
@@ -21,9 +20,11 @@ export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
   const [error, setError] = useState('')
   const [thinking, setThinking] = useState<ThinkingLevel | 'default'>(agent.thinkingLevel ?? 'default')
   const [revision, setRevision] = useState(0)
-  const custom = !agent.localAgentId
+  const installedLocalAgents = localAgents.filter(item => item.installed)
+  const [selectedLocalAgentId, setSelectedLocalAgentId] = useState(agent.localAgentId ?? '')
+  const custom = !selectedLocalAgentId
   const [customModels, setCustomModels] = useState<CustomModelConfig>()
-  const [customProviderId, setCustomProviderId] = useState(agent.automaticModelSelection ? '@automatic' : agent.followDefaultModel ? '@default' : agent.provider?.startsWith('custom:') ? agent.provider.slice('custom:'.length) : '@default')
+  const [customProviderId, setCustomProviderId] = useState(agent.modelSelectionStrategy === 'lowest-cost' ? '@lowest-cost' : agent.modelSelectionStrategy === 'best' || agent.automaticModelSelection ? '@automatic' : agent.followDefaultModel ? '@default' : agent.provider?.startsWith('custom:') ? agent.provider.slice('custom:'.length) : '@default')
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => {
@@ -39,18 +40,19 @@ export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
     if (custom) return
     let active = true
     setLoading(true); setError('')
-    window.douchat.listLocalAgentModels(agent.id).then(result => { if (active) setList(result) })
+    window.douchat.listLocalAgentModels(agent.id, selectedLocalAgentId).then(result => { if (active) setList(result) })
       .catch(() => { if (active) setError(t('Could not load models. Retry or enter a model ID.')) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [agent.id, revision, custom])
-  const supported = configurableLocalAgents.includes(agent.localAgentId || '')
+  }, [agent.id, revision, custom, selectedLocalAgentId])
+  const supported = configurableLocalAgents.includes(selectedLocalAgentId)
   const selectedProvider = customModels?.providers.find(provider => provider.id === customProviderId)
-  const validSelection = customProviderId === '@automatic' || customProviderId === '@default' ? Boolean(customModels?.defaultModel) : selectedProvider?.models.includes(model)
+  const automaticSelection = customProviderId === '@automatic' || customProviderId === '@lowest-cost'
+  const validSelection = automaticSelection || customProviderId === '@default' ? Boolean(customModels?.defaultModel) : selectedProvider?.models.includes(model)
   const localModels = list?.models ?? []
   const reasoningProvider = customProviderId === '@default' ? customModels?.providers.find(provider => customModels.defaultModel.startsWith(provider.id + '/')) : selectedProvider
   const reasoningModel = customProviderId === '@default' ? customModels?.defaultModel.slice((reasoningProvider?.id.length ?? 0) + 1) : model
-  const thinkingLevels: readonly ThinkingLevel[] = !custom ? localThinkingLevels(agent.localAgentId)
+  const thinkingLevels: readonly ThinkingLevel[] = !custom ? localThinkingLevels(selectedLocalAgentId)
     : reasoningProvider?.reasoningModels?.includes(reasoningModel ?? '') ? THINKING_LEVELS : []
   const thinkingSupported = thinkingLevels.length > 0
   const defaultThinkingLabel = custom ? tr('Default ({level})', { level: t(THINKING_LEVEL_LABELS[DEFAULT_CLOUD_THINKING_LEVEL]) }) : t('Use agent’s thinking setting')
@@ -63,8 +65,8 @@ export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
         setSaving(true); setError('')
         const level = thinkingSupported ? thinking : agent.thinkingLevel ?? 'default'
         await (custom
-          ? onSave(customProviderId === '@automatic' ? 'default' : selected, `custom:${customProviderId === '@automatic' ? '@default' : customProviderId}`, level, customProviderId === '@automatic')
-          : onSave(selected, undefined, level, false))
+          ? onSave(automaticSelection ? 'default' : selected, `custom:${automaticSelection ? '@default' : customProviderId}`, level, automaticSelection ? (customProviderId === '@lowest-cost' ? 'lowest-cost' : 'best') : undefined, undefined)
+          : onSave(selected, undefined, level, undefined, selectedLocalAgentId))
         if (alive.current) onClose()
       } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : t('Could not save changes')) }
       finally { if (alive.current) setSaving(false) }
@@ -73,14 +75,35 @@ export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
         <button type="button" className="icon-button" aria-label={t('Close')} disabled={saving} onClick={onClose}><X size={20} /></button></header>
       <div className="permission-body local-model-body">
       <p className="permission-agent-name">{agent.name}</p>
+      <div className="custom-model-selection"><label className="field-row"><span>{t('Execution type')}</span><select aria-label={t('Execution type')} value={custom ? 'provider' : 'local'} disabled={saving} onChange={event => {
+        const next = event.target.value === 'local' ? (agent.localAgentId && installedLocalAgents.some(item => item.id === agent.localAgentId) ? agent.localAgentId : installedLocalAgents[0]?.id ?? '') : ''
+        setSelectedLocalAgentId(next); setManualModel(false); setModel(next === agent.localAgentId && agent.model !== 'default' ? agent.model : '')
+      }}><option value="provider">{t('Model provider')}</option><option value="local" disabled={!installedLocalAgents.length}>{t('Local command-line agent')}</option></select></label></div>
       {custom ? <>
-        <CustomModelSelection allowAutomatic config={customModels ?? { providers: [], defaultModel: '' }} providerId={customProviderId} model={model} disabled={saving || loading} onChange={(providerId, value) => { setCustomProviderId(providerId); setModel(value) }} />
+        <div className="custom-model-selection">
+          <label className="field-row"><span>{t('Provider')}</span><select aria-label={t('Provider')} value={customProviderId} disabled={saving || loading} onChange={event => {
+            const providerId = event.target.value
+            setCustomProviderId(providerId)
+            if (!providerId.startsWith('@')) setModel(customModels?.providers.find(provider => provider.id === providerId)?.models[0] ?? '')
+          }}>
+            <option value="@default" disabled={!customModels?.defaultModel}>{t('Follow default model')}</option>
+            <option value="@automatic" disabled={!customModels?.defaultModel}>{t('Choose the best model for the job')}</option>
+            <option value="@lowest-cost" disabled={!customModels?.defaultModel}>{t('Choose the best price available')}</option>
+            {(customModels?.providers ?? []).map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+          </select></label>
+          {!customProviderId.startsWith('@') && <label className="field-row"><span>{t('Model')}</span><select aria-label={t('Model')} value={model} disabled={saving || loading} onChange={event => setModel(event.target.value)}>
+            {(selectedProvider?.models ?? []).map(id => <option key={id} value={id}>{selectedProvider?.modelLabels?.[id] ?? id}</option>)}
+          </select></label>}
+        </div>
         {loading && <p role="status">{t("Loading model settings…")}</p>}
-        {customProviderId === '@automatic' && <p className="settings-note">{t('Foundry will evaluate each request and choose the best eligible configured model under your model-routing policy.')}</p>}
+        {automaticSelection && <p className="settings-note">{customProviderId === '@lowest-cost' ? t('Foundry will use the lowest-cost eligible configured model. The current routing policy only permits models classified as free.') : t('Foundry will evaluate each request and choose the best eligible configured model under your model-routing policy.')}</p>}
         <p className="settings-note">{t("Use your own API key. Your model provider handles billing.")} <button type="button" className="local-settings-link" disabled={saving} onClick={onModelSettings}>{t("Configure model")}</button></p>
       </> : <>
         <div className="custom-model-selection">
-          <label className="field-row"><span>{t('Local agent')}</span><select aria-label={t('Local agent')} value={agent.localAgentId} disabled><option value={agent.localAgentId}>{agent.localAgentName || localAgentDisplayName(agent.localAgentId!)}</option></select></label>
+          <label className="field-row"><span>{t('Local agent')}</span><select aria-label={t('Local agent')} value={selectedLocalAgentId} disabled={saving} onChange={event => {
+            const next = event.target.value
+            setSelectedLocalAgentId(next); setManualModel(false); setModel(next === agent.localAgentId && agent.model !== 'default' ? agent.model : '')
+          }}>{installedLocalAgents.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label className="field-row"><span>{t('Model')}</span><select aria-label={t('Model')} value={manualModel ? '__manual__' : model} disabled={saving || loading || !supported} onChange={event => {
             const value = event.target.value
             setManualModel(value === '__manual__')

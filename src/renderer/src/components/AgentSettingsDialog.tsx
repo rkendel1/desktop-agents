@@ -82,7 +82,10 @@ export function AgentSettingsDialog({ agent, localAgents, initialTab = 'profile'
             </div></>}
             {section === 'customize' && <AgentFilesPanel agent={agent} onSave={input => save('customize', input)} onDirty={() => markDirty('customize')} />}
             {section === 'memory' && <UserMemoryPanel agentId={agent.id} onDirty={() => markDirty('memory')} onSaved={() => setDirty(current => { const next = new Set(current); next.delete('memory'); return next })} onBusyChange={value => { busy.current = value; setSaving(value) }} />}
-            {section === 'models' && <LocalModelDialog agent={agent} onClose={noClose} onModelSettings={() => leave(onModelSettings)} onSave={(model, provider, thinkingLevel, automaticModelSelection) => save('models', { ...(provider?.startsWith('custom:') ? { customModel: { providerId: provider.slice(7), model } } : { model }), thinkingLevel, automaticModelSelection })} />}
+            {section === 'models' && <LocalModelDialog agent={agent} localAgents={localAgents} onClose={noClose} onModelSettings={() => leave(onModelSettings)} onSave={(model, provider, thinkingLevel, modelSelectionStrategy, localAgentId) => save('models', {
+              ...(localAgentId ? { localAgentId, model } : { localAgentId: '', ...(provider?.startsWith('custom:') ? { customModel: { providerId: provider.slice(7), model } } : { model }) }),
+              thinkingLevel, automaticModelSelection: Boolean(modelSelectionStrategy), modelSelectionStrategy
+            })} />}
             {section === 'skills' && <AgentSkillsPanel agent={agent} onSave={input => save('skills', input)} onDirty={() => markDirty('skills')} />}
             {section === 'permissions' && <AgentPermissionsDialog agent={agent} onClose={noClose} onSave={permissions => save('permissions', { permissions })} />}
             {section === 'channels' && <IMChannelsDialog agent={agent} onClose={noClose} />}

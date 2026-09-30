@@ -1,4 +1,4 @@
-import { FolderGit2, Plus } from 'lucide-react'
+import { FolderGit2, Plus, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
 import type { AppSnapshot, DevelopmentEnvironmentView, GitState, Project } from '../../../shared/types'
@@ -7,6 +7,7 @@ import { CiPanel } from './CiPanel'
 import { EnvironmentPanel, EnvironmentStatus, type WorkRow } from './EnvironmentPanel'
 import { ApprovalCard, CodingSessionPanel } from './CodingSessionPanel'
 import { BranchLine, GitPanel, ToolingLine } from './GitPanel'
+import { SidebarResizer } from './common'
 
 export interface ProjectSelection { projectId?: string; sessionId?: string }
 
@@ -175,6 +176,10 @@ export function ProjectsView({ snapshot, selection, onSelect }: { snapshot: AppS
   const projects = snapshot.projects ?? []
   const sessions = snapshot.codingSessions ?? []
   const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
+  const search = query.trim().toLocaleLowerCase()
+  const visibleProjects = projects.filter(item => !search || item.name.toLocaleLowerCase().includes(search) || item.path.toLocaleLowerCase().includes(search)
+    || sessions.some(candidate => candidate.projectId === item.id && candidate.task.toLocaleLowerCase().includes(search)))
   const session = sessions.find(item => item.id === selection.sessionId)
   const project = projects.find(item => item.id === (selection.projectId ?? session?.projectId))
   const add = async (): Promise<void> => {
@@ -184,16 +189,20 @@ export function ProjectsView({ snapshot, selection, onSelect }: { snapshot: AppS
   }
   return <>
     <aside className="sidebar contacts-sidebar coding-sidebar" aria-label={t('Projects')}>
-      <div className="sidebar-titlebar window-drag"><h1 className="sidebar-title">{t('Projects')}</h1>
-        <button className="sidebar-add no-drag" onClick={() => void add()} aria-label={t('Add project')} title={t('Add project')}><Plus size={18} /></button></div>
+      <SidebarResizer />
+      <div className="sidebar-titlebar window-drag">
+        <div className="search-box no-drag"><Search size={15} /><input data-app-search aria-keyshortcuts="Meta+F Control+F" value={query} onChange={event => setQuery(event.target.value)} placeholder={t('Search projects')} aria-label={t('Search projects')} />{query && <button onClick={() => setQuery('')} aria-label={t('Clear search')}><X size={13} /></button>}</div>
+        <div className="sidebar-titlebar-actions no-drag"><button className="sidebar-add" onClick={() => void add()} aria-label={t('Add project')} title={t('Add project')}><Plus size={18} /></button></div>
+      </div>
       {error && <p className="coding-error" role="alert">{error}</p>}
       <div className="contact-list">
         {!projects.length && <p className="empty-search">{t('No projects yet. Add a local repository to let an agent work in it.')}</p>}
-        {projects.map(item => <div key={item.id}>
+        {!!projects.length && !visibleProjects.length && <p className="empty-search">{t('No matching projects')}</p>}
+        {visibleProjects.map(item => <div key={item.id}>
           <button className={`contact-row ${item.id === project?.id && !session ? 'active' : ''}`} onClick={() => onSelect({ projectId: item.id })}>
             <FolderGit2 size={18} /><span className="contact-row-copy"><strong>{item.name}</strong><small>{item.path}</small></span>
           </button>
-          {sessions.filter(candidate => candidate.projectId === item.id).slice(0, 5).map(candidate => {
+          {sessions.filter(candidate => candidate.projectId === item.id && (!search || item.name.toLocaleLowerCase().includes(search) || item.path.toLocaleLowerCase().includes(search) || candidate.task.toLocaleLowerCase().includes(search))).slice(0, 5).map(candidate => {
             const state = codingDisplayState(candidate, snapshot.codingActivity?.find(activity => activity.sessionId === candidate.id))
             return <button key={candidate.id} className={`contact-row coding-session-row ${candidate.id === session?.id ? 'active' : ''}`} onClick={() => onSelect({ projectId: item.id, sessionId: candidate.id })}>
               <span className={`coding-dot coding-state-${state}`} aria-hidden /><span className="contact-row-copy"><strong>{candidate.task}</strong><small>{t(codingStateLabels[state])}</small></span>

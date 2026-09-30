@@ -605,10 +605,13 @@ app.whenReady().then(async () => {
     await openMaintenanceTerminal(plan.command, { description: installDescription })
     return true
   })
-  ipcMain.handle('douchat:list-local-agent-models', async (_event, agentId: string) => {
+  ipcMain.handle('douchat:list-local-agent-models', async (_event, agentId: string, requestedLocalAgentId?: string) => {
     const agent = await store.agent(agentId)
-    if (!agent?.localAgentId) throw new Error('Local agent not found')
-    return listLocalAgentModels(agent.localAgentId)
+    if (!agent) throw new Error('Agent not found')
+    const localAgentId = requestedLocalAgentId ?? agent.localAgentId
+    if (!localAgentId) throw new Error('Local agent not found')
+    await validateLocalAgent(localAgentId)
+    return listLocalAgentModels(localAgentId)
   })
   ipcMain.handle('douchat:detect-local-agents', async () => { resetShellPath(); return checkLocalAgentUpdates(await detectLocalAgents()) })
   ipcMain.handle('douchat:open-local-agent-terminal', async (event, id: unknown) => {
@@ -752,6 +755,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('douchat:create-agent', async (event, input: CreateAgentInput) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     if (input.customModel && input.localAgentId) throw new Error("Select one execution mode.")
+    if (input.automaticModelSelection !== undefined && typeof input.automaticModelSelection !== 'boolean') throw new Error('Invalid automatic model selection setting.')
+    if (input.modelSelectionStrategy !== undefined && !['best', 'lowest-cost'].includes(input.modelSelectionStrategy)) throw new Error('Invalid model selection strategy.')
+    if (input.automaticModelSelection && !input.customModel) throw new Error('Automatic model selection requires a configured model provider.')
     const localAgent = input.localAgentId ? await validateLocalAgent(input.localAgentId) : undefined
     // The main process owns runtime bindings: a renderer cannot choose a
     // provider or model by smuggling one over IPC.
@@ -805,15 +811,18 @@ app.whenReady().then(async () => {
     // Whitelist before storing; 'default' clears the override.
     if ('thinkingLevel' in update) (update as UpdateAgentInput).thinkingLevel = thinkingLevel(update.thinkingLevel) ?? 'default'
     if (update.automaticModelSelection !== undefined && typeof update.automaticModelSelection !== 'boolean') throw new Error('Invalid automatic model selection setting.')
-    if (customModel && (existing.localAgentId || input.localAgentId)) throw new Error("Select one execution mode.")
+    if (update.modelSelectionStrategy !== undefined && !['best', 'lowest-cost'].includes(update.modelSelectionStrategy)) throw new Error('Invalid model selection strategy.')
+    const finalLocalAgentId = input.localAgentId !== undefined ? input.localAgentId : existing.localAgentId
+    if (customModel && finalLocalAgentId) throw new Error("Select one execution mode.")
     const selectedBinding = customModel ? runtime.customAgentModel(customModel.providerId, customModel.model) : undefined
     input = { ...update, ...selectedBinding, followDefaultModel: customModel?.providerId === '@default' ? true : selectedBinding || input.localAgentId ? false : existing.followDefaultModel }
-    const finalProvider = input.localAgentId || existing.localAgentId ? 'local' : input.provider ?? existing.provider
+    if (finalLocalAgentId) input.provider = 'local'
+    const finalProvider = finalLocalAgentId ? 'local' : input.provider ?? existing.provider
     if (input.automaticModelSelection && !finalProvider.startsWith(CUSTOM_PROVIDER_PREFIX)) throw new Error('Automatic model selection requires a configured model provider.')
     if (finalProvider !== 'local' && !finalProvider.startsWith(CUSTOM_PROVIDER_PREFIX) && (existing.thinkingLevel || 'thinkingLevel' in input)) input.thinkingLevel = 'default'
-    if (input.model !== undefined && (input.localAgentId || existing.localAgentId)) {
+    if (input.model !== undefined && finalLocalAgentId) {
       const model = localModelId(input.model)
-      if (model && !configurableLocalAgents.includes(input.localAgentId || existing.localAgentId!)) throw new Error('This local agent does not support a model override')
+      if (model && !configurableLocalAgents.includes(finalLocalAgentId)) throw new Error('This local agent does not support a model override')
       input = { ...input, model: model ?? 'default' }
     }
     const localAgent = input.localAgentId ? await validateLocalAgent(input.localAgentId) : undefined
