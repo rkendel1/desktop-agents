@@ -7103,7 +7103,7 @@ html.native-dialog-window,
 .env-explained { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 8px 0; font-size: 13px; }
 .env-explained dt { font-weight: 600; }
 .env-explained dd { margin: 0; color: var(--muted); }
-.env-create, .env-detail, .env-work { margin-top: 10px; }
+.env-create, .env-attach, .env-detail, .env-work { margin-top: 10px; }
 .env-work h4 { margin: 8px 0 2px; font-size: 13px; color: var(--muted); }
 .env-diagnostics summary, .env-advanced summary { cursor: pointer; }
 .env-context { margin: 2px 0; }

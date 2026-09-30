@@ -88,3 +88,22 @@ it('reports Computer startup failure while preserving the existing environment',
   await expect(service.setupDevelopment(project.id)).rejects.toThrow('Computer did not start')
   expect((await backend.client.inspectEnvironment('dev')).computer?.reality.observed).toBe('stopped')
 })
+
+it('connects an existing Compute environment by verified name and immutable id without recreating it', async () => {
+  const { backend, booted, project, service } = await world()
+  await backend.defineRecipe('developer')
+  const existing = await backend.client.createFromRecipe('dev', { name: 'developer', version: 1 })
+  const before = (await backend.calls()).filter(call => call === 'environment create dev').length
+  const result = await service.attach({ projectId: project.id, environment: 'dev', environmentId: existing.environment_id })
+  expect(result).toMatchObject({ reference: { projectId: project.id, environment: 'dev', environmentId: existing.environment_id }, recipe: { name: 'developer', version: 1 } })
+  expect(await booted.desktop.repository.developmentEnvironment(project.id)).toMatchObject({ environment: 'dev', environmentId: existing.environment_id })
+  expect((await backend.calls()).filter(call => call === 'environment create dev')).toHaveLength(before)
+})
+
+it('does not connect when an environment name now belongs to a different id', async () => {
+  const { backend, booted, project, service } = await world()
+  await backend.defineRecipe('developer')
+  await backend.client.createFromRecipe('dev', { name: 'developer', version: 1 })
+  await expect(service.attach({ projectId: project.id, environment: 'dev', environmentId: 'env_replaced' })).rejects.toMatchObject({ code: 'conflict', category: 'environment_replaced' })
+  expect(await booted.desktop.repository.developmentEnvironment(project.id)).toBeUndefined()
+})

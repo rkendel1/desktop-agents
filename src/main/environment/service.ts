@@ -229,6 +229,38 @@ export class EnvironmentService {
     } finally { this.inFlight.delete(projectId) }
   }
 
+  /**
+   * Connect a Project to a durable environment Compute already owns. Name and id
+   * are checked together so a deleted-and-recreated environment cannot be
+   * mistaken for the one the person selected. This changes no Compute state.
+   */
+  async attach(input: { projectId: string; environment: string; environmentId: string }): Promise<DevelopmentEnvironmentView> {
+    if (!(await this.repository.project(input.projectId))) throw new EnvironmentError('not-found', 'Project not found')
+    const environment = input.environment.trim()
+    const environmentId = input.environmentId.trim()
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(environment) || !/^env_[a-z0-9]+$/.test(environmentId)) throw new EnvironmentError('invalid', 'Choose a valid Compute environment.')
+    if (this.inFlight.has(input.projectId)) throw new EnvironmentError('conflict', 'An environment operation is already in progress for this project.')
+    this.inFlight.add(input.projectId)
+    try {
+      await this.requireContract()
+      const previous = await this.repository.developmentEnvironment(input.projectId)
+      if (previous) {
+        const current = await this.observe(input.projectId)
+        if (!['missing', 'destroyed'].includes(current.view.state)) throw new EnvironmentError('conflict', 'This project is already connected to an environment. Destroy or disconnect it before choosing another.')
+      }
+      let record: ComputeEnvironmentRecord
+      try { record = await this.compute.inspectEnvironment(environment) } catch (error) {
+        if (isCompute(error, 'not-found')) throw new EnvironmentError('not-found', `Compute has no environment named "${environment}".`)
+        throw new EnvironmentError('compute', message(error))
+      }
+      if (record.environment_id !== environmentId) throw new EnvironmentError('conflict', `The Compute environment named "${environment}" no longer has the selected identity. Refresh the list and choose it again.`, 'environment_replaced')
+      if (record.computer?.reality.observed === 'destroyed') throw new EnvironmentError('conflict', `The Compute environment "${environment}" is destroyed and cannot be connected.`, 'environment_destroyed')
+      await this.repository.putDevelopmentEnvironment({ projectId: input.projectId, environment, environmentId,
+        ...(record.recipe ? { requestedRecipe: { name: record.recipe.name, version: record.recipe.version } } : {}), createdAt: previous?.createdAt ?? Date.now() })
+      return (await this.observe(input.projectId)).view
+    } finally { this.inFlight.delete(input.projectId) }
+  }
+
   // ───────────────────────────── acting ─────────────────────────────
 
   /**

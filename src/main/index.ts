@@ -1172,6 +1172,10 @@ app.whenReady().then(async () => {
       if (!event.sender.isDestroyed()) event.sender.send('douchat:environment-setup-progress', progress)
     })
   })
+  ipcMain.handle('douchat:environment-attach', (event, input: { projectId?: unknown; environment?: unknown; environmentId?: unknown }) => {
+    if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.environment !== 'string' || typeof input.environmentId !== 'string') throw new Error('Unauthorized')
+    return environments.attach({ projectId: input.projectId, environment: input.environment, environmentId: input.environmentId })
+  })
   ipcMain.handle('douchat:environment-resolve', (event, recipe: unknown, version?: unknown) => {
     environmentGuard(event, recipe, version)
     if (typeof recipe !== 'string' || (version !== undefined && typeof version !== 'number')) throw new Error('Unauthorized')

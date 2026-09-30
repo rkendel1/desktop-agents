@@ -672,6 +672,8 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   environmentCreateRecipe: (name: string) => Promise<RecipeSummary[] | undefined>
   /** Idempotently create/reuse Compute's developer recipe and `dev` environment, then attach this Project. */
   environmentSetupDeveloper: (projectId: string) => Promise<DevelopmentSetupResult>
+  /** Point this Project at an environment Compute already owns, after verifying both its name and immutable id. */
+  environmentAttach: (input: { projectId: string; environment: string; environmentId: string }) => Promise<DevelopmentEnvironmentView>
   onEnvironmentSetupProgress: (listener: (progress: DevelopmentSetupProgress) => void) => () => void
   environmentResolve: (recipe: string, version?: number) => Promise<RecipeResolutionView>
   environmentCreate: (input: { projectId: string; recipe: string; version?: number }) => Promise<DevelopmentEnvironmentView>

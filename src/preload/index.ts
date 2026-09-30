@@ -147,6 +147,7 @@ const api: DouchatApi = {
   environmentRecipes: () => ipcRenderer.invoke('douchat:environment-recipes'),
   environmentCreateRecipe: (name) => ipcRenderer.invoke('douchat:environment-create-recipe', name),
   environmentSetupDeveloper: (projectId) => ipcRenderer.invoke('douchat:environment-setup-developer', projectId),
+  environmentAttach: (input) => ipcRenderer.invoke('douchat:environment-attach', input),
   onEnvironmentSetupProgress: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]): void => listener(progress)
     ipcRenderer.on('douchat:environment-setup-progress', handler)

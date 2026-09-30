@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
-import type { DevelopmentEnvironmentDetail, DevelopmentEnvironmentView, DevelopmentSetupProgress, EnvironmentAction, EnvironmentReason, EnvironmentState, Project, RecipeResolutionView, RecipeSummary } from '../../../shared/types'
+import type { ComputeEnvironmentView, DevelopmentEnvironmentDetail, DevelopmentEnvironmentView, DevelopmentSetupProgress, EnvironmentAction, EnvironmentReason, EnvironmentState, Project, RecipeResolutionView, RecipeSummary } from '../../../shared/types'
 import { t, tr } from '../preferences'
 
 /**
@@ -150,6 +150,9 @@ export function EnvironmentPanel({ project, work = [] }: { project: Project; wor
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
+  const [attaching, setAttaching] = useState(false)
+  const [candidates, setCandidates] = useState<ComputeEnvironmentView[]>([])
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('')
   const [setup, setSetup] = useState<DevelopmentSetupProgress>()
   const [open, setOpen] = useState(false)
   const alive = useRef(true)
@@ -157,7 +160,7 @@ export function EnvironmentPanel({ project, work = [] }: { project: Project; wor
     try { const value = await window.douchat.environmentState(project.id); if (alive.current) setView(value) } catch (cause) { if (alive.current) setView({ error: cleanMessage(cause) }) }
   }, [project.id])
   const state = view && !('error' in view) ? view.state : undefined
-  useEffect(() => { alive.current = true; setView(undefined); setCreating(false); setOpen(false); void load(); return () => { alive.current = false } }, [load])
+  useEffect(() => { alive.current = true; setView(undefined); setCreating(false); setAttaching(false); setOpen(false); void load(); return () => { alive.current = false } }, [load])
   useEffect(() => {
     if (typeof window.douchat.onEnvironmentSetupProgress !== 'function') return
     return window.douchat.onEnvironmentSetupProgress(progress => {
@@ -188,6 +191,29 @@ export function EnvironmentPanel({ project, work = [] }: { project: Project; wor
     try { const next = await window.douchat.environmentAct(project.id, action); if (alive.current) setView(next) } catch (cause) { setError(cleanMessage(cause)); void load() } finally { setBusy('') }
   }
 
+  const chooseExisting = async (): Promise<void> => {
+    if (attaching) { setAttaching(false); return }
+    setAttaching(true); setBusy('discover'); setError('')
+    try {
+      const inventory = await window.douchat.computeInventory()
+      if (!inventory.available) throw new Error(inventory.reason ?? 'Compute is unavailable.')
+      const available = inventory.environments.filter(environment => environment.observed !== 'destroyed')
+      if (!alive.current) return
+      setCandidates(available)
+      setSelectedEnvironmentId(available[0]?.environmentId ?? '')
+    } catch (cause) { setError(cleanMessage(cause)) } finally { setBusy('') }
+  }
+
+  const attach = async (): Promise<void> => {
+    const candidate = candidates.find(environment => environment.environmentId === selectedEnvironmentId)
+    if (!candidate) return
+    setBusy('attach'); setError('')
+    try {
+      const next = await window.douchat.environmentAttach({ projectId: project.id, environment: candidate.name, environmentId: candidate.environmentId })
+      if (alive.current) { setView(next); setAttaching(false) }
+    } catch (cause) { setError(cleanMessage(cause)); void load() } finally { setBusy('') }
+  }
+
   return <section className="coding-section env-panel" aria-label={t('Environment')}>
     <h3>{t('Environment')}</h3>
     {!view ? <p className="muted">{t('Asking Compute…')}</p> : 'error' in view ? <p className="coding-error" role="alert">{view.error}</p> : <>
@@ -209,10 +235,21 @@ export function EnvironmentPanel({ project, work = [] }: { project: Project; wor
       <div className="coding-actions">
         {view.actions.filter(action => action !== 'create' || !creating).map(action => <button key={action} className={action === 'destroy' ? 'secondary-button danger' : action === 'create' || action === 'open' ? 'primary-button' : 'secondary-button'} disabled={!!busy} onClick={() => void act(action)}>{t(ACTION_LABEL[action])}</button>)}
         {view.state === 'none' && <button className="secondary-button" disabled={!!busy} onClick={() => setCreating(current => !current)}>{t(creating ? 'Hide recipe choices' : 'Choose another recipe…')}</button>}
-        {view.state === 'none' && <button className="secondary-button" disabled={!!busy} onClick={() => void window.douchat.openComputeUi()}>{t('Manage Compute')}</button>}
+        {['none', 'missing'].includes(view.state) && <button className="secondary-button" disabled={!!busy} onClick={() => void chooseExisting()}>{t(attaching ? 'Hide existing environments' : 'Connect existing environment…')}</button>}
+        {['none', 'missing'].includes(view.state) && <button className="secondary-button" disabled={!!busy} onClick={() => void window.douchat.openComputeUi()}>{t('Manage Compute')}</button>}
         {view.state === 'missing' && view.reference && <span className="muted">{t('Nothing is created until you choose to.')}</span>}
       </div>
       {error && <p className="coding-error" role="alert">{error}</p>}
+      {attaching && <div className="env-attach">
+        <p><strong>{t('Connect an existing Compute environment')}</strong></p>
+        {!busy && !candidates.length ? <p className="muted">{t('Compute has no live or stopped environments to connect.')}</p> : candidates.length ? <div className="coding-inline">
+          <label>{t('Environment')} <select value={selectedEnvironmentId} onChange={event => setSelectedEnvironmentId(event.target.value)}>
+            {candidates.map(candidate => <option key={candidate.environmentId} value={candidate.environmentId}>{candidate.name} · {candidate.observed} · {candidate.environmentId}</option>)}
+          </select></label>
+          <button className="primary-button" disabled={!!busy || !selectedEnvironmentId} onClick={() => void attach()}>{t('Connect')}</button>
+        </div> : null}
+        <p className="coding-meta">{t('Foundry verifies the environment name and ID, then stores only this project’s connection. Compute remains the owner.')}</p>
+      </div>}
       {creating && <CreateEnvironment project={project} onDone={next => { setView(next); setCreating(false) }} />}
       {open && view.reference && <Detail project={project} view={view} />}
     </>}

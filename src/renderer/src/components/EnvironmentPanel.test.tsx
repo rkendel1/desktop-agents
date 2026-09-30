@@ -28,7 +28,8 @@ beforeEach(() => {
       { id: 'compute', label: 'Compute available', status: 'done' }, { id: 'recipe', label: 'Developer recipe created', status: 'done' },
       { id: 'validation', label: 'Developer recipe validated', status: 'done' }, { id: 'environment', label: 'Development environment created', status: 'done' }, { id: 'computer', label: 'Computer ready', status: 'done' }
     ], view: view() })), onEnvironmentSetupProgress: vi.fn(() => () => undefined), openComputeUi: vi.fn(async () => undefined),
-    environmentResolve: vi.fn(async () => satisfiable), environmentCreate: vi.fn(async () => view({ state: 'creating', readiness: 'created', configuration: 'not_started', actions: ['destroy'] })), environmentAct: vi.fn() }
+    computeInventory: vi.fn(async () => ({ available: true, daemon: { endpoint: 'http://127.0.0.1:8787', reachable: true }, environments: [] })),
+    environmentAttach: vi.fn(async () => view()), environmentResolve: vi.fn(async () => satisfiable), environmentCreate: vi.fn(async () => view({ state: 'creating', readiness: 'created', configuration: 'not_started', actions: ['destroy'] })), environmentAct: vi.fn() }
   ;(window as unknown as { douchat: unknown }).douchat = api
   node = document.createElement('div'); document.body.append(node); root = createRoot(node)
 })
@@ -112,7 +113,7 @@ it('does not silently replace a lost environment: it says so and waits for the p
   expect(text()).toContain('The Compute environment associated with this project no longer exists.')
   expect(api.environmentCreate).not.toHaveBeenCalled()
   expect(api.environmentRecipes).not.toHaveBeenCalled()
-  expect([...node.querySelectorAll('.coding-actions button')].map(button => button.textContent)).toEqual(['Create Developer Environment'])
+  expect([...node.querySelectorAll('.coding-actions button')].map(button => button.textContent)).toEqual(['Create Developer Environment', 'Connect existing environment…', 'Manage Compute'])
 })
 
 it('creates an environment from a recipe Compute resolved: Recipe, Computer, Environment and Readiness explained, requirements and placement shown, Create enabled only when satisfiable', async () => {
@@ -138,6 +139,23 @@ it('sets up the Developer recipe and environment in one click without showing sh
   expect(text()).toContain('Developer recipe validated')
   expect(text()).toContain('Computer ready')
   expect(text()).not.toContain('compute recipe create')
+  expect(node.querySelector('[role=status]')!.textContent).toBe('Ready')
+})
+
+it('discovers and connects an existing environment after showing its name, state and immutable id', async () => {
+  api.environmentState.mockResolvedValue(view({ state: 'none', reference: undefined, recipe: undefined, computer: undefined, readiness: undefined, configuration: undefined, lifecycle: undefined, actions: ['create'] }))
+  api.computeInventory.mockResolvedValue({ available: true, daemon: { endpoint: 'http://127.0.0.1:8787', reachable: true }, environments: [
+    { name: 'dev', environmentId: 'env_075fd952cc5c2ca23b653133', observed: 'running' },
+    { name: 'old', environmentId: 'env_old', observed: 'destroyed' }
+  ] })
+  api.environmentAttach.mockResolvedValue(view({ reference: { projectId: 'p1', environment: 'dev', environmentId: 'env_075fd952cc5c2ca23b653133', createdAt: 2 }, recipe: undefined }))
+  await render()
+  await click('Connect existing environment…')
+  expect(api.computeInventory).toHaveBeenCalled()
+  expect(node.querySelector('.env-attach')!.textContent).toContain('dev · running · env_075fd952cc5c2ca23b653133')
+  expect(node.querySelector('.env-attach')!.textContent).not.toContain('env_old')
+  await click('Connect')
+  expect(api.environmentAttach).toHaveBeenCalledWith({ projectId: 'p1', environment: 'dev', environmentId: 'env_075fd952cc5c2ca23b653133' })
   expect(node.querySelector('[role=status]')!.textContent).toBe('Ready')
 })
 
