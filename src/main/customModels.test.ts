@@ -42,6 +42,20 @@ it('survives a restart with configuration in FeltDB and the key in the vault', a
   expect((await reopened.list())).toMatchObject({ defaultModel: 'example/org/model', providers: [{ id: 'example', hasKey: true }] })
   expect((await reopened.records())[0].apiKey).toBe(provider.apiKey)
 })
+it('keeps ChatGPT OAuth credentials vault-only and removes them on disconnect', async () => {
+  const { store, desktop, vault } = await setup()
+  const credential = { issuer: 'https://auth.openai.com', subject: 'account-1', clientId: 'oaiapp_foundry', hostId: 'urn:uuid:host', idToken: 'identity-secret', accessToken: 'access-secret', refreshToken: 'refresh-secret', scopes: ['chatgpt.tokens.use.direct'], expiresAt: Date.now() + 60_000 }
+  vault.set('provider:openai', JSON.stringify(credential))
+  await desktop.repository.replaceProviders([{ id: 'openai', name: 'OpenAI', kind: 'openai', credentialRef: 'provider:openai', updatedAt: Date.now(), config: { apiBase: 'https://api.openai.com/v1', authentication: 'chatgpt-oauth', account: 'person@example.com', models: ['available-model'], reasoningModels: ['available-model'], thinkingLevels: { 'available-model': ['low', 'high'] } } }], 'openai/available-model')
+  expect(JSON.stringify(await store.list())).not.toContain('secret')
+  const record = (await store.records())[0]
+  expect(record.apiKey).toBe('access-secret')
+  expect(customModelProvider(record).getModels()[0]).toMatchObject({ api: 'openai-responses', thinkingLevelMap: { minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: null } })
+  await expect(store.assertThinkingLevel('openai', 'available-model', 'high')).resolves.toBeUndefined()
+  await expect(store.assertThinkingLevel('openai', 'available-model', 'medium')).rejects.toThrow('does not support')
+  await expect(store.disconnectOpenAI()).resolves.toEqual({ providers: [], defaultModel: '' })
+  expect(vault.has('provider:openai')).toBe(false)
+})
 it('detects installed Ollama models and ignores unavailable or empty services', async () => {
   const request = vi.fn(async () => new Response(JSON.stringify({ models: [{ name: 'llama3.2:latest' }, { model: 'qwen3:8b' }, { name: 'llama3.2:latest' }] })))
   await expect(detectOllama(request)).resolves.toEqual({ id: 'ollama', name: 'Ollama', kind: 'ollama', apiBase: 'http://127.0.0.1:11434', models: ['llama3.2:latest', 'qwen3:8b'] })

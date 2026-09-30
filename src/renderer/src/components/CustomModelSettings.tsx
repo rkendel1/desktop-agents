@@ -70,9 +70,32 @@ export function CustomModelSettings() {
     catch (e) { if (request === generation.current) setResult({ ok: false, error: messageSendError(e) }) }
     finally { setTesting(false) }
   }
+  async function connectOpenAI() {
+    setAuthorizing(true); setError('')
+    try { setConfig(await window.douchat.connectOpenAI()) }
+    catch (e) { setError(messageSendError(e)) }
+    finally { setAuthorizing(false) }
+  }
+  async function disconnectOpenAI() {
+    if (!window.confirm(t('Disconnect OpenAI? Chat history and agents will be kept, but OpenAI agents cannot reply until reconnected.'))) return
+    setBusy(true); setError('')
+    try { setConfig(await window.douchat.disconnectOpenAI()) }
+    catch (e) { setError(messageSendError(e)) }
+    finally { setBusy(false) }
+  }
+  const openAIProvider = config.providers.find(provider => provider.id === 'openai')
   return <>
-    <header className="settings-heading local-proxy-heading"><div><h1>{t("Models")}</h1><p>{t("Add API model services such as Anthropic, OpenAI, OpenRouter, or Ollama. Installed command-line agents are selected under Create agent → Local agent and do not appear here.")}</p></div><div className="custom-model-actions">{detectedOllama && !config.providers.some(provider => provider.id === 'ollama') && <button className="secondary-button" disabled={loading || busy} onClick={useDetectedOllama}><Check size={15} />{t("Use detected Ollama")}</button>}<button className="secondary-button" disabled={loading || busy} onClick={() => edit()}><Plus size={15} />{t("Add provider")}</button></div></header>
+    <header className="settings-heading local-proxy-heading"><div><h1>{t("Providers")}</h1><p>{t("Add API model services such as Anthropic, OpenAI, OpenRouter, or Ollama. Installed command-line agents are selected under Create agent → Local agent and do not appear here.")}</p></div><div className="custom-model-actions">{detectedOllama && !config.providers.some(provider => provider.id === 'ollama') && <button className="secondary-button" disabled={loading || busy} onClick={useDetectedOllama}><Check size={15} />{t("Use detected Ollama")}</button>}<button className="secondary-button" disabled={loading || busy} onClick={() => edit()}><Plus size={15} />{t("Add provider")}</button></div></header>
     {loading ? <p role="status">{t("Loading model settings…")}</p> : <>
+      <section className="provider-auth-card" aria-label="OpenAI connection">
+        <div className="provider-auth-heading"><span className="provider-auth-icon"><ShieldCheck size={19} /></span><div className="provider-auth-copy"><strong>OpenAI</strong>
+          {openAIProvider?.authentication === 'chatgpt-oauth' ? <><p className="settings-note">{t('Connected')}</p><p className="settings-note">{t('Account: ')}{openAIProvider.account}</p><p className="settings-note">{t('Authentication: Sign in with ChatGPT')}</p><p className="settings-note">{t('Uses eligible ChatGPT plan access. Foundry context is separate from ChatGPT history and memory.')}</p></> : <><p className="settings-note">{t('Not connected')}</p><p className="settings-note">{t('Sign in with ChatGPT uses eligible plan access. OpenAI API keys use separate API billing.')}</p></>}
+        </div></div>
+        <div className="provider-auth-actions">{openAIProvider?.authentication === 'chatgpt-oauth'
+          ? <><button type="button" className="secondary-button" disabled={busy || authorizing} onClick={() => void connectOpenAI()}>{t('Reconnect')}</button><button type="button" className="secondary-button danger" disabled={busy || authorizing} onClick={() => void disconnectOpenAI()}>{t('Disconnect')}</button></>
+          : <><button type="button" className="primary-button" disabled={busy || authorizing} onClick={() => void connectOpenAI()}>{authorizing ? t('Waiting for browser authorization…') : t('Continue with ChatGPT')}</button>{authorizing && <button type="button" className="secondary-button" onClick={() => void window.douchat.cancelOpenAIConnection()}>{t('Cancel')}</button>}</>}
+        </div>
+      </section>
       {config.providers.length > 0 && <div className="field-row custom-default-model">
         <label htmlFor="unified-default-model">{t('Default model')}</label>
         <select id="unified-default-model" value={config.defaultModel} disabled={busy} onChange={event => void persist(config.providers, event.target.value)}>
@@ -82,7 +105,7 @@ export function CustomModelSettings() {
         </select>
         <p className="settings-note">{t('Agents following the default will use this model for their next reply. Individually selected models stay unchanged.')}</p>
       </div>}
-      {!config.providers.length ? <div className="custom-model-empty"><strong>{t("No providers yet")}</strong><p>{t("Add a provider to create agents with your own models.")}</p><span>{t("Supports Ollama, OpenAI Chat Completions and Anthropic Messages")}</span></div> : <div className="custom-model-table"><table><thead><tr><th>{t("Provider")}</th><th>{t("API URL")}</th><th>{t("Models")}</th><th>{t("Actions")}</th></tr></thead><tbody>{config.providers.map(p => <tr key={p.id}><td><strong>{p.name}</strong><small>{p.kind === 'anthropic' ? 'Anthropic Messages' : p.kind === 'ollama' ? 'Ollama' : 'OpenAI Chat Completions'}</small></td><td><code>{p.apiBase}</code></td><td>{p.models.length}</td><td><div className="custom-model-actions"><button className="icon-button" aria-label={tr('Edit {name}', { name: p.name })} onClick={() => edit(p)}><Pencil size={16} /></button><button className="icon-button" aria-label={tr('Delete {name}', { name: p.name })} disabled={busy} onClick={() => { if (window.confirm(tr('Remove {name}? Agents using these models will be unable to chat until reconfigured. Chat history will be kept.', { name: p.name }))) void persist(config.providers.filter(provider => provider.id !== p.id), config.defaultModel) }}><Trash2 size={16} /></button></div></td></tr>)}</tbody></table></div>}
+      {!config.providers.length ? <div className="custom-model-empty"><strong>{t("No providers yet")}</strong><p>{t("Add a provider to create agents with your own models.")}</p><span>{t("Supports OpenAI Responses, Ollama, OpenAI Chat Completions and Anthropic Messages")}</span></div> : <div className="custom-model-table"><table><thead><tr><th>{t("Provider")}</th><th>{t("API URL")}</th><th>{t("Models")}</th><th>{t("Actions")}</th></tr></thead><tbody>{config.providers.map(p => <tr key={p.id}><td><strong>{p.name}</strong><small>{p.authentication === 'chatgpt-oauth' ? 'OpenAI Responses · ChatGPT OAuth' : p.kind === 'anthropic' ? 'Anthropic Messages' : p.kind === 'ollama' ? 'Ollama' : 'OpenAI Chat Completions'}</small></td><td><code>{p.apiBase}</code></td><td>{p.models.length}</td><td><div className="custom-model-actions">{p.authentication === 'chatgpt-oauth' ? <button className="secondary-button" disabled={busy} onClick={() => void disconnectOpenAI()}>{t('Disconnect')}</button> : <><button className="icon-button" aria-label={tr('Edit {name}', { name: p.name })} onClick={() => edit(p)}><Pencil size={16} /></button><button className="icon-button" aria-label={tr('Delete {name}', { name: p.name })} disabled={busy} onClick={() => { if (window.confirm(tr('Remove {name}? Agents using these models will be unable to chat until reconfigured. Chat history will be kept.', { name: p.name }))) void persist(config.providers.filter(provider => provider.id !== p.id), config.defaultModel) }}><Trash2 size={16} /></button></>}</div></td></tr>)}</tbody></table></div>}
     </>}
     {error && !draft && <p className="settings-error" role="alert">{t(error)}</p>}
     {draft && <NativeDialog className="modal-backdrop" onClose={() => { if (!busy && !testing) close() }} width={600} height={730}>

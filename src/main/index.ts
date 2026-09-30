@@ -2,7 +2,7 @@ import { groupMemberSessionId } from '../shared/bot/group'
 import type { SelectedMention } from '../shared/bot/mentions'
 import { supportedInterfaceLanguage } from '../shared/language'
 import { LocalDesktopData } from './desktopData'
-import { LOCAL_USER_ID } from '../shared/userMemory'
+import { emptyUserMemory, LOCAL_USER_ID } from '../shared/userMemory'
 import { startDesktop, stopDesktop, DesktopStartupError, type DesktopState } from './desktop'
 import { exportAgentArchive, parseAgentArchive } from './agentArchive'
 import { parseSkillArchive } from './skillArchive'
@@ -12,6 +12,7 @@ import { testLocalAgent } from './localAgentTest'
 import { listLocalAgentModels, cancelLocalModelQueries } from './localAgentModels'
 import { localModelId, configurableLocalAgents } from '../shared/localModels'
 import { thinkingLevel } from '../shared/thinkingLevels'
+import { agentPermissions } from '../shared/agentPermissions'
 import { authorizeTokenDance } from './tokenDanceAuth'
 import { CUSTOM_PROVIDER_PREFIX, type CustomProviderInput, type CustomModelTest } from '../shared/customModels'
 import { detectOllama } from './customModels'
@@ -722,6 +723,34 @@ app.whenReady().then(async () => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     tokenDanceFlows.get(event.sender.id)?.abort()
   })
+  const openAIFlows = new Map<number, AbortController>()
+  ipcMain.handle('douchat:connect-openai', async (event) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    const owner = event.sender.id
+    openAIFlows.get(owner)?.abort()
+    const controller = new AbortController()
+    openAIFlows.set(owner, controller)
+    const cancel = () => controller.abort()
+    event.sender.once('destroyed', cancel)
+    try {
+      const result = await desktop.providers.connectOpenAI(url => shell.openExternal(url), controller.signal)
+      await reloadCustomModels()
+      return result
+    } finally {
+      event.sender.removeListener('destroyed', cancel)
+      if (openAIFlows.get(owner) === controller) openAIFlows.delete(owner)
+    }
+  })
+  ipcMain.handle('douchat:cancel-openai', async (event) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    openAIFlows.get(event.sender.id)?.abort()
+  })
+  ipcMain.handle('douchat:disconnect-openai', async (event) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    const result = await desktop.providers.disconnectOpenAI()
+    await reloadCustomModels()
+    return result
+  })
   ipcMain.handle('douchat:custom-models', async (event) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     return desktop.providers.list()
@@ -758,15 +787,18 @@ app.whenReady().then(async () => {
     if (input.automaticModelSelection !== undefined && typeof input.automaticModelSelection !== 'boolean') throw new Error('Invalid automatic model selection setting.')
     if (input.modelSelectionStrategy !== undefined && !['best', 'lowest-cost'].includes(input.modelSelectionStrategy)) throw new Error('Invalid model selection strategy.')
     if (input.automaticModelSelection && !input.customModel) throw new Error('Automatic model selection requires a configured model provider.')
+    if (input.initialMemory && (typeof input.initialMemory.user !== 'string' || typeof input.initialMemory.memory !== 'string' || input.initialMemory.user.length > 100_000 || input.initialMemory.memory.length > 100_000)) throw new Error('Invalid initial memory.')
+    if (input.customModel) await desktop.providers.assertThinkingLevel(input.customModel.providerId, input.customModel.model, input.thinkingLevel)
     const localAgent = input.localAgentId ? await validateLocalAgent(input.localAgentId) : undefined
     // The main process owns runtime bindings: a renderer cannot choose a
     // provider or model by smuggling one over IPC.
     const binding = input.localAgentId
       ? { provider: 'local', model: 'default' }
       : input.customModel ? runtime.customAgentModel(input.customModel.providerId, input.customModel.model) : runtime.unconfiguredAgentModel()
-    const { customModel: _selection, thinkingLevel: requestedThinking, deferGreeting, ...agentInput } = input
+    const { customModel: _selection, thinkingLevel: requestedThinking, deferGreeting, initialMemory, ...agentInput } = input
     const agent = await store.createAgent({
       ...agentInput,
+      ...(agentInput.permissions ? { permissions: agentPermissions(agentInput.permissions) } : {}),
       thinkingLevel: binding.provider === 'local' || binding.provider.startsWith(CUSTOM_PROVIDER_PREFIX) ? thinkingLevel(requestedThinking) : undefined,
       avatar: agentInput.avatar || (agentInput.avatarEmoji ? undefined : localAgent?.avatar),
       localAgentName: localAgent?.custom ? localAgent.name : undefined,
@@ -776,6 +808,9 @@ app.whenReady().then(async () => {
     const direct = (await store.conversations()).find(
       (conversation) => conversation.type === 'direct' && conversation.agentIds[0] === agent.id
     )
+    if (initialMemory) {
+      await new LocalDesktopData(store).saveUserMemory({ ...emptyUserMemory(LOCAL_USER_ID, agent.id), notes: initialMemory.user, memoryNotes: initialMemory.memory }, agent.id)
+    }
     // A new bot opens with its own proactive greeting, like a new topic does.
     if (direct && !deferGreeting) runtime.greetLater(direct.id)
     return { agent, ...(direct ? { conversationId: direct.id } : {}) }
@@ -823,6 +858,9 @@ app.whenReady().then(async () => {
     input = { ...update, ...selectedBinding, followDefaultModel: customModel?.providerId === '@default' ? true : selectedBinding || input.localAgentId ? false : existing.followDefaultModel }
     if (finalLocalAgentId) input.provider = 'local'
     const finalProvider = finalLocalAgentId ? 'local' : input.provider ?? existing.provider
+    if (finalProvider.startsWith(CUSTOM_PROVIDER_PREFIX) && ('thinkingLevel' in update || customModel)) {
+      await desktop.providers.assertThinkingLevel(customModel?.providerId ?? finalProvider.slice(CUSTOM_PROVIDER_PREFIX.length), customModel?.model ?? input.model ?? existing.model, update.thinkingLevel)
+    }
     if (input.automaticModelSelection && !finalProvider.startsWith(CUSTOM_PROVIDER_PREFIX)) throw new Error('Automatic model selection requires a configured model provider.')
     if (finalProvider !== 'local' && !finalProvider.startsWith(CUSTOM_PROVIDER_PREFIX) && (existing.thinkingLevel || 'thinkingLevel' in input)) input.thinkingLevel = 'default'
     if (input.model !== undefined && finalLocalAgentId) {

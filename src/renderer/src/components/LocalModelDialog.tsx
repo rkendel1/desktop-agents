@@ -52,8 +52,10 @@ export function LocalModelDialog({ agent, localAgents = [], onModelSettings, onC
   const localModels = list?.models ?? []
   const reasoningProvider = customProviderId === '@default' ? customModels?.providers.find(provider => customModels.defaultModel.startsWith(provider.id + '/')) : selectedProvider
   const reasoningModel = customProviderId === '@default' ? customModels?.defaultModel.slice((reasoningProvider?.id.length ?? 0) + 1) : model
+  const discoveredThinking = reasoningModel ? reasoningProvider?.thinkingLevels?.[reasoningModel] : undefined
   const thinkingLevels: readonly ThinkingLevel[] = !custom ? localThinkingLevels(selectedLocalAgentId)
-    : reasoningProvider?.reasoningModels?.includes(reasoningModel ?? '') ? THINKING_LEVELS : []
+    : discoveredThinking?.length ? ['off', ...discoveredThinking]
+      : reasoningProvider?.reasoningModels?.includes(reasoningModel ?? '') ? THINKING_LEVELS : []
   const thinkingSupported = thinkingLevels.length > 0
   const defaultThinkingLabel = custom ? tr('Default ({level})', { level: t(THINKING_LEVEL_LABELS[DEFAULT_CLOUD_THINKING_LEVEL]) }) : t('Use agent’s thinking setting')
   return <NativeDialog width={560} className="modal-backdrop" onClose={() => !saving && onClose()}>

@@ -1,4 +1,5 @@
 import { CUSTOM_MODEL_PRESETS, type CustomModelConfig } from '../../../shared/customModels'
+import { CHATGPT_FILES, CHATGPT_MEMORY, CHATGPT_PERMISSIONS, CHATGPT_USER } from '../../../shared/chatGPTPreset'
 import { CustomModelSelection } from './CustomModelSelection'
 import { EmbeddedAgentSettings, AgentDialogSurface as NativeDialog } from './AgentDialogSurface'
 import { conversationMembers } from './common'
@@ -56,12 +57,14 @@ export function BotModal({
   const [customProviderId, setCustomProviderId] = useState('@default')
   const [customModel, setCustomModel] = useState('default')
   const [modelLoadError, setModelLoadError] = useState('')
+  const [chatGPTPreset, setChatGPTPreset] = useState(false)
   // Claude is the primary path: the local Claude Code CLI, or the Anthropic API with a key kept in the system credential store.
   const [claudeChoice, setClaudeChoice] = useState<'code' | 'api' | undefined>()
   const [anthropicKey, setAnthropicKey] = useState('')
   const [savingKey, setSavingKey] = useState(false)
   const anthropicPreset = CUSTOM_MODEL_PRESETS.find((preset) => preset.id === 'anthropic')!
   const anthropicProvider = customModels.providers.find((provider) => provider.id === 'anthropic')
+  const openAIProvider = customModels.providers.find((provider) => provider.id === 'openai')
   const anthropicReady = Boolean(anthropicProvider?.hasKey)
   const claudeCode = localAgents.find((item) => item.id === 'claude')
   useEffect(() => {
@@ -79,16 +82,23 @@ export function BotModal({
     ? { providerId: '@default', model: 'default' }
     : selectedProvider?.models.includes(customModel) ? { providerId: customProviderId, model: customModel } : undefined
   function chooseClaudeCode(): void {
+    setChatGPTPreset(false)
     setClaudeChoice('code')
     setAgentSource('local')
     if (claudeCode) setLocalAgentId(claudeCode.id)
     if (!name.trim()) setName('Claude')
   }
   function chooseAnthropicApi(): void {
+    setChatGPTPreset(false)
     setClaudeChoice('api')
     setAgentSource('custom')
     if (anthropicReady) { setCustomProviderId('anthropic'); setCustomModel(anthropicProvider!.models[0] ?? anthropicPreset.models[0]) }
     if (!name.trim()) setName('Claude')
+  }
+  function chooseChatGPT(): void {
+    if (!openAIProvider?.models.length) { onModelSettings?.(); return }
+    setChatGPTPreset(true); setClaudeChoice(undefined); setAgentSource('custom'); setName('ChatGPT')
+    setCustomProviderId('openai'); setCustomModel(openAIProvider.models[0])
   }
   /** The key goes to the main process, which keeps it in the OS credential store. It never comes back. */
   async function saveAnthropicKey(): Promise<void> {
@@ -165,6 +175,7 @@ export function BotModal({
         color,
         localAgentId: agentSource === 'local' ? localAgentId : '',
         ...(agentSource === 'custom' && selectedCustomModel ? { customModel: selectedCustomModel } : {}),
+        ...(chatGPTPreset ? { systemFiles: CHATGPT_FILES, initialMemory: { user: CHATGPT_USER, memory: CHATGPT_MEMORY }, permissions: CHATGPT_PERMISSIONS, thinkingLevel: 'off' as const } : {}),
         ...(continueToSettings ? { deferGreeting: true } : {})
       }
       await onCreate(input)
@@ -199,6 +210,9 @@ export function BotModal({
         <label className="field-row"><span>{t('Agent name')}</span>
           <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder={t('Enter agent name')} />
         </label>
+        <div className="field-row"><span>{t('OpenAI')}</span><button type="button" className="secondary-button" disabled={!openAIProvider?.models.length} onClick={chooseChatGPT}>{t('Create ChatGPT')}</button>
+          <p className="settings-note">{openAIProvider?.models.length ? t('Creates a fully configured, editable ChatGPT agent using your connected OpenAI provider.') : <>{t('Connect OpenAI in Settings → Providers first.')} <button type="button" className="local-settings-link" onClick={onModelSettings ?? onSettings}>{t('Open provider settings')}</button></>}</p>
+        </div>
         <div className="field-row agent-source-field claude-quick-start"><span>{t('Claude')}</span>
           <div className="agent-source-cards" role="radiogroup" aria-label={t('Claude')}>
             <button type="button" role="radio" aria-checked={claudeChoice === 'code'} className={claudeChoice === 'code' ? 'selected' : ''} onClick={chooseClaudeCode}>
@@ -222,17 +236,17 @@ export function BotModal({
         {claudeChoice === 'api' && !anthropicReady && <p className="settings-note">{t('The key is kept in your system credential store on this computer. It is never shown again or written to your chat history.')}</p>}
         <div className="field-row agent-source-field"><span>{t('Runs with')}</span>
           <div className="agent-source-cards" role="radiogroup" aria-label={t('Runs with')}>
-            <button type="button" role="radio" aria-checked={agentSource === 'custom'} className={agentSource === 'custom' ? 'selected' : ''} onClick={() => setAgentSource('custom')}>
+            <button type="button" role="radio" aria-checked={agentSource === 'custom'} className={agentSource === 'custom' ? 'selected' : ''} onClick={() => { setChatGPTPreset(false); setAgentSource('custom') }}>
               <span className="agent-source-icon"><PlugZap size={18} /></span><span className="agent-source-copy"><strong>{t("Custom model")}</strong><small>{t("Use your configured model service")}</small></span><span className="agent-source-radio" aria-hidden="true"><i /></span>
             </button>
-            <button type="button" role="radio" aria-checked={agentSource === 'local'} className={agentSource === 'local' ? 'selected' : ''} onClick={() => setAgentSource('local')}>
+            <button type="button" role="radio" aria-checked={agentSource === 'local'} className={agentSource === 'local' ? 'selected' : ''} onClick={() => { setChatGPTPreset(false); setAgentSource('local') }}>
               <span className="agent-source-icon"><Laptop size={18} strokeWidth={1.9} /></span>
               <span className="agent-source-copy"><strong>{t('Local agent')}</strong><small>{t("Local AI tools on your computer")}</small></span>
               <span className="agent-source-radio" aria-hidden="true"><i /></span>
             </button>
           </div>
         </div>
-        {agentSource === 'custom' && <CustomModelSelection config={customModels} providerId={customProviderId} model={customModel} disabled={saving} onChange={(providerId, model) => { setCustomProviderId(providerId); setCustomModel(model) }} />}
+        {agentSource === 'custom' && <CustomModelSelection config={customModels} providerId={customProviderId} model={customModel} disabled={saving} onChange={(providerId, model) => { if (providerId !== 'openai') setChatGPTPreset(false); setCustomProviderId(providerId); setCustomModel(model) }} />}
         {agentSource === 'custom' && <p className="settings-note">{modelLoadError || (customModels.providers.length ? t("Use your own API key. Your model provider handles billing.") : t("No model is configured yet. You can create the agent now and choose a model later."))} <button type="button" className="local-settings-link" onClick={onModelSettings ?? onSettings}>{t("Configure model")}</button></p>}
         {agentSource === 'local' && <div className="field-row"><span>{t('Local agent')}</span>
           <LocalAgentSelect agents={localAgents.filter((item) => item.installed)} value={localAgentId} onChange={setLocalAgentId} />

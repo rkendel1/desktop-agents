@@ -447,6 +447,9 @@ export interface AppSnapshot {
 
 export interface CreateAgentInput {
   systemFiles?: import('./agentCustomization').AgentFiles
+  /** Initial curated USER.md and MEMORY.md content for a preset. Stored in the existing memory system. */
+  initialMemory?: { user: string; memory: string }
+  permissions?: AgentPermissions
   thinkingLevel?: ThinkingLevel | 'default'
   automaticModelSelection?: boolean
   modelSelectionStrategy?: 'best' | 'lowest-cost'
@@ -467,7 +470,7 @@ export interface CreateAgentInput {
 
 /** Provider/model bindings are resolved by the main process. Built-in cloud contacts
  * remain service-owned; custom selections are validated against saved providers. */
-export type ResolvedCreateAgentInput = Omit<CreateAgentInput, 'thinkingLevel'> & Pick<AgentConfig, 'provider' | 'model' | 'followDefaultModel' | 'thinkingLevel'>
+export type ResolvedCreateAgentInput = Omit<CreateAgentInput, 'thinkingLevel' | 'initialMemory'> & Pick<AgentConfig, 'provider' | 'model' | 'followDefaultModel' | 'thinkingLevel'>
 
 export interface UpdateAgentInput {
   /** Reject a stale edit when a caller supplies its last observed version. */
@@ -576,6 +579,9 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   getSnapshot: () => Promise<ProjectionSnapshot>
   authorizeTokenDance: () => Promise<string>
   cancelTokenDanceAuthorization: () => Promise<void>
+  connectOpenAI: () => Promise<CustomModelConfig>
+  cancelOpenAIConnection: () => Promise<void>
+  disconnectOpenAI: () => Promise<CustomModelConfig>
   getCustomModels: () => Promise<CustomModelConfig>
   detectOllama: () => Promise<CustomProviderInput | null>
   getDecisionSettings: () => Promise<import('./groupDecision').DecisionSettings>

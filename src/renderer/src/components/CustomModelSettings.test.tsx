@@ -5,6 +5,29 @@ import { expect, it, vi } from 'vitest'
 vi.mock('./NativeDialog', () => ({ NativeDialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }))
 vi.mock('../preferences', () => ({ usePreferences: () => ({ language: 'zh-CN' }), resolveInterfaceLanguage: (language: string) => language, t: (s: string) => s, tr: (s: string, values: Record<string, string | number>) => Object.entries(values).reduce((text, [key, value]) => text.replaceAll('{'+key+'}', String(value)), s) }))
 import { CustomModelSettings } from './CustomModelSettings'
+it('connects and disconnects OpenAI without exposing credentials to the renderer', async () => {
+  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  const connected = { providers: [{ id: 'openai', name: 'OpenAI', kind: 'openai' as const, apiBase: 'https://api.openai.com/v1', authentication: 'chatgpt-oauth' as const, account: 'person@example.com', models: ['available-model'], hasKey: true }], defaultModel: 'openai/available-model' }
+  const connectOpenAI = vi.fn(async () => connected)
+  const disconnectOpenAI = vi.fn(async () => ({ providers: [], defaultModel: '' }))
+  Object.defineProperty(window, 'douchat', { configurable: true, value: { getCustomModels: vi.fn(async () => ({ providers: [], defaultModel: '' })), detectOllama: vi.fn(async () => null), connectOpenAI, disconnectOpenAI, cancelOpenAIConnection: vi.fn(async () => {}), cancelTokenDanceAuthorization: vi.fn(async () => {}) } })
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<CustomModelSettings />))
+    const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === text)!
+    await act(async () => button('Continue with ChatGPT').click())
+    expect(connectOpenAI).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Account: person@example.com')
+    expect(container.textContent).toContain('Authentication: Sign in with ChatGPT')
+    expect(JSON.stringify(connected)).not.toMatch(/access-secret|refresh-secret/)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await act(async () => button('Disconnect').click())
+    expect(disconnectOpenAI).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain('Not connected')
+  } finally { vi.restoreAllMocks(); await act(async () => root.unmount()); container.remove() }
+})
+
 it('offers a detected Ollama service with its installed models and no API key', async () => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   const config = { providers: [], defaultModel: '' }

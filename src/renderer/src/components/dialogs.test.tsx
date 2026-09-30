@@ -201,6 +201,18 @@ describe('create agent terminology', () => {
     expect(JSON.stringify(onCreate.mock.calls)).not.toContain('apiKey')
   })
 
+  it('creates the ChatGPT preset with OpenAI discovery, editable context, curated memory, and permissions', async () => {
+    Object.defineProperty(window, 'douchat', { configurable: true, value: {
+      getCustomModels: vi.fn(async () => ({ providers: [{ id: 'openai', name: 'OpenAI', kind: 'openai', apiBase: 'https://api.openai.com/v1', authentication: 'chatgpt-oauth', account: 'person@example.com', hasKey: true, models: ['available-model'] }], defaultModel: 'openai/available-model' }))
+    } })
+    const onCreate = vi.fn(async () => undefined)
+    await act(async () => root.render(<BotModal localAgents={[]} onSettings={vi.fn()} onModelSettings={vi.fn()} onClose={vi.fn()} onCreate={onCreate} onUpdate={vi.fn()} />))
+    const preset = [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Create ChatGPT')!
+    await act(async () => preset.click())
+    await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ name: 'ChatGPT', customModel: { providerId: 'openai', model: 'available-model' }, thinkingLevel: 'off', systemFiles: expect.objectContaining({ 'SOUL.md': expect.stringContaining('OpenAI-powered'), 'IDENTITY.md': expect.stringContaining('Provider: OpenAI'), 'BOOTSTRAP.md': expect.stringContaining('Begin helping immediately.') }), initialMemory: { user: expect.stringContaining('# User'), memory: expect.stringContaining('# Memory') }, permissions: expect.objectContaining({ groupHumans: 'allow', groupAgents: 'allow' }) }))
+  })
+
   it('creates a manual agent with a blank description by default', async () => {
     const onCreate = vi.fn(async () => undefined)
     await act(async () => root.render(

@@ -79,7 +79,7 @@ export interface ProviderRecord {
   id: string
   kind: 'openai' | 'anthropic' | 'ollama'
   name: string
-  config: { apiBase: string; workspaceId?: string; models: string[]; modelLabels?: Record<string, string>; reasoningModels?: string[] }
+  config: Omit<import('../shared/customModels').CustomProviderInput, 'id' | 'name' | 'kind' | 'apiKey'>
   credentialRef?: string
   updatedAt: number
 }
