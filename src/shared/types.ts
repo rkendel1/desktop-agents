@@ -450,6 +450,8 @@ export interface CreateAgentInput {
   thinkingLevel?: ThinkingLevel | 'default'
   automaticModelSelection?: boolean
   modelSelectionStrategy?: 'best' | 'lowest-cost'
+  /** Keep the new agent inactive until the full creation workspace is finished. */
+  deferGreeting?: boolean
   customModel?: { providerId: string; model: string }
   localAgentId?: string
   localAgentName?: string
@@ -581,7 +583,8 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   testDecisionSettings: (settings: import('./groupDecision').DecisionSettings) => Promise<{ ok: boolean; error?: string }>
   saveCustomModels: (providers: CustomProviderInput[], defaultModel: string) => Promise<CustomModelConfig>
   testCustomModel: (input: CustomModelTest) => Promise<{ ok: boolean; error?: string; model?: string }>
-  createAgent: (input: CreateAgentInput) => Promise<{ agentId: string; conversationId?: string }>
+  createAgent: (input: CreateAgentInput) => Promise<{ agent: AgentConfig; conversationId?: string }>
+  finishAgentSetup: (agentId: string) => Promise<void>
   resolveAgentPermission: (id: string, allow: import('./agentPermissions').PermissionApproval) => Promise<void>
   exportAgentArchive: (agentId: string) => Promise<boolean>
   parseAgentArchive: (data: Uint8Array, root?: string) => Promise<import('./agentArchive').AgentArchivePreview>

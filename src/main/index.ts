@@ -764,7 +764,7 @@ app.whenReady().then(async () => {
     const binding = input.localAgentId
       ? { provider: 'local', model: 'default' }
       : input.customModel ? runtime.customAgentModel(input.customModel.providerId, input.customModel.model) : runtime.unconfiguredAgentModel()
-    const { customModel: _selection, thinkingLevel: requestedThinking, ...agentInput } = input
+    const { customModel: _selection, thinkingLevel: requestedThinking, deferGreeting, ...agentInput } = input
     const agent = await store.createAgent({
       ...agentInput,
       thinkingLevel: binding.provider === 'local' || binding.provider.startsWith(CUSTOM_PROVIDER_PREFIX) ? thinkingLevel(requestedThinking) : undefined,
@@ -777,8 +777,13 @@ app.whenReady().then(async () => {
       (conversation) => conversation.type === 'direct' && conversation.agentIds[0] === agent.id
     )
     // A new bot opens with its own proactive greeting, like a new topic does.
-    if (direct) runtime.greetLater(direct.id)
-    return { agentId: agent.id, ...(direct ? { conversationId: direct.id } : {}) }
+    if (direct && !deferGreeting) runtime.greetLater(direct.id)
+    return { agent, ...(direct ? { conversationId: direct.id } : {}) }
+  })
+  ipcMain.handle('douchat:finish-agent-setup', async (_event, agentId: string) => {
+    const agent = await requireAgent(agentId)
+    const direct = (await store.conversations()).find(conversation => conversation.type === 'direct' && conversation.agentIds[0] === agent.id)
+    if (direct && !(await store.messages()).some(message => message.conversationId === direct.id)) runtime.greetLater(direct.id)
   })
   ipcMain.handle('douchat:resolve-agent-permission', async (_event, id: string, allow: import('../shared/agentPermissions').PermissionApproval) => {
     runtime.resolveAgentPermission(id, allow)

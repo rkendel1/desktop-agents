@@ -20,6 +20,7 @@ export const CUSTOM_MODEL_PRESETS: Array<{ id: string; name: string; kind: Custo
   { id: 'openrouter', apiKeyUrl: 'https://openrouter.ai/settings/keys', name: 'OpenRouter', kind: 'openai', apiBase: 'https://openrouter.ai/api', models: ['xiaomi/mimo-v2.5'] },
   { id: 'tokendance', name: 'TokenDance', kind: 'openai', apiBase: 'https://tokendance.space/gateway/v1', models: ['mimo-v2.5'], apiKeyUrl: 'https://tokendance.space/keys' },
   { id: 'deepseek', apiKeyUrl: 'https://platform.deepseek.com/api_keys', name: 'DeepSeek', kind: 'openai', apiBase: 'https://api.deepseek.com', models: ['deepseek-flash'] },
+  { id: 'ollama-cloud', apiKeyUrl: 'https://ollama.com/settings/keys', name: 'Ollama Cloud', kind: 'openai', apiBase: 'https://ollama.com/v1', models: ['gemma4:31b'] },
   { id: 'ollama', name: 'Ollama', kind: 'ollama', apiBase: 'http://127.0.0.1:11434', models: [] },
 ]
 

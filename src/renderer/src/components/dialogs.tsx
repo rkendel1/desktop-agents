@@ -36,7 +36,8 @@ export function BotModal({
   onModelSettings,
   onClose,
   onCreate,
-  onUpdate
+  onUpdate,
+  continueToSettings = false
 }: {
   agent?: AgentConfig
   localAgents: LocalAgent[]
@@ -46,6 +47,7 @@ export function BotModal({
   onClose: () => void
   onCreate: (input: CreateAgentInput) => Promise<void>
   onUpdate: (agentId: string, input: UpdateAgentInput) => Promise<void>
+  continueToSettings?: boolean
 }): ReactElement {
   const embedded = useContext(EmbeddedAgentSettings)
   const [localAgentId, setLocalAgentId] = useState(agent?.localAgentId ?? initialLocalAgentId ?? (!agent ? localAgents.find((item) => item.installed)?.id : '') ?? '')
@@ -162,10 +164,11 @@ export function BotModal({
         labels: labels.trim(),
         color,
         localAgentId: agentSource === 'local' ? localAgentId : '',
-        ...(agentSource === 'custom' && selectedCustomModel ? { customModel: selectedCustomModel } : {})
+        ...(agentSource === 'custom' && selectedCustomModel ? { customModel: selectedCustomModel } : {}),
+        ...(continueToSettings ? { deferGreeting: true } : {})
       }
       await onCreate(input)
-      onClose()
+      if (!continueToSettings) onClose()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save agent')
     } finally {
@@ -235,10 +238,11 @@ export function BotModal({
           <LocalAgentSelect agents={localAgents.filter((item) => item.installed)} value={localAgentId} onChange={setLocalAgentId} />
         </div>}
         {agentSource === 'local' && !localAgents.some((item) => item.installed) && <p className="settings-note">{t('No available local agents')} <button type="button" className="local-settings-link" onClick={onSettings}>{t('Settings')}</button></p>}
+        {continueToSettings && <p className="settings-note">{t('Continue to configure profile, identity, memory, models, skills, permissions, channels, and advanced settings before the agent starts.')}</p>}
         {error && <p className="settings-error" role="alert">{t(error)}</p>}
         <div className="modal-footer">
           <button type="button" className="secondary-button" onClick={onClose} disabled={saving}>{t('Cancel')}</button>
-          <button className="primary-button" type="submit" disabled={saving || !name.trim() || (agentSource === 'local' && !localAgent?.installed)}>{t(saving ? 'Saving…' : 'Create agent')}</button>
+          <button className="primary-button" type="submit" disabled={saving || !name.trim() || (agentSource === 'local' && !localAgent?.installed)}>{t(saving ? 'Saving…' : continueToSettings ? 'Continue' : 'Create agent')}</button>
         </div>
       </form>
     </NativeDialog>

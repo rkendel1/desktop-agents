@@ -42,7 +42,7 @@ type Dialog =
   | { kind: 'member-profile'; agentId: string; anchor: ProfileAnchor }
   | { kind: 'im-channels'; agent: AgentConfig }
   | { kind: 'local-model'; agent: AgentConfig }
-  | { kind: 'bot'; agent?: AgentConfig; localAgentId?: string }
+  | { kind: 'bot'; agent?: AgentConfig; localAgentId?: string; creating?: boolean }
   | { kind: 'add-members' | 'remove-members'; conversation: Conversation }
   | { kind: 'group'; conversation?: Conversation; initialAgentIds?: string[] }
   | null
@@ -230,10 +230,11 @@ function WorkspaceApp(): ReactElement {
   async function createAgent(input: CreateAgentInput): Promise<void> {
     const created = await window.douchat.createAgent(input)
     if (created.conversationId) setActiveId(created.conversationId)
-    setContact({ kind: 'bot', id: created.agentId })
+    setContact({ kind: 'bot', id: created.agent.id })
     setView('chats')
     setShowInspector(false)
     setToast(tr('{name} joined the workspace', { name: input.name?.trim() || t('Agent') }))
+    if (input.deferGreeting) setDialog({ kind: 'bot', agent: created.agent, creating: true })
   }
 
   async function updateAgent(agentId: string, input: UpdateAgentInput): Promise<void> {
@@ -475,10 +476,12 @@ function WorkspaceApp(): ReactElement {
       {dialog && ((dialog.kind === 'bot' && dialog.agent) || dialog.kind === 'agent-permissions' || dialog.kind === 'im-channels' || dialog.kind === 'local-model') && <AgentSettingsDialog
         key={dialog.agent!.id} agent={uiSnapshot.agents.find(agent => agent.id === dialog.agent!.id) ?? dialog.agent!}
         localAgents={localAgents}
+        creating={dialog.kind === 'bot' && dialog.creating}
         initialTab={dialog.kind === 'agent-permissions' ? 'permissions' : dialog.kind === 'im-channels' ? 'channels' : dialog.kind === 'local-model' ? 'models' : 'profile'}
-        onClose={() => setDialog(null)} onUpdate={updateAgent} onDelete={deleteAgent}
-        onModelSettings={() => { setDialog(null); setSettingsTab('models'); setSettingsOpen(true) }} />}
+        onClose={() => { if (dialog.kind === 'bot' && dialog.creating) void window.douchat.finishAgentSetup(dialog.agent!.id); setDialog(null) }} onUpdate={updateAgent} onDelete={deleteAgent}
+        onModelSettings={() => { if (dialog.kind === 'bot' && dialog.creating) void window.douchat.finishAgentSetup(dialog.agent!.id); setDialog(null); setSettingsTab('models'); setSettingsOpen(true) }} />}
       {dialog?.kind === 'bot' && !dialog.agent && <BotModal localAgents={localAgents}
+        continueToSettings
         initialLocalAgentId={dialog.localAgentId}
         onModelSettings={() => { setDialog(null); setSettingsTab('models'); setSettingsOpen(true) }}
         onSettings={() => { setDialog(null); setSettingsOpen(true) }}

@@ -88,11 +88,16 @@ it('places TokenDance after OpenRouter, defaults to OAuth, saves the authorized 
     await act(async () => button('Add provider').click())
     expect(container.textContent).toContain('These are local agents, not model providers')
     const preset = container.querySelector<HTMLSelectElement>('.custom-model-fields select')!
-    expect([...preset.options].map(o => o.value)).toEqual(['anthropic', 'openai', 'openrouter', 'tokendance', 'deepseek', 'ollama', 'custom'])
+    expect([...preset.options].map(o => o.value)).toEqual(['anthropic', 'openai', 'openrouter', 'tokendance', 'deepseek', 'ollama-cloud', 'ollama', 'custom'])
     for (const id of ['anthropic', 'openai', 'openrouter', 'deepseek']) {
       await select(preset, id)
       expect(container.querySelector('a[target="_blank"]')?.textContent).toContain('Create an API key')
     }
+    await select(preset, 'ollama-cloud')
+    expect(container.querySelector<HTMLInputElement>('input[value="https://ollama.com/v1"]')).not.toBeNull()
+    expect(container.querySelector<HTMLInputElement>('input[aria-label^="Model ID"]')?.value).toBe('gemma4:31b')
+    expect(container.querySelector('a')?.getAttribute('href')).toBe('https://ollama.com/settings/keys')
+    expect(container.querySelector<HTMLInputElement>('input[type="password"]')).not.toBeNull()
     await select(preset, 'tokendance')
     expect(container.querySelector<HTMLInputElement>('input[type="password"]')).toBeNull()
     expect(button('Save').disabled).toBe(true)

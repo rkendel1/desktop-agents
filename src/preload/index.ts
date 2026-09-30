@@ -69,6 +69,7 @@ const api: DouchatApi = {
   saveCustomModels: (providers, defaultModel) => ipcRenderer.invoke('douchat:save-custom-models', providers, defaultModel),
   testCustomModel: (input) => ipcRenderer.invoke('douchat:test-custom-model', input),
   createAgent: (input: CreateAgentInput) => ipcRenderer.invoke('douchat:create-agent', input),
+  finishAgentSetup: (agentId: string) => ipcRenderer.invoke('douchat:finish-agent-setup', agentId),
   resolveAgentPermission: (id, allow) => ipcRenderer.invoke('douchat:resolve-agent-permission', id, allow),
   exportAgentArchive: id => ipcRenderer.invoke('douchat:export-agent-archive', id),
   parseAgentArchive: (data, root) => ipcRenderer.invoke('douchat:parse-agent-archive', data, root),

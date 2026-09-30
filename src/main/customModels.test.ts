@@ -107,6 +107,19 @@ it('uses max_completion_tokens for a native OpenAI connection test', async () =>
   await expect(sent!.json()).resolves.toEqual({ model: 'gpt-test', max_completion_tokens: 16, messages: [{ role: 'user', content: 'Hi' }] })
   expect(customModelProvider({ ...openai, apiKey: provider.apiKey }).getModels()[0].compat).toMatchObject({ maxTokensField: 'max_completion_tokens' })
 })
+it('uses Ollama Cloud through its authenticated OpenAI-compatible endpoint', async () => {
+  const { store } = await setup()
+  const cloud = { id: 'ollama-cloud', name: 'Ollama Cloud', kind: 'openai' as const, apiBase: 'https://ollama.com/v1', apiKey: 'ollama-secret', models: ['gemma4:31b'] }
+  let sent: Request | undefined
+  vi.stubGlobal('fetch', async (input: URL | RequestInfo, init?: RequestInit) => {
+    sent = new Request(input, init)
+    return Response.json({ choices: [{ message: { role: 'assistant', content: 'Hello!' } }], model: 'gemma4:31b' })
+  })
+  await expect(store.test({ provider: cloud, model: 'gemma4:31b' })).resolves.toMatchObject({ ok: true })
+  expect(sent!.url).toBe('https://ollama.com/v1/chat/completions')
+  expect(sent!.headers.get('authorization')).toBe('Bearer ollama-secret')
+  await expect(sent!.json()).resolves.toEqual({ model: 'gemma4:31b', max_tokens: 16, messages: [{ role: 'user', content: 'Hi' }] })
+})
 it.each(['openai', 'anthropic', 'ollama'] as const)('registers %s models with the configured key and endpoint', async kind => {
   const models = createModels()
   models.setProvider(customModelProvider({ ...provider, kind }))

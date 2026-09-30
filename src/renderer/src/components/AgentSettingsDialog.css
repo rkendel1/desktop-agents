@@ -23,6 +23,7 @@ html[data-platform='win32'] .agent-settings-dialog::backdrop { backdrop-filter: 
 .agent-settings-panel[hidden] { display: none; }
 .agent-settings-dialog .settings-modal .settings-heading { padding-right: 0; }
 .agent-settings-dialog .agent-settings-panel > .settings-heading { padding-right: 110px; }
+.agent-settings-finish { position: absolute; z-index: 3; top: 18px; right: 18px; }
 .agent-settings-heading .primary-button, .agent-skills-header-actions button { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .agent-settings-dialog.messenger .agent-settings-embedded .agent-modal { position: static; width: 100%; max-width: none; max-height: none; border: 0; box-shadow: none; border-radius: 0; background: transparent; padding: 0; animation: none; overflow: visible; }
 .agent-settings-embedded .edit-contact-heading, .agent-settings-embedded .im-heading { display: none; }

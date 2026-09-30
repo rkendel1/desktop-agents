@@ -14,8 +14,9 @@ import { AgentFilesPanel, AgentSkillsPanel } from './AgentCustomization'
 import './AgentSettingsDialog.css'
 
 export type AgentSettingsTab = 'memory' | 'profile' | 'customize' | 'models' | 'skills' | 'permissions' | 'channels' | 'advanced'
-export function AgentSettingsDialog({ agent, localAgents, initialTab = 'profile', onClose, onUpdate, onDelete, onModelSettings }: {
+export function AgentSettingsDialog({ agent, localAgents, initialTab = 'profile', creating = false, onClose, onUpdate, onDelete, onModelSettings }: {
   agent: AgentConfig; localAgents: LocalAgent[]; initialTab?: AgentSettingsTab
+  creating?: boolean
   onClose: () => void; onUpdate: (id: string, input: UpdateAgentInput) => Promise<void>; onDelete: (agent: AgentConfig) => void
   onModelSettings: () => void
 }) {
@@ -60,13 +61,16 @@ export function AgentSettingsDialog({ agent, localAgents, initialTab = 'profile'
     } finally { busy.current = false; setSaving(false) }
   }
   const noClose = () => {}
-  return createPortal(<dialog ref={dialog} className="agent-settings-dialog messenger" aria-label={t('Edit agent')} onCancel={event => { event.preventDefault(); leave(onClose) }} onClick={event => { if (event.target === event.currentTarget) leave(onClose) }}>
+  const dialogTitle = creating ? tr('Finish creating agent', '完成创建智能体') : t('Edit agent')
+  return createPortal(<dialog ref={dialog} className="agent-settings-dialog messenger" aria-label={dialogTitle} onCancel={event => { event.preventDefault(); leave(onClose) }} onClick={event => { if (event.target === event.currentTarget) leave(onClose) }}>
     <div className="settings-modal agent-settings-layout">
-      <aside className="settings-sidebar"><div className="settings-modal-title"><div className="wordmark">{t('Edit agent')}</div></div>
-        <nav className="settings-tabs" aria-label={t('Edit agent')}>{tabs.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} title={item.label} aria-label={item.label} aria-current={tab === item.id ? 'page' : undefined} onClick={() => { setTab(item.id); setVisited(current => current.includes(item.id) ? current : [...current, item.id]) }}><item.icon size={18} /><span>{item.label}</span>{dirty.has(item.id) && <span className="agent-settings-dirty" aria-label={tr('Unsaved changes', '未保存')} />}</button>)}</nav>
+      <aside className="settings-sidebar"><div className="settings-modal-title"><div className="wordmark">{dialogTitle}</div></div>
+        <nav className="settings-tabs" aria-label={dialogTitle}>{tabs.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} title={item.label} aria-label={item.label} aria-current={tab === item.id ? 'page' : undefined} onClick={() => { setTab(item.id); setVisited(current => current.includes(item.id) ? current : [...current, item.id]) }}><item.icon size={18} /><span>{item.label}</span>{dirty.has(item.id) && <span className="agent-settings-dirty" aria-label={tr('Unsaved changes', '未保存')} />}</button>)}</nav>
       </aside>
       <div className="settings-content agent-settings-content">
-        <button className="settings-close agent-settings-close" aria-label={t('Close')} disabled={saving} onClick={() => leave(onClose)}><X size={18} /></button>
+        {creating
+          ? <button className="primary-button agent-settings-finish" disabled={saving} onClick={() => leave(onClose)}>{tr('Finish setup', '完成设置')}</button>
+          : <button className="settings-close agent-settings-close" aria-label={t('Close')} disabled={saving} onClick={() => leave(onClose)}><X size={18} /></button>}
         {saved === tab && <p className="agent-settings-saved" role="status">{tr('Saved', '已保存')}</p>}
         <EmbeddedAgentSettings.Provider value={true}>
           {visited.map(section => <fieldset disabled={saving} hidden={tab !== section} key={section} className="agent-settings-panel" onChangeCapture={() => { if (['profile', 'models', 'permissions'].includes(section)) markDirty(section) }}>

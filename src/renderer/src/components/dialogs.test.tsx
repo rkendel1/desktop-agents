@@ -227,6 +227,20 @@ describe('create agent terminology', () => {
     }))
   })
 
+  it('continues a new agent into full settings before closing the creation flow', async () => {
+    const onCreate = vi.fn(async () => undefined)
+    const onClose = vi.fn()
+    await act(async () => root.render(<BotModal continueToSettings localAgents={[]} onSettings={vi.fn()} onClose={onClose} onCreate={onCreate} onUpdate={vi.fn()} />))
+    const name = container.querySelector<HTMLInputElement>('.field-row input')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, 'Configured agent')
+      name.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => container.querySelector<HTMLFormElement>('form')!.requestSubmit())
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ name: 'Configured agent', deferGreeting: true }))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('selects an emoji avatar from a dropdown', async () => {
     const onUpdate = vi.fn(async () => undefined)
     await act(async () => root.render(

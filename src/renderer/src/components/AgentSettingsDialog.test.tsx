@@ -31,6 +31,13 @@ async function input(element: HTMLInputElement | HTMLTextAreaElement, value: str
     element.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }
+it('labels the full settings workspace as the final stage of agent creation', async () => {
+  await act(async () => root.render(<AgentSettingsDialog creating agent={agent} localAgents={[]} onUpdate={update} onClose={close} onDelete={vi.fn()} onModelSettings={vi.fn()} />))
+  expect(document.querySelector('dialog')?.getAttribute('aria-label')).toBe('Finish creating agent')
+  expect(document.querySelector('.settings-modal-title')?.textContent).toBe('Finish creating agent')
+  expect([...document.querySelectorAll('button')].some(button => button.textContent === 'Finish setup')).toBe(true)
+  expect([...document.querySelectorAll('.settings-tabs button')].map(button => button.textContent)).toEqual(['Profile', 'Customize', 'Memory', 'Models', 'Skills', 'Permissions', 'Channels', 'Advanced'])
+})
 it('retains file drafts between tabs, saves both files, and keeps the editor open', async () => {
   await click('Customize')
   expect([...document.querySelectorAll('.agent-file-tabs [role=tab]')].map(tab => tab.textContent)).toEqual(['Soul', 'Identity', 'Bootstrap'])
