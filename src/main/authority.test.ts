@@ -126,3 +126,68 @@ describe('Compute authority', () => {
     expect(coding).toMatch(/await this\.admit\(session\.projectId\)/)
   })
 })
+
+/**
+ * Guards the invariants of the model fabric (docs/model-fabric.md): routing is provider-neutral, a paid model cannot reach a provider
+ * under free-only, and the fabric adds no hidden authority — no store of its own, no credentials, no module-level state.
+ */
+describe('Model fabric authority', () => {
+  const fabricFiles = production.filter(file => /^main\/models\/[^/]+\.ts$/.test(file.path) && !/testing\.ts$/.test(file.path))
+  const core = fabricFiles.filter(file => /(?:router|health|fabric|access|stream|store|cli|provider)\.ts$/.test(file.path))
+  const strip = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const file = (name: string): string => strip(fabricFiles.find(item => item.path === `main/models/${name}`)!.text)
+
+  it('routes without knowing any provider or model: no vendor or model name in the router, ledger, fabric, policy or streaming code', () => {
+    expect(core.length).toBeGreaterThanOrEqual(6)
+    // (adapters.ts speaks Foundry’s existing provider *kinds* — openai/anthropic/ollama protocols — and is checked for model names below.)
+    for (const item of core) {
+      expect(strip(item.text), item.path).not.toMatch(/openrouter|anthropic|openai|gemini|claude|gpt-|llama|mistral|deepseek|qwen|gemma|grok/i)
+    }
+    expect(file('adapters.ts')).not.toMatch(/'(?:gpt|claude|gemini|llama|qwen|mistral)[-\w.]*'/i)
+  })
+
+  it('checks the cost policy again at the point of invocation, before the provider call, and calls providers only from the router path', () => {
+    const router = file('router.ts')
+    expect(router.indexOf('guardInvocation(candidate, policy, input.now())')).toBeGreaterThan(-1)
+    expect(router.indexOf('guardInvocation(candidate, policy, input.now())')).toBeLessThan(router.indexOf('await input.invoke(candidate)'))
+    // Providers are invoked from the fabric’s complete(), which is inside route(): nowhere else in the fabric reaches provider.invoke.
+    const callers = (pattern: RegExp): string[] => fabricFiles.filter(item => pattern.test(strip(item.text))).map(item => item.path)
+    expect(callers(/\bprovider\.invoke\(/)).toEqual(['main/models/fabric.ts'])
+    expect(callers(/\.invoke\(candidate,\s*invocation/)).toEqual(['main/models/fabric.ts'])
+    // The access gate is the single function both the plan and the guard use.
+    expect(file('router.ts')).toMatch(/budgetRejection\(candidate, policy, now\)/); expect(file('access.ts')).toContain("if (budget.kind === 'free-only')")
+  })
+
+  it('fails closed: unknown access, staleness and any budget it does not understand are refused', () => {
+    const access = file('access.ts')
+    expect(access).toContain("FREE_ONLY_ACCESS.includes(candidate.access)"); expect(access).toContain("'stale-pricing'"); expect(access).toContain("'unsupported-budget'")
+    expect(readFileSync(join(root, 'shared/modelFabric.ts'), 'utf8')).toMatch(/FREE_ONLY_ACCESS: readonly ModelAccess\[\] = \['local', 'free', 'beta', 'trial'\]/)
+    // The budget cannot be changed by a setting: it is written as free-only, and a stored value is not read back.
+    expect(file('fabric.ts')).toMatch(/budget: \{ kind: 'free-only' \}/)
+  })
+
+  it('adds no hidden authority: no store, cache, database or module-level state of its own', () => {
+    for (const item of fabricFiles) {
+      const code = strip(item.text)
+      expect(code, item.path).not.toMatch(/sqlite|\bredis\b|localStorage|sessionStorage|new FileJsDb|node:fs|felt\.|\.collection\(/i)
+      expect(code, item.path).not.toMatch(/^(?:export )?(?:const|let|var) \w+(?::[^=]+)? = new (?:Map|Set|WeakMap)\b/m)
+    }
+    const flow = readFileSync(join(root, 'main/felt/desktop.flow'), 'utf8')
+    expect(flow).not.toMatch(/collection (?:Model|Fabric)/)
+    // Persistence goes through the existing settings only.
+    expect(file('store.ts')).toContain('repository.setSetting(FABRIC_SETTING')
+  })
+
+  it('never stores or shows a credential: candidates carry no key field, and the registry is built without one', () => {
+    expect(readFileSync(join(root, 'shared/modelFabric.ts'), 'utf8')).not.toMatch(/apiKey|secret|password|bearer/i)
+    expect(file('fabric.ts')).not.toMatch(/apiKey|secret|password|bearer/i)
+    expect(file('access.ts')).not.toMatch(/apiKey|secret|password|bearer/i)
+  })
+
+  it('is optional and compatible: automatic routing is off by default and the direct path is the fallback of the runtime hook', () => {
+    expect(readFileSync(join(root, 'shared/modelFabric.ts'), 'utf8')).toContain("automatic: false")
+    const runtime = readFileSync(join(root, 'main/runtime.ts'), 'utf8')
+    expect(runtime).toMatch(/if \(!\(await fabric\.policy\(\)\)\.automatic\) source = direct\(\)/)
+    expect(runtime).toMatch(/if \(!fabric \|\| config\.localAgentId \|\| !config\.provider\.startsWith\(CUSTOM_PROVIDER_PREFIX\)\) return direct\(\)/)
+  })
+})

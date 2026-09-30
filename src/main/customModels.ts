@@ -16,7 +16,8 @@ export function validateCustomProvider(input: CustomProviderInput): CustomProvid
   if (!models.length || models.length > 100 || models.some(m => m.length > 200)) throw new Error("Enter valid model names, one per line.")
   const modelLabels = Object.fromEntries(models.map(model => [model, typeof input.modelLabels?.[model] === 'string' ? input.modelLabels[model].trim().slice(0, 200) : '']).filter(([, label]) => label))
   const reasoningModels = Array.isArray(input.reasoningModels) ? models.filter(model => input.reasoningModels!.includes(model)) : []
-  return { id: input.id, name: input.name.trim(), kind: input.kind, apiBase: input.apiBase.trim(), apiKey: input.apiKey?.trim(), models, ...(Object.keys(modelLabels).length ? { modelLabels } : {}), ...(reasoningModels.length ? { reasoningModels } : {}) }
+  const pricing = input.pricing && typeof input.pricing === 'object' ? Object.fromEntries(Object.entries(input.pricing).filter(([model, value]) => models.includes(model) && (value === 'free' || value === 'beta-free' || value === 'trial'))) as NonNullable<CustomProviderInput['pricing']> : {}
+  return { id: input.id, name: input.name.trim(), kind: input.kind, apiBase: input.apiBase.trim(), apiKey: input.apiKey?.trim(), models, ...(Object.keys(modelLabels).length ? { modelLabels } : {}), ...(reasoningModels.length ? { reasoningModels } : {}), ...(Object.keys(pricing).length ? { pricing } : {}) }
 }
 /**
  * Provider configuration. FeltDB holds the non-secret record (endpoint, models,
@@ -80,15 +81,22 @@ export class CustomModelStore {
     } catch { return { ok: false, error: '连接失败或超时，请检查网络和 API 地址。' } }
   }
 }
+/** The pi-ai model for one of a custom provider’s models, configured or discovered. */
+export function customModelDefinition(p: CustomProviderRecord, model: string, limits: { contextWindow?: number; maxTokens?: number; image?: boolean } = {}): Model<any> {
+  const id = CUSTOM_PROVIDER_PREFIX + p.id
+  const endpoint = customEndpoint(p.apiBase, p.kind)
+  const baseUrl = endpoint.slice(0, -(p.kind === 'anthropic' ? '/v1/messages'.length : '/chat/completions'.length))
+  return { id: model, name: model, provider: id, baseUrl,
+    api: p.kind === 'anthropic' ? 'anthropic-messages' : 'openai-completions', reasoning: Boolean(p.reasoningModels?.includes(model)), input: limits.image === false ? ['text'] : ['text', 'image'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: limits.contextWindow ?? 128000, maxTokens: limits.maxTokens ?? (p.reasoningModels?.includes(model) ? 32000 : 8192),
+    compat: { maxTokensField: 'max_tokens' }
+  } as Model<any>
+}
 export function customModelProvider(p: CustomProviderRecord): Provider {
   const id = CUSTOM_PROVIDER_PREFIX + p.id
   const endpoint = customEndpoint(p.apiBase, p.kind)
   const baseUrl = endpoint.slice(0, -(p.kind === 'anthropic' ? '/v1/messages'.length : '/chat/completions'.length))
-  const models = p.models.map(model => ({ id: model, name: model, provider: id, baseUrl,
-    api: p.kind === 'anthropic' ? 'anthropic-messages' : 'openai-completions', reasoning: Boolean(p.reasoningModels?.includes(model)), input: ['text', 'image'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: p.reasoningModels?.includes(model) ? 32000 : 8192,
-    compat: { maxTokensField: 'max_tokens' }
-  })) as Model<any>[]
+  const models = p.models.map(model => customModelDefinition(p, model))
   return createProvider({ id, name: p.name, baseUrl, models,
     auth: { apiKey: { name: p.name, resolve: async () => ({ auth: { apiKey: p.kind === 'ollama' ? 'ollama' : p.apiKey }, source: 'custom model settings' }) } },
     api: p.kind === 'anthropic' ? anthropic : openai

@@ -7076,3 +7076,20 @@ html.native-dialog-window,
 .env-work h4 { margin: 8px 0 2px; font-size: 13px; color: var(--muted); }
 .env-diagnostics summary, .env-advanced summary { cursor: pointer; }
 .env-context { margin: 2px 0; }
+
+/* Foundry → Models: the model fabric */
+.fabric { margin-bottom: 24px; }
+.fabric-title { margin: 6px 0 2px; }
+.fabric-dot.ok { color: #22a06b; }
+.fabric-dot.none { color: #d92d20; }
+.fabric-notice { background: var(--surface); border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+.fabric-switches { display: grid; gap: 4px; margin: 10px 0; }
+.fabric-switch { display: flex; gap: 8px; align-items: center; }
+.fabric-models table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.fabric-models th, .fabric-models td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border, #e5e7eb); }
+.fabric-models tr.selected { background: var(--surface); }
+.fabric-detail { border: 1px solid var(--border, #e5e7eb); border-radius: 8px; padding: 12px 16px; margin: 8px 0; }
+.fabric-detail h4, .fabric-detail h5 { margin: 6px 0 2px; }
+.fabric-capabilities { list-style: none; padding: 0; margin: 2px 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.fabric-providers { list-style: none; padding: 0; margin: 4px 0; }
+.link-button { background: none; border: 0; padding: 0; color: var(--accent-700); cursor: pointer; text-decoration: underline; font: inherit; }

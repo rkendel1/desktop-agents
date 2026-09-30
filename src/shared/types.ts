@@ -630,6 +630,11 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   startCodingSession: (input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment?: string } }) => Promise<CodingSession>
   computeInventory: () => Promise<ComputeInventory>
   openComputeUi: () => Promise<void>
+  modelFabricStatus: () => Promise<import('./modelFabric').ModelFabricStatus>
+  modelFabricDiscover: () => Promise<import('./modelFabric').ModelFabricStatus>
+  modelFabricPolicy: (patch: { automatic?: boolean; failover?: boolean; useBeta?: boolean }) => Promise<import('./modelFabric').ModelFabricStatus>
+  modelFabricEnable: (id: string, enabled: boolean) => Promise<import('./modelFabric').ModelFabricStatus>
+  modelFabricTest: () => Promise<{ reply: string; decision: import('./modelFabric').ModelDecision }>
   environmentState: (projectId: string) => Promise<DevelopmentEnvironmentView>
   environmentDetail: (projectId: string) => Promise<DevelopmentEnvironmentDetail>
   environmentRecipes: () => Promise<RecipeSummary[]>

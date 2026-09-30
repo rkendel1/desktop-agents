@@ -31,6 +31,10 @@ AuthBoundry    authority boundary when authority/agency is required
 Foundry’s Environment UI is a client of Compute, not an alternative implementation of it: Foundry stores one reference and asks Compute for everything else. Foundry does not require AuthBoundry, PAX or Compute to work: a session runs locally unless Compute is chosen, and
 then it never falls back to running locally.
 
+## The model fabric
+
+Underneath the inference path, an optional model fabric discovers the models connected providers offer, classifies why each may be used (local, free, beta, trial, paid, unknown), and routes requests to the best eligible one with automatic fail-over — with a hard free-only policy by default. It keeps only policy and the last discovery, in Foundry's settings ([model-fabric.md](model-fabric.md)).
+
 ## The workbench
 
 Foundry is the developer workbench where agents build software. The daily loop — project home, start coding, approvals, activity, changed

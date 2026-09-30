@@ -48,6 +48,10 @@ import { RoutineScheduler } from './scheduler'
 import { CodingService } from './coding/service'
 import { CiService } from './ci/service'
 import { EnvironmentService } from './environment/service'
+import { customProviderAdapters } from './models/adapters'
+import { modelCliInvocation, runModelCli } from './models/cli'
+import { ModelFabric } from './models/fabric'
+import { settingsFabricStore } from './models/store'
 import { CodingApi } from './coding/api'
 import { ComputeClient } from './compute/client'
 import { startAppPortHost, type AppPortHost } from './appport/host'
@@ -99,6 +103,11 @@ const credentialCodec: SecretCodec = {
 async function reloadCustomModels(): Promise<void> {
   try { await runtime.configureCustomModels(await desktop.providers.records(), (await desktop.providers.list()).defaultModel) }
   catch { await runtime.configureCustomModels([]); console.warn('[foundry] Provider keys could not be loaded') }
+  // Providers or credentials may have changed: what was observed of their models is no longer evidence, and the pool is asked again.
+  if (fabric) {
+    for (const record of await desktop.providers.records().catch(() => [])) fabric.ledger.resetProvider(record.id)
+    if ((await fabric.policy().catch(() => undefined))?.automatic) void fabric.discover().catch(error => diagnostics.write('models.discover.failed', error instanceof Error ? error.message : String(error)))
+  }
 }
 const diagnostics = new DiagnosticLog(join(app.getPath('userData'), 'logs'))
 try {
@@ -210,6 +219,7 @@ let projection: DesktopProjection
 let coding: CodingService
 let ci: CiService
 let environments: EnvironmentService
+let fabric: ModelFabric
 let computeClient: ComputeClient
 let codingApi: CodingApi
 let appPort: AppPortHost | undefined
@@ -217,7 +227,12 @@ let appPortServices: AppPortServices | undefined
 let appPortGitHub: GitHubIntegration | undefined
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
-if (!hasSingleInstanceLock) app.quit()
+/** `Foundry model …` runs the model fabric's command line, headless. */
+const modelCli = modelCliInvocation(process.argv, app.isPackaged)
+if (!hasSingleInstanceLock) {
+  if (modelCli) process.stderr.write('Foundry is already running and owns its data. Use Settings → Models, or quit Foundry and run this again.\n')
+  app.quit()
+}
 
 function focusMainWindow(): void {
   if (quitting) return
@@ -462,6 +477,9 @@ app.whenReady().then(async () => {
     (path) => shell.openPath(path)
   )
   runtime = new DouchatRuntime(store, computer, ephemeralChanged, { snapshot: () => emailConnectors.snapshot(), createTools: id => emailConnectors.createTools(id) })
+  // The model fabric: policy and discovery live in settings, providers are the ones configured in Settings → Models, and calls go through the runtime's own model path.
+  fabric = new ModelFabric(settingsFabricStore(store), async () => customProviderAdapters(await desktop.providers.records(), { stream: runtime.streamModel as never }))
+  runtime.attachModelFabric(fabric)
   // FeltDB announces every durable change; the projection turns each into a small delta for the renderer.
   projection = new DesktopProjection(store, {
     ephemeral: () => ({ ...runtime.ephemeralState(), codingActivity: coding?.activity() ?? [] }),
@@ -1086,6 +1104,24 @@ app.whenReady().then(async () => {
     }
     return environments.act(projectId, action as 'restart' | 'stop' | 'start' | 'retry' | 'destroy')
   })
+  // The model fabric: policy and discovery are settings; health is observed at run time; nothing here holds a credential.
+  ipcMain.handle('douchat:model-fabric-status', event => { if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized'); return fabric.status() })
+  ipcMain.handle('douchat:model-fabric-discover', async event => { if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized'); await fabric.discover(); return fabric.status() })
+  ipcMain.handle('douchat:model-fabric-policy', async (event, patch: { automatic?: unknown; failover?: unknown; useBeta?: unknown }) => {
+    if (!isDouchatRenderer(event.sender) || !patch || typeof patch !== 'object') throw new Error('Unauthorized')
+    await fabric.setPolicy({ ...(typeof patch.automatic === 'boolean' ? { automatic: patch.automatic } : {}), ...(typeof patch.failover === 'boolean' ? { failover: patch.failover } : {}), ...(typeof patch.useBeta === 'boolean' ? { useBeta: patch.useBeta } : {}) })
+    if (patch.automatic === true && !(await fabric.registry()).discoveredAt) await fabric.discover().catch(() => undefined)
+    return fabric.status()
+  })
+  ipcMain.handle('douchat:model-fabric-enable', async (event, id: unknown, enabled: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || typeof enabled !== 'boolean') throw new Error('Unauthorized')
+    await fabric.setEnabled(id, enabled); return fabric.status()
+  })
+  ipcMain.handle('douchat:model-fabric-test', async event => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    const { response, decision } = await fabric.complete(fabric.request('general'), 'Reply with the single word: pong.')
+    return { reply: response.text.slice(0, 200), decision }
+  })
   ipcMain.handle('douchat:ci-plan', (event, projectId: unknown, tool?: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof projectId !== 'string' || (tool !== undefined && typeof tool !== 'string')) throw new Error('Unauthorized')
     return ci.plan(projectId, tool as string | undefined)
@@ -1143,6 +1179,16 @@ app.whenReady().then(async () => {
   // Windows open on the local desktop immediately. Nothing waits on a network,
   // an account, or a provider: models are configured when the person wants them.
   await reloadCustomModels()
+  if (modelCli) {
+    // Headless: no window, no channels, no scheduler. Print, close the data cleanly, exit.
+    let code = 1
+    try { code = await runModelCli(modelCli, fabric, process.stdout) } finally { quitting = true; await stopDesktop(desktop).catch(() => undefined) }
+    app.exit(code)
+    return
+  }
+  // Discovery is scheduled while automatic routing is on: providers' free pools change, and a stale classification is not assumed to still be free.
+  const discovery = setInterval(() => { void fabric.policy().then(policy => policy.automatic ? fabric.discover() : undefined).catch(error => diagnostics.write('models.discover.failed', error instanceof Error ? error.message : String(error))) }, 30 * 60_000)
+  discovery.unref()
   try { await imChannels.activate() } catch { console.warn('[foundry] IM credentials could not be loaded') }
   // Update checks contact the release feed, so they run only when asked for.
   scheduler.start()
