@@ -4,6 +4,11 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { createClient } from '@appport/client'
+import { createInProcessTransport } from '@appport/transport-inprocess'
+import { CodingApi } from '../coding/api'
+import { createFoundryAppPort } from '../appport/host'
+import { apiKeyAuthenticator, ensureClientApiKey, openDesktopServices } from '../appport/services'
 import { runCommand } from '../coding/commands'
 import { pidsReady, taskText, TestKit, waitUntil, type Booted } from '../coding/testkit'
 import { ComputeClient, platformView, readStackEvidence } from './client'
@@ -260,6 +265,35 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     await new Promise(resolve => setTimeout(resolve, 400))
     expect(readFileSync(log, 'utf8').length).toBe(size)
   }, 120_000)
+
+  it('reaches the same Computer through AppPort: the client starts a Compute session, reads its execution and asks PAX, with no new route', async () => {
+    const environment = await computer()
+    const path = repository(dir => { writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n') })
+    const booted = await boot()
+    const agent = await kit.scriptedAgent(booted)
+    const project = await booted.coding.addProject(path, 'Through AppPort')
+    const api = new CodingApi(booted.desktop.repository, booted.coding, (id, allow) => booted.runtime.resolveAgentPermission(id, allow), client)
+    const services = openDesktopServices(booted.desktop.databaseDirectory)
+    const { secret } = await ensureClientApiKey(services, booted.root)
+    const app = createFoundryAppPort(api, apiKeyAuthenticator(services))
+    const identity = await app.server.identify({ transport: 'inprocess', headers: { authorization: `Bearer ${secret}` } })
+    const remote = createClient({ transport: createInProcessTransport({ server: app.server, identity }) })
+    await remote.connect()
+    try {
+      const inventory = await remote.call<{ available: boolean; environments: { name: string }[]; platform?: { label: string } }>('douchat.coding.compute.inventory', {})
+      expect(inventory.available).toBe(true)
+      expect(inventory.environments.map(item => item.name)).toContain(environment)
+      const started = await remote.call<{ id: string; execution?: { kind: string; environment: string } }>('douchat.coding.sessions.start', { projectId: project.id, agentId: agent.id, execution: { kind: 'compute', environment }, task: taskText('Look.', { action: 'none' }) })
+      expect(started.execution).toMatchObject({ kind: 'compute', environment })
+      await booted.coding.settled(started.id)
+      const view = await remote.call<{ status: string; execution?: { environment: string } }>('douchat.coding.sessions.get', { id: started.id })
+      expect(view).toMatchObject({ status: 'succeeded', execution: { environment } })
+      const drift = await remote.call<{ findings: { ambiguous: boolean } }>('douchat.coding.sessions.pax', { id: started.id, command: 'drift' })
+      expect(drift.findings.ambiguous).toBe(true)
+      // Only read-only inspections are reachable: a delegated operation is not a capability.
+      await expect(remote.call('douchat.coding.sessions.pax', { id: started.id, command: 'test' })).rejects.toBeDefined()
+    } finally { await remote.close(); app.close(); await services.apiKeys.close() }
+  }, 180_000)
 
   it('reports the execution interrupted when the Computer stops answering, not the task completed (run last)', async () => {
     const environment = await computer()

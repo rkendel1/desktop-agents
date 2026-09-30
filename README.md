@@ -197,6 +197,14 @@ authorize a folder for a conversation. Moves do not overwrite existing files, an
 deletion is not exposed. Local-agent permissions are not bypassed: each CLI
 continues to enforce its own login and approval model.
 
+## Running on Compute
+
+A coding session can run on a Computer from an installed [Compute Configured](https://github.com/rkendel1/compute)
+(`brew install compute-configured`, then `compute-configured-verify`) instead of on this machine: choose **Execution →
+Compute** and a Computer when you start it. The agent, its files, tests and PAX commands then run on that Computer, and
+there is no fallback to running locally. Foundry shows the platform as Compute states it (Linux x86_64 — Certified, macOS
+ARM64 — Preview). See [docs/compute-integration.md](docs/compute-integration.md).
+
 ## Where data is stored
 
 | Data | Location |

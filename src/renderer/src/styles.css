@@ -7031,3 +7031,11 @@ html.native-dialog-window,
 .coding-continue { flex-wrap: wrap; }
 .coding-continue textarea { flex: 1; min-width: 240px; }
 .coding-continue p { flex-basis: 100%; margin: 0; font-size: 12px; }
+
+/* Compute: where a coding session's agent runs. The label is Compute's own statement about the platform. */
+.coding-compute { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.coding-platform { font-weight: 600; font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--surface); }
+.coding-platform-certified { color: #16794a; background: #ddf5e8; }
+.coding-platform-preview { color: #8a5a00; background: #fff1cc; }
+.coding-platform-unverified { color: var(--muted); }
+

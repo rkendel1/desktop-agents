@@ -89,6 +89,20 @@ export function tr(text: string, values: Record<string, string | number>): strin
   return interpolate(t(text), values)
 }
 const translations: Record<string, string> = {
+  "Execution": "执行位置",
+  "Compute": "Compute",
+  "Computer": "计算机",
+  "Choose a Computer": "选择计算机",
+  "Asking Compute…": "正在询问 Compute…",
+  "Open Compute": "打开 Compute",
+  "Compute has no Computers yet. Create one in Compute.": "Compute 中还没有计算机。请先在 Compute 中创建。",
+  "Runs on Computer": "运行在计算机",
+  "the agent, its commands and its changes are on that Computer; this computer’s copy is untouched.": "智能体、其命令和更改都在那台计算机上；本机的副本不受影响。",
+  "Linux x86_64 — Certified": "Linux x86_64 — 已认证",
+  "macOS ARM64 — Preview": "macOS ARM64 — 预览版",
+  "Linux x86_64 — Unverified": "Linux x86_64 — 未验证",
+  "macOS ARM64 — Unverified": "macOS ARM64 — 未验证",
+  "macOS ARM64 — Certified": "macOS ARM64 — 已认证",
   "Activity": "活动",
   "Add project": "添加项目",
   "Agent wants to:": "智能体想要：",

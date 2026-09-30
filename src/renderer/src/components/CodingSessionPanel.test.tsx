@@ -26,7 +26,10 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   api = {
     resolveAgentPermission: vi.fn(async () => undefined), cancelCodingSession: vi.fn(async () => undefined), continueCodingSession: vi.fn(async () => session({ status: 'running' })),
-    runCodingChecks: vi.fn(async () => undefined), projectGitStatus: vi.fn(async () => ({ branch: 'main', changes: [] })), projectGitDiff: vi.fn(async () => ({ diff: '', truncated: false })),
+    runCodingChecks: vi.fn(async () => undefined), openComputeUi: vi.fn(async () => undefined),
+    computeInventory: vi.fn(async () => ({ available: true, daemon: { endpoint: 'http://127.0.0.1:8787', reachable: true }, installation: { binary: '/x/compute-configured', version: '0.1.5', configured: true },
+      platform: { platform: 'linux-x86_64', status: 'certified', label: 'Linux x86_64 — Certified', evidence: 'compute-configured-verify' },
+      environments: [{ name: 'stopped-one', environmentId: 'e0', observed: 'stopped' }, { name: 'workbench', environmentId: 'e1', observed: 'running' }] })), projectGitStatus: vi.fn(async () => ({ branch: 'main', changes: [] })), projectGitDiff: vi.fn(async () => ({ diff: '', truncated: false })),
     startCodingSession: vi.fn(async () => session({ status: 'running' })), chooseProject: vi.fn(async () => project), setProjectTestCommand: vi.fn(async () => project)
   }
   ;(window as unknown as { douchat: unknown }).douchat = api
@@ -106,7 +109,7 @@ it('separates what changed during the session from what was already modified, an
   expect(node.textContent).toContain('scratch.txt')
   expect(node.textContent).toContain('aaaa1111'); expect(node.textContent).toContain('bbbb2222')
   await click(/src\/math\.js/)
-  expect(api.projectGitDiff).toHaveBeenCalledWith('p1', 'src/math.js')
+  expect(api.projectGitDiff).toHaveBeenCalledWith('p1', 'src/math.js', undefined)
   expect(node.querySelector('.coding-diff')!.textContent).toContain('+  return a + b')
   await click(/src\/new-file\.js/)
   expect(api.projectGitDiff).toHaveBeenCalledTimes(1)
@@ -215,4 +218,43 @@ it('proposes a check command as text; the main process confirms and stores it', 
 it('shows the session panel when a session is selected', async () => {
   await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1', sessionId: 's9' }} onSelect={vi.fn()} />)
   expect(node.querySelector('.coding-session h2')!.textContent).toBe('Old task')
+})
+
+it('offers Compute as an execution target from Compute’s own inventory, with its platform label, and starts the session there', async () => {
+  await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={vi.fn()} />)
+  const execution = [...node.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'compute'))!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(execution, 'compute'); execution.dispatchEvent(new Event('change', { bubbles: true })) })
+  expect(api.computeInventory).toHaveBeenCalled()
+  expect(node.querySelector('.coding-platform')!.textContent).toBe('Linux x86_64 — Certified')
+  expect(node.querySelector('.coding-platform-certified')).not.toBeNull()
+  // The running Computer is preselected; the start button waits for a choice otherwise.
+  const task = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Task"]')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(task, 'Run the tests'); task.dispatchEvent(new Event('input', { bubbles: true })) })
+  await click('Start session')
+  expect(api.startCodingSession).toHaveBeenCalledWith({ projectId: 'p1', agentId: 'a1', task: 'Run the tests', execution: { kind: 'compute', environment: 'workbench' } })
+  await click('Open Compute')
+  expect(api.openComputeUi).toHaveBeenCalled()
+})
+
+it('never labels a preview platform as certified, and says when Compute is not available', async () => {
+  api.computeInventory.mockResolvedValueOnce({ available: false, reason: 'The Compute daemon is not answering at http://127.0.0.1:8787. Start it with `compute start`.', daemon: { endpoint: 'http://127.0.0.1:8787', reachable: false }, environments: [],
+    platform: { platform: 'macos-aarch64', status: 'preview', label: 'macOS ARM64 — Preview', evidence: 'compute-configured-verify' } })
+  await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={vi.fn()} />)
+  const execution = [...node.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'compute'))!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(execution, 'compute'); execution.dispatchEvent(new Event('change', { bubbles: true })) })
+  expect(node.querySelector('.coding-platform')!.textContent).toBe('macOS ARM64 — Preview')
+  expect(node.querySelector('.coding-platform-certified')).toBeNull()
+  expect(node.querySelector('[role=alert]')!.textContent).toContain('compute start')
+  expect([...node.querySelectorAll('button')].find(item => item.textContent === 'Start session')!.disabled).toBe(true)
+})
+
+it('shows that a session runs on a Computer, and reads its changes and diff from that Computer', async () => {
+  await panel({ execution: { kind: 'compute', environment: 'workbench', repository: 'foundry-x-1' }, changes: [{ path: 'a.ts', code: ' M', origin: 'session' }] })
+  expect(node.textContent).toContain('Runs on Computer')
+  expect(node.textContent).toContain('workbench')
+  expect(api.projectGitStatus).toHaveBeenCalledWith('p1', 's1')
+  await click(/a\.ts/)
+  expect(api.projectGitDiff).toHaveBeenCalledWith('p1', 'a.ts', 's1')
+  await click('Open Compute')
+  expect(api.openComputeUi).toHaveBeenCalled()
 })

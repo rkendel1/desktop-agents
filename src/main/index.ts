@@ -482,7 +482,7 @@ app.whenReady().then(async () => {
   coding = new CodingService(store, runtime, () => ephemeralChanged(), { compute: computeClient })
   // The one place approvals are answered: the desktop prompt and a remote client both end up here.
   const answerPermission = (id: string, allow: boolean): void => { runtime.resolveAgentPermission(id, allow); ephemeralChanged() }
-  codingApi = new CodingApi(store, coding, answerPermission)
+  codingApi = new CodingApi(store, coding, answerPermission, computeClient)
   coding.announceInterrupted(store.recoveredCodingSessions)
   // Remote control is off unless the owner turns it on. It listens on loopback only and needs the API key in `appport-api-key`.
   if (process.env.DOUCHAT_APPPORT === '1') {
