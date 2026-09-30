@@ -6966,6 +6966,10 @@ html.native-dialog-window,
 .coding-project, .coding-session { display: flex; flex-direction: column; gap: 16px; max-width: 860px; }
 .coding-workspace h2 { margin: 0 0 4px; font-size: 20px; overflow-wrap: anywhere; }
 .coding-section h3 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.jev-results { display: grid; gap: 8px; }
+.jev-result { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.jev-result > summary { cursor: pointer; font-weight: 600; }
+.jev-result ul { margin: 8px 0 0; padding-left: 20px; }
 .coding-meta { margin: 2px 0; font-size: 13px; overflow-wrap: anywhere; }
 .coding-workspace code { font-size: 12px; background: var(--surface); padding: 1px 5px; border-radius: 4px; }
 .coding-state { font-weight: 600; font-size: 12px; padding: 1px 8px; border-radius: 10px; background: var(--surface); }

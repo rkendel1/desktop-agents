@@ -1084,6 +1084,11 @@ app.whenReady().then(async () => {
   // Projects and coding sessions: a folder agents work in, and what they did there. Read-only views of the
   // repository (status, diff) are offered; running a command line is not something the renderer can ask for.
   ipcMain.handle('douchat:list-projects', () => store.projects())
+  ipcMain.handle('douchat:jev-evaluations', (event, projectId?: string) => {
+    if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
+    if (projectId !== undefined && typeof projectId !== 'string') throw new Error('Invalid project')
+    return store.jevEvaluations(projectId)
+  })
   ipcMain.handle('douchat:choose-project', async (event) => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     if (process.platform === 'darwin') app.focus({ steal: true })

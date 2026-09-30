@@ -37,7 +37,8 @@ beforeEach(() => {
     computeInventory: vi.fn(async () => ({ available: true, daemon: { endpoint: 'http://127.0.0.1:8787', reachable: true }, installation: { binary: '/x/compute-configured', version: '0.1.5', configured: true },
       platform: { platform: 'linux-x86_64', status: 'certified', label: 'Linux x86_64 — Certified', evidence: 'compute-configured-verify' },
       environments: [{ name: 'stopped-one', environmentId: 'e0', observed: 'stopped' }, { name: 'workbench', environmentId: 'e1', observed: 'running' }] })), projectGitStatus: vi.fn(async () => ({ branch: 'main', changes: [] })), projectGitDiff: vi.fn(async () => ({ diff: '', truncated: false })),
-    startCodingSession: vi.fn(async () => session({ status: 'running' })), chooseProject: vi.fn(async () => project), setProjectTestCommand: vi.fn(async () => project)
+    startCodingSession: vi.fn(async () => session({ status: 'running' })), chooseProject: vi.fn(async () => project), setProjectTestCommand: vi.fn(async () => project),
+    listJevEvaluations: vi.fn(async () => [])
   }
   ;(window as unknown as { douchat: unknown }).douchat = api
   node = document.createElement('div'); document.body.append(node); root = createRoot(node)

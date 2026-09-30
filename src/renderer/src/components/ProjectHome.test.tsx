@@ -37,7 +37,8 @@ beforeEach(() => {
       ? { command, exitCode: 0, json: { manager: { name: 'npm', selectedBy: 'lockfile precedence' } }, stdout: '', stderr: '', findings: { ambiguous: false, drift: false, failedClosed: false } }
       : { command, exitCode: 2, json: { issues: [{ status: 'ambiguous', expected: 'one JavaScript package-manager authority', actual: 'pnpm-lock.yaml, package-lock.json' }] }, stdout: '', stderr: '', findings: { ambiguous: true, drift: false, failedClosed: false } }),
     openComputeUi: vi.fn(async () => undefined), environmentState: vi.fn(async () => unavailable()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => []), environmentResolve: vi.fn(), environmentCreate: vi.fn(), environmentAct: vi.fn(), setProjectTestCommand: vi.fn(async () => project), chooseProject: vi.fn(),
-    ciPlan: vi.fn(async () => ({ projectId: 'p1', projectName: 'Fixture', ready: false, blockers: ['x'], computer: { lifecycle: 'ephemeral' } })), startCi: vi.fn(), cancelCi: vi.fn()
+    ciPlan: vi.fn(async () => ({ projectId: 'p1', projectName: 'Fixture', ready: false, blockers: ['x'], computer: { lifecycle: 'ephemeral' } })), startCi: vi.fn(), cancelCi: vi.fn(),
+    listJevEvaluations: vi.fn(async () => [])
   }
   ;(window as unknown as { douchat: unknown }).douchat = api
   node = document.createElement('div'); document.body.append(node); root = createRoot(node)
@@ -54,6 +55,22 @@ it('answers what am I working on: project, repository, branch, upstream distance
   await render(snapshot())
   const head = node.querySelector('header')!.textContent!
   expect(head).toContain('Fixture'); expect(head).toContain('/work/fixture'); expect(head).toContain('main'); expect(head).toContain('origin/main ↑2 ↓1'); expect(head).toContain('abc123ab'); expect(head).toContain('4 changed files')
+})
+
+it('shows inspectable Jev decisions, rules, evidence, uncertainty and provenance on the project', async () => {
+  api.listJevEvaluations.mockResolvedValueOnce([{ context: { sourceAgentId: 'forge', projectId: 'p1' }, question: {
+    id: 'q1', subject: { kind: 'architecture' }, question: 'Single authority?', requestedDecision: 'pass-fail-review',
+    inputs: [{ id: 'stores', name: 'durableStores', value: ['FeltDB'] }], rules: [{ id: 'one', expression: 'exactlyOne(durableStores)' }]
+  }, result: { evaluationId: 'e1', questionId: 'q1', decision: { value: true, status: 'pass' }, evaluations: [{ ruleId: 'one', result: 'true' }],
+    evidence: [{ inputId: 'stores', relevance: ['one'] }], uncertainty: [], provenance: { jevVersion: '1.0.0', runtime: 'deterministic', model: 'none', questionId: 'q1', timestamp: new Date(1000).toISOString() },
+    metrics: { validationMs: 1, deterministicMs: 1, modelMs: 0, resultValidationMs: 1, persistenceMs: 1, totalMs: 4 } } }])
+  await render(snapshot())
+  const section = node.querySelector('[aria-label="Structured decisions"]')!
+  expect(section.textContent).toContain('PASS Single authority?')
+  expect(section.textContent).toContain('1 rules · 1 evidence items · 0 uncertainty')
+  ;(section.querySelector('details') as HTMLDetailsElement).open = true
+  expect(section.textContent).toContain('Jev 1.0.0 · deterministic · none · agent forge')
+  expect(section.textContent).toContain('durableStores')
 })
 
 it('separates staged, not staged and untracked, and shows each diff for what it is', async () => {

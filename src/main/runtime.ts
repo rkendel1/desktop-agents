@@ -32,6 +32,8 @@ import { AgentPermissionBroker, nativeReadPermission, toolCapability } from './a
 import type { AgentExecutor } from '../shared/agentExecutor'
 import { desktopAgentExecutor } from './desktopAgentExecutor'
 import { createWorkspaceTools } from './workspaceTools'
+import { createJevTool } from './jevTools'
+import { JevService, RustStructuredDecisionModel } from './jev'
 import { resolveSavedWorkspace, localWorkspace } from './localWorkspaces'
 import { canAssignConversationWorkspace } from '../shared/conversationWorkspace'
 import { createHash, randomUUID } from 'node:crypto'
@@ -99,7 +101,7 @@ import { addressesEveryone, mentionedMembers, resolveMentionedMembers } from '..
 import { botReplyPrompt, splitBotReply } from '../shared/bot/messages'
 import { directReplyPrompt, privateReplyDeliveries, type PrivateDelivery } from '../shared/bot/privateMessages'
 import type { ComputerProvider } from './computer'
-import { DesktopRepository } from './desktopRepository'
+import { DesktopRepository, workspaceId } from './desktopRepository'
 import { normalizeAgentEmoji } from '../shared/avatar'
 
 /**
@@ -338,6 +340,7 @@ const emptyConnectors: ConnectorProvider = { snapshot: async () => [], createToo
 export class DouchatRuntime {
   readonly games: GroupGames
   private readonly groupDecisionService = new GroupDecisionService()
+  private readonly jev: JevService
   private decisionProviders: CustomProviderRecord[] = []
 
   async saveDecisionSettings(input: DecisionSettings): Promise<DecisionSettings> {
@@ -484,6 +487,7 @@ export class DouchatRuntime {
     private readonly connectors: ConnectorProvider = emptyConnectors,
     private readonly localExecutor: AgentExecutor = desktopAgentExecutor
   ) {
+    this.jev = new JevService({ model: new RustStructuredDecisionModel(), repository: store })
     this.games = new GroupGames(store, {
       language: () => this.interfaceLanguage,
       activity: (game, actorId) => {
@@ -733,12 +737,18 @@ export class DouchatRuntime {
 
     const routineTools = routineCreationAllowed ? [this.routineTool(config, sessionKey)] : []
     const computerTools = () => this.computer.createTools(config.id, () => this.conversationFileRoots(config.id, sessionKey), (path, operation, signal) => this.requestConversationFolder(config.id, sessionKey, path, operation, signal))
+    const jevTool = createJevTool(this.jev, async () => {
+      const conversationId = this.activeConversation.get(sessionKey)
+      const conversation = conversationId ? await this.store.conversation(conversationId) : undefined
+      return { sourceAgentId: config.id, ...(conversationId ? { sourceSessionId: conversationId } : {}),
+        ...(conversation?.workspacePath ? { projectId: workspaceId(conversation.workspacePath) } : {}) }
+    })
     const tools: AgentTool[] =
       context === 'controller' || toolsDisabled
         ? []
         : context === 'group'
-          ? [this.userMemoryTool(sessionKey), this.internalMemoryTool(sessionKey), ...routineTools, ...this.skillTools(config.id), ...this.skillInstallationTools(config.id, sessionKey), ...await this.artifactTools(config.id, sessionKey), ...computerTools(), ...await this.connectors.createTools(config.id)]
-          : [this.messageAgentTool(config, sessionKey), ...this.groupMessagingTools(config, sessionKey), ...(sessionKey.startsWith('direct:') ? [this.userMemoryTool(sessionKey), this.internalMemoryTool(sessionKey), ...this.memoryRetrievalTools(sessionKey), ...this.agentFileTools(sessionKey)] : []), ...routineTools, ...this.skillTools(config.id), ...this.skillInstallationTools(config.id, sessionKey), ...await this.artifactTools(config.id, sessionKey), ...computerTools(), ...await this.connectors.createTools(config.id)]
+          ? [this.userMemoryTool(sessionKey), this.internalMemoryTool(sessionKey), ...routineTools, ...this.skillTools(config.id), ...this.skillInstallationTools(config.id, sessionKey), ...await this.artifactTools(config.id, sessionKey), ...computerTools(), ...await this.connectors.createTools(config.id), jevTool]
+          : [this.messageAgentTool(config, sessionKey), ...this.groupMessagingTools(config, sessionKey), ...(sessionKey.startsWith('direct:') ? [this.userMemoryTool(sessionKey), this.internalMemoryTool(sessionKey), ...this.memoryRetrievalTools(sessionKey), ...this.agentFileTools(sessionKey)] : []), ...routineTools, ...this.skillTools(config.id), ...this.skillInstallationTools(config.id, sessionKey), ...await this.artifactTools(config.id, sessionKey), ...computerTools(), ...await this.connectors.createTools(config.id), jevTool]
 
     const guardedTools = tools.map((tool) => ({ ...tool, execute: async (...args: Parameters<typeof tool.execute>) => {
       const toolSignal = args[2]

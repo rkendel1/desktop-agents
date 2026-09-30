@@ -1,4 +1,5 @@
 import type { CommandResult } from '../../shared/types'
+import type { JevQuestion } from '../../shared/jev'
 
 /**
  * PAX is the project-tooling boundary. Foundry asks it; it does not detect package managers, choose tools or plan operations itself.
@@ -47,4 +48,14 @@ export async function runPax(execute: PaxExecutor, pax: string, command: PaxInsp
   let json: unknown
   try { json = JSON.parse(result.stdout) } catch { /* not JSON: kept as text */ }
   return { command, argv, exitCode: result.exitCode, ...(json !== undefined ? { json } : {}), stdout: result.stdout, stderr: result.stderr, findings: findings(command, result, json) }
+}
+
+/** Project PAX's own answer into explicit Jev evidence without re-detecting or reinterpreting project reality. */
+export function paxEvidence(run: PaxRun): JevQuestion['inputs'] {
+  return [
+    { id: 'pax-command', name: 'command', value: run.command },
+    { id: 'pax-exit-code', name: 'exitCode', value: run.exitCode },
+    { id: 'pax-result', name: 'result', value: (run.json ?? { stdout: run.stdout, stderr: run.stderr }) as JevQuestion['inputs'][number]['value'] },
+    { id: 'pax-findings', name: 'findings', value: run.findings }
+  ]
 }

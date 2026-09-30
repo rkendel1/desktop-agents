@@ -13,6 +13,7 @@ Foundry        developer workbench / control surface
 AppPort        capability protocol
 @appport/github  GitHub capability
 FeltDB         durable state authority
+Jev            structured decision capability
 PAX            portable execution/environment contract
 Compute        portable execution fabric
 AuthBoundry    authority boundary when authority/agency is required
@@ -24,6 +25,7 @@ AuthBoundry    authority boundary when authority/agency is required
 | **AppPort** | The capability protocol. Foundry's coding surface is exposed as an AppPort capability that calls the same `CodingService` the desktop uses. | Implemented ([appport-coding.md](appport-coding.md)). |
 | **`@appport/github`** | The GitHub capability: repository metadata, and later branches, issues and pull requests. Foundry has no GitHub code of its own for these. | Consumed for repository metadata. |
 | **FeltDB** | The durable authority for application and session state, in one shared `.flow` that Foundry, AppPort Services and `@appport/github` each own collections in. Git and the filesystem own source state; OS processes are ephemeral. | Implemented ([feltdb-architecture.md](feltdb-architecture.md)). |
+| **Jev** | Structured decisioning over explicit caller-supplied evidence and rules. It is not an agent and does not discover reality. | Implemented with deterministic rules and an offline local-model boundary ([jev.md](jev.md)). |
 | **PAX** | The portable execution / environment contract: what a project is and what its own tools run. | Consumed for coding sessions on Compute ([compute-integration.md](compute-integration.md)). |
 | **Compute** | The portable execution fabric: where an agent's process can run other than this computer, and the authority for Recipes, Computers, bootstrap, readiness and lifecycle. | Consumed: a project has a development **Environment** created, shown and controlled through Compute, and its workloads run on it only when Compute says it is ready ([environments.md](environments.md)); coding sessions and CI also run on Computers ([compute-integration.md](compute-integration.md)). |
 | **AuthBoundry** | The authority boundary, when authority or agency is required. | **Not required by Foundry.** It runs locally with a stand-in owner authority; a real AuthBoundry replaces that stand-in when a deployment needs one. |

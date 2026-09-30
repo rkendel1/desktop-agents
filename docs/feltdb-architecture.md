@@ -5,8 +5,8 @@
 > The renderer is a projection of FeltDB state, not an independent state store.
 
 Foundry has no account and no cloud dependency. Everything the desktop remembers —
-agents, chats, groups, topics, messages, routines, runs, group games and
-workflows, settings, memories — lives in one embedded [FeltDB](https://www.npmjs.com/package/@feltdb/core)
+agents, chats, groups, topics, messages, routines, runs, group games,
+workflows, structured evidence/evaluations/decisions, settings, memories — lives in one embedded [FeltDB](https://www.npmjs.com/package/@feltdb/core)
 (`@feltdb/core` 0.11.9) database in the application-data folder:
 
 ```

@@ -1,4 +1,5 @@
 import type { CiRun, DevelopmentEnvironmentRef, CodingSession, Project, AgentConfig, ExecutionEventKind, ChatMessage, Conversation, PrivateMessage, RunEvent, Routine, TaskRun, Topic } from '../../shared/types'
+import type { JevEvaluationContext, JevQuestion, JevResult, JevValue } from '../../shared/jev'
 
 /** The stored shapes declared in desktop.flow, and the domain types they compose. */
 
@@ -35,6 +36,16 @@ export interface CiRunRecord {
   source: unknown; platform?: unknown; computer?: unknown; plan?: unknown; operations?: unknown; failure?: unknown; events?: unknown
 }
 export interface DevelopmentEnvironmentRecord { id: string; workspaceId: string; environment: string; environmentId?: string; recipe?: unknown; createdAt: number }
+export interface EvidenceRecord {
+  id: string; evaluationId: string; questionId: string; inputId: string; name: string; value: JevValue; relevance: string[]; createdAt: number
+}
+export interface EvaluationRecord {
+  id: string; questionId: string; question: JevQuestion; result: JevResult; context: JevEvaluationContext
+  projectId?: string; invariantId?: string; createdAt: number
+}
+export interface DecisionRecord {
+  id: string; evaluationId: string; questionId: string; value: boolean | null; status: JevResult['decision']['status']; createdAt: number
+}
 export interface MessageRecord {
   id: string; sessionId: string; topicId: string; role: 'user' | 'assistant' | 'system'
   authorId: string; authorName: string; content: string; kind: string; timestamp: number

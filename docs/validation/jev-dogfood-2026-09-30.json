@@ -1,0 +1,30 @@
+{
+  "questionId": "dogfood-single-durable-authority",
+  "source": "real Foundry repository inspection in src/main/jevDogfood.test.ts",
+  "evidence": {
+    "packageManifest": "package.json",
+    "feltDbProductionImports": ["src/main/felt/database.ts"],
+    "durableStores": ["FeltDB"],
+    "flowCollections": 39,
+    "requiredEvaluationCollections": ["Evidence", "Evaluation", "Decision"],
+    "authorityGuard": "src/main/authority.test.ts"
+  },
+  "rules": 6,
+  "result": "pass",
+  "runtime": "deterministic",
+  "model": "none",
+  "modelInferenceMs": 0,
+  "testRunnerDurationMs": 14,
+  "localRuntimeDogfood": {
+    "platform": "darwin-arm64",
+    "package": "@rust-ml-runtime/node-darwin-arm64",
+    "runtimeLoad": "success",
+    "model": "laya",
+    "jevDecision": "unknown",
+    "jevUncertainty": "MODEL_UNAVAILABLE",
+    "jevModelAttemptMs": 21.529,
+    "modelValidation": "failed-closed",
+    "result": "MODEL_UNAVAILABLE",
+    "reason": "Installed model manifest has missing or incorrect platforms metadata; runtime requires an operator-controlled replace-install."
+  }
+}

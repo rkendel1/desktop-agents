@@ -2,6 +2,7 @@ import { FolderGit2, Plus, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
 import type { AppSnapshot, DevelopmentEnvironmentView, GitState, Project } from '../../../shared/types'
+import type { StoredJevEvaluation } from '../../../shared/jev'
 import { t, tr } from '../preferences'
 import { CiPanel } from './CiPanel'
 import { EnvironmentPanel, EnvironmentStatus, type WorkRow } from './EnvironmentPanel'
@@ -26,6 +27,7 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
   const [command, setCommand] = useState('')
   const [execution, setExecution] = useState<'local' | 'compute'>('local')
   const [environment, setEnvironment] = useState<DevelopmentEnvironmentView>()
+  const [evaluations, setEvaluations] = useState<StoredJevEvaluation[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const sessions = (snapshot.codingSessions ?? []).filter(session => session.projectId === project.id)
@@ -57,6 +59,16 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
     window.douchat.environmentState(project.id).then(value => { if (live) setEnvironment(value) }, () => { if (live) setEnvironment(undefined) })
     return () => { live = false }
   }, [execution, project.id])
+  useEffect(() => {
+    let live = true
+    const refresh = (): void => {
+      void window.douchat.listJevEvaluations(project.id).then(value => { if (live) setEvaluations(value) }, () => { if (live) setEvaluations([]) })
+    }
+    refresh()
+    window.addEventListener('focus', refresh)
+    const timer = setInterval(refresh, 4000)
+    return () => { live = false; window.removeEventListener('focus', refresh); clearInterval(timer) }
+  }, [project.id])
   const guard = async (work: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setError('')
     try { await work() } catch (cause) { setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause)) }
@@ -155,6 +167,19 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
     </section>
 
     {project.isGit && <CiPanel project={project} runs={(snapshot.ciRuns ?? []).filter(run => run.projectId === project.id)} />}
+
+    <section className="coding-section" aria-label="Structured decisions">
+      <h3>Structured decisions</h3>
+      {!evaluations.length ? <p className="muted">No Jev evaluations yet.</p> : <div className="jev-results">{evaluations.slice(0, 10).map(({ question, result, context }) =>
+        <details key={result.evaluationId} className="jev-result">
+          <summary><span className={result.decision.status === 'pass' ? 'coding-ok' : result.decision.status === 'fail' ? 'coding-bad' : ''}>{result.decision.status.toUpperCase()}</span> {question.question}</summary>
+          <p className="muted">{result.evaluations.length} rules · {question.inputs.length} evidence items · {result.uncertainty.length} uncertainty · {when(Date.parse(result.provenance.timestamp))}</p>
+          <p className="muted">Evaluated by Jev {result.provenance.jevVersion} · {result.provenance.runtime} · {result.provenance.model}{context.sourceAgentId ? ` · agent ${context.sourceAgentId}` : ''}</p>
+          <ul>{result.evaluations.map(item => <li key={item.ruleId}><code>{item.ruleId}</code>: {item.result.toUpperCase()}{item.explanation ? ` — ${item.explanation}` : ''}</li>)}</ul>
+          <details><summary>Evidence</summary><ul>{question.inputs.map(item => <li key={item.id}><code>{item.name}</code>: <code>{JSON.stringify(item.value)}</code></li>)}</ul></details>
+          {!!result.uncertainty.length && <p className="coding-error">{result.uncertainty.join(' · ')}</p>}
+        </details>)}</div>}
+    </section>
 
     <section className="coding-section" aria-label={t('Sessions')}>
       <h3>{t('Sessions')}</h3>

@@ -124,6 +124,7 @@ const api: DouchatApi = {
     return () => ipcRenderer.removeListener('douchat:update-state', handler)
   },
   listProjects: () => ipcRenderer.invoke('douchat:list-projects'),
+  listJevEvaluations: (projectId) => ipcRenderer.invoke('douchat:jev-evaluations', projectId),
   chooseProject: () => ipcRenderer.invoke('douchat:choose-project'),
   removeProject: (id) => ipcRenderer.invoke('douchat:remove-project', id),
   projectGitStatus: (id, sessionId) => ipcRenderer.invoke('douchat:project-git-status', id, sessionId),

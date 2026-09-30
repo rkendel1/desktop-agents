@@ -104,6 +104,45 @@ app desktop {
     index by_workspace using index workspaceId
   }
 
+  // Structured evidence supplied to an evaluation. These are generic Foundry records: Jev is
+  // the evaluator, while FeltDB remains the one durable application-state authority.
+  collection Evidence {
+    id: text
+    evaluationId: text
+    questionId: text
+    inputId: text
+    name: text
+    value: json
+    relevance: json
+    createdAt: integer
+    index by_evaluation using index evaluationId
+    index by_question using index questionId
+  }
+
+  collection Evaluation {
+    id: text
+    questionId: text
+    question: json
+    result: json
+    context: json
+    projectId: text?
+    invariantId: text?
+    createdAt: integer
+    index by_question using index questionId
+    index by_project using index projectId
+  }
+
+  collection Decision {
+    id: text
+    evaluationId: text
+    questionId: text
+    value: json
+    status: text
+    createdAt: integer
+    index by_evaluation using index evaluationId
+    index by_question using index questionId
+  }
+
   // A project's development environment: a *reference* to a Compute environment (its name, its id, the recipe that was asked for) and
   // nothing else. The environment's state, readiness, recipe provenance and lifecycle are Compute's and are asked of it every time.
   collection DevelopmentEnvironment {

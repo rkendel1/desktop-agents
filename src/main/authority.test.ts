@@ -52,6 +52,37 @@ describe('FeltDB authority', () => {
   })
 })
 
+describe('Jev structured-decision authority', () => {
+  const jevFiles = production.filter(file => /(?:^|\/)jev(?:Tools)?\.ts$/.test(file.path))
+  const strip = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  it('cannot discover reality, execute tools, browse, or mutate source', () => {
+    expect(jevFiles.map(file => file.path).sort()).toEqual(['main/jev.ts', 'main/jevTools.ts', 'shared/jev.ts'])
+    for (const file of jevFiles) expect(strip(file.text), file.path).not.toMatch(/from ['"]node:(?:fs|child_process|http|https|net)|\bfetch\(|\bspawn\(|\bexecFile\(|writeFile|unlink|rename|shell\.|browser/i)
+  })
+
+  it('uses the public local runtime through one adapter and never a remote or subprocess model path', () => {
+    expect(offenders(/from '@rust-ml-runtime\/node'/, ['main/jev.ts'])).toEqual([])
+    expect(strip(readFileSync(join(root, 'main/jev.ts'), 'utf8'))).not.toMatch(/openai|anthropic|ollama|python|child_process|\bfetch\(/i)
+  })
+
+  it('owns no database, cache, event bus, hidden model store or global mutable state', () => {
+    for (const file of jevFiles) {
+      const code = strip(file.text)
+      expect(code, file.path).not.toMatch(/sqlite|redis|localStorage|sessionStorage|FileJsDb|\.collection\(|createFeltDB|EventEmitter|setInterval/i)
+      expect(code, file.path).not.toMatch(/^(?:export )?(?:const|let|var) \w+(?::[^=]+)? = new (?:Map|Set|WeakMap)\b/m)
+    }
+    const flow = readFileSync(join(root, 'main/felt/desktop.flow'), 'utf8')
+    expect(flow).not.toMatch(/collection (?:Jev|ModelCache|JevCache|JevStore)/)
+    expect([...flow.matchAll(/collection (Evidence|Evaluation|Decision) \{/g)].map(match => match[1]).sort()).toEqual(['Decision', 'Evaluation', 'Evidence'])
+  })
+
+  it('persists only through DesktopRepository', () => {
+    expect(offenders(/saveJevEvaluation\(/, ['main/desktopRepository.ts', 'main/jev.ts'])).toEqual([])
+    expect(readFileSync(join(root, 'main/jev.ts'), 'utf8')).not.toMatch(/\.felt\.|felt\.collection|felt\.transaction/)
+  })
+})
+
 /**
  * Guards the invariant in docs/environments.md: Foundry may orchestrate Compute through its public service contract but must not
  * implement Compute lifecycle, placement, readiness, provisioning, or execution semantics locally. Foundry’s Environment surface is a

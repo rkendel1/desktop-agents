@@ -633,6 +633,7 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   /** Each durable or live change, as a small delta. A renderer reads `getSnapshot` once, then applies deltas whose sequence is newer. */
   onProjection: (listener: (delta: ProjectionDelta) => void) => () => void
   listProjects: () => Promise<Project[]>
+  listJevEvaluations: (projectId?: string) => Promise<import('./jev').StoredJevEvaluation[]>
   /** Opens a folder picker; resolves with the project, or undefined if cancelled. */
   chooseProject: () => Promise<Project | undefined>
   removeProject: (id: string) => Promise<boolean>

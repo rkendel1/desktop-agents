@@ -15,6 +15,7 @@ import { GameRuleError } from '../shared/gameText'
 import { agentPermissions } from '../shared/agentPermissions'
 import { validateAgentFiles, validateAgentSkills } from '../shared/agentCustomization'
 import { DEFAULT_DECISION_SETTINGS, validateDecisionSettings, type DecisionSettings } from '../shared/groupDecision'
+import type { StoredJevEvaluation } from '../shared/jev'
 import type { GameState } from '../shared/groupGame'
 import type { GroupWorkflow } from '../shared/groupWorkflow'
 import { mediaName, MAX_IM_FILE_BYTES, IMMediaError } from './imMedia'
@@ -22,7 +23,7 @@ import { DESKTOP_SCHEMA_VERSION, FeltDatabase, FeltDatabaseError, type Batch, ty
 import {
   agentFromRecord, agentToRecord, ciRunFromRecord, ciRunToRecord, developmentEnvironmentFromRecord, developmentEnvironmentToRecord, codingSessionFromRecord, codingSessionToRecord, projectFromRecord, conversationFromParts, conversationParts, eventFromRecord, eventToRecord, messageFromRecord,
   messageToRecord, privateMessageFromRecord, privateMessageToRecord, routineFromRecord, routineToRecord, runFromRecord, runToRecord,
-  type AgentProcessRow, type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CiRunRecord, type CodingSessionRecord, type DevelopmentEnvironmentRecord, type ExecutionEventRecord, type LocalAgentDefinitionRecord, type GroupMemberRecord, type GroupRecord,
+  type AgentProcessRow, type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CiRunRecord, type CodingSessionRecord, type DecisionRecord, type DevelopmentEnvironmentRecord, type EvaluationRecord, type EvidenceRecord, type ExecutionEventRecord, type LocalAgentDefinitionRecord, type GroupMemberRecord, type GroupRecord,
   type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord, type SessionRecord, type TopicRecord, type WorkspaceRecord
 } from './felt/records'
 import { MemoryRepository, type MemoryRecord } from './memoryRepository'
@@ -153,6 +154,9 @@ export class DesktopRepository {
   private readonly codingRows: Records<CodingSessionRecord>
   private readonly ciRows: Records<CiRunRecord>
   private readonly environmentRows: Records<DevelopmentEnvironmentRecord>
+  private readonly evidenceRows: Records<EvidenceRecord>
+  private readonly evaluationRows: Records<EvaluationRecord>
+  private readonly decisionRows: Records<DecisionRecord>
   private readonly localAgentRows: Records<LocalAgentDefinitionRecord>
   private readonly processRows: Records<AgentProcessRow>
   /** Coding sessions found still `running` when this desktop opened: their process died with the last run. */
@@ -192,6 +196,9 @@ export class DesktopRepository {
     this.codingRows = felt.collection('CodingSession')
     this.ciRows = felt.collection('CiRun')
     this.environmentRows = felt.collection('DevelopmentEnvironment')
+    this.evidenceRows = felt.collection('Evidence')
+    this.evaluationRows = felt.collection('Evaluation')
+    this.decisionRows = felt.collection('Decision')
     this.localAgentRows = felt.collection('LocalAgentDefinition')
     this.processRows = felt.collection('AgentProcess')
     this.sessions = felt.collection('Session')
@@ -291,6 +298,37 @@ export class DesktopRepository {
     const valid = validateDecisionSettings(settings)
     await this.setSetting('groupDecision', valid)
     return valid
+  }
+
+  /** Persist one structured evaluation atomically; Jev owns no store or cache of its own. */
+  saveJevEvaluation(evaluation: StoredJevEvaluation): Promise<void> {
+    return this.exclusive(() => this.felt.transaction(async batch => {
+      const { question, result, context } = structuredClone(evaluation)
+      const createdAt = Date.parse(result.provenance.timestamp)
+      await batch.put(this.evaluationRows, {
+        id: result.evaluationId, questionId: question.id, question, result, context,
+        ...(context.projectId ? { projectId: context.projectId } : {}),
+        ...(context.invariantId ? { invariantId: context.invariantId } : {}), createdAt
+      })
+      await batch.put(this.decisionRows, { id: result.evaluationId, evaluationId: result.evaluationId,
+        questionId: question.id, value: result.decision.value, status: result.decision.status, createdAt })
+      for (const supplied of question.inputs) await batch.put(this.evidenceRows, {
+        id: `${result.evaluationId}.${supplied.id}`, evaluationId: result.evaluationId, questionId: question.id,
+        inputId: supplied.id, name: supplied.name, value: supplied.value,
+        relevance: result.evidence.find(item => item.inputId === supplied.id)?.relevance ?? [], createdAt
+      })
+    }))
+  }
+
+  async jevEvaluation(evaluationId: string): Promise<StoredJevEvaluation | undefined> {
+    const record = await this.evaluationRows.get(evaluationId)
+    return record ? { question: record.question, result: record.result, context: record.context } : undefined
+  }
+
+  async jevEvaluations(projectId?: string): Promise<StoredJevEvaluation[]> {
+    const records = projectId ? await this.evaluationRows.where({ projectId }) : await this.evaluationRows.all()
+    return records.sort((left, right) => right.createdAt - left.createdAt)
+      .map(record => ({ question: record.question, result: record.result, context: record.context }))
   }
 
   async groupHealth(conversationId: string): Promise<import('./groupHealth').GroupHealth> {
