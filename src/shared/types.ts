@@ -646,8 +646,12 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   listJevEvaluations: (projectId?: string) => Promise<import('./jev').StoredJevEvaluation[]>
   /** Opens a folder picker; resolves with the project, or undefined if cancelled. */
   chooseProject: () => Promise<Project | undefined>
-  /** Returns the one durable group conversation associated with this project, creating it if necessary. */
+  /** Returns the project's original durable group conversation, creating it if necessary. */
   projectConversation: (projectId: string) => Promise<Conversation>
+  /** All durable chats associated with this project. */
+  projectConversations: (projectId: string) => Promise<Conversation[]>
+  /** Create another durable project chat over the same workspace. */
+  createProjectConversation: (input: { projectId: string; name: string }) => Promise<Conversation>
   removeProject: (id: string) => Promise<boolean>
   projectGitStatus: (id: string, sessionId?: string) => Promise<GitState>
   projectGitDiff: (id: string, path?: string, sessionId?: string, mode?: GitDiffMode) => Promise<{ diff: string; truncated: boolean }>

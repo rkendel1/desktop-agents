@@ -1101,6 +1101,14 @@ app.whenReady().then(async () => {
     if (!isDouchatRenderer(event.sender) || typeof projectId !== 'string') throw new Error('Unauthorized')
     return store.ensureProjectConversation(projectId)
   })
+  ipcMain.handle('douchat:project-conversations', (event, projectId: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof projectId !== 'string') throw new Error('Unauthorized')
+    return store.projectConversations(projectId)
+  })
+  ipcMain.handle('douchat:create-project-conversation', (event, input: { projectId?: unknown; name?: unknown }) => {
+    if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.name !== 'string') throw new Error('Unauthorized')
+    return store.createProjectConversation(input.projectId, input.name)
+  })
   ipcMain.handle('douchat:remove-project', (event, id: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
     return store.removeProject(id)

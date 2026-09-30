@@ -38,6 +38,7 @@ beforeEach(() => {
       : { command, exitCode: 2, json: { issues: [{ status: 'ambiguous', expected: 'one JavaScript package-manager authority', actual: 'pnpm-lock.yaml, package-lock.json' }] }, stdout: '', stderr: '', findings: { ambiguous: true, drift: false, failedClosed: false } }),
     openComputeUi: vi.fn(async () => undefined), environmentState: vi.fn(async () => unavailable()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => []), environmentResolve: vi.fn(), environmentCreate: vi.fn(), environmentAct: vi.fn(),
     environmentSetupDeveloper: vi.fn(), onEnvironmentSetupProgress: vi.fn(() => () => undefined), setProjectTestCommand: vi.fn(async () => project), discoverProjectCommands: vi.fn(async () => [{ operation: 'test', command: ['npm', 'test'] }]), chooseProject: vi.fn(),
+    projectConversations: vi.fn(async () => []), createProjectConversation: vi.fn(), sendMessage: vi.fn(async () => undefined), stopConversation: vi.fn(async () => undefined),
     ciPlan: vi.fn(async () => ({ projectId: 'p1', projectName: 'Fixture', ready: false, blockers: ['x'], computer: { lifecycle: 'ephemeral' } })), startCi: vi.fn(), cancelCi: vi.fn(),
     listJevEvaluations: vi.fn(async () => [])
   }
@@ -58,18 +59,19 @@ it('answers what am I working on: project, repository, branch, upstream distance
   expect(head).toContain('Fixture'); expect(head).toContain('/work/fixture'); expect(head).toContain('main'); expect(head).toContain('origin/main ↑2 ↓1'); expect(head).toContain('abc123ab'); expect(head).toContain('4 changed files')
 })
 
-it('renders the project’s own durable group conversation and history', async () => {
+it('renders the project’s durable chat and explains that chat does not start coding work', async () => {
   const conversation: Conversation = { id: 'project-p1', projectId: 'p1', type: 'group', name: 'Fixture', agentIds: ['a1'], leadAgentId: 'a1', workspacePath: project.path,
     topics: [{ id: 'topic', title: 'AppPort', createdAt: 1, updatedAt: 1 }], activeTopicId: 'topic', unread: 0, readAt: 1, createdAt: 1, updatedAt: 1 }
   await render(snapshot({ conversations: [conversation], activity: [], runtime: { mode: 'live', label: 'Connected' }, userName: 'Randy', userAvatar: '',
     messages: [{ id: 'm1', projectId: 'p1', sessionId: conversation.id, runId: 'run-1', origin: 'agent', conversationId: conversation.id, topicId: 'topic', authorId: 'a1', authorName: 'Coder', text: 'The project context is loaded.', kind: 'message', createdAt: 2 }] }))
-  const projectChat = node.querySelector('[aria-label="Project conversation"]')!
-  expect(projectChat.textContent).toContain('Discuss, decide, and delegate work in this project')
+  api.projectConversations.mockResolvedValue([conversation])
+  const projectChat = node.querySelector('[aria-label="Project chats"]')!
+  expect(projectChat.textContent).toContain('Chat replies do not start coding work')
   expect(projectChat.textContent).toContain('The project context is loaded.')
   expect(projectChat.querySelector('textarea')).not.toBeNull()
 })
 
-it('starts one-click Developer setup from the Project conversation', async () => {
+it('keeps one-click Developer setup in the Environment section', async () => {
   const none: DevelopmentEnvironmentView = { projectId: 'p1', compute: { ok: true, installed: { binary: '/compute', version: '0.1.6' } }, state: 'none', progress: [], actions: ['create'], observedAt: 1 }
   const ready: DevelopmentEnvironmentView = { ...none, state: 'ready', reference: { projectId: 'p1', environment: 'dev', environmentId: 'env_1', createdAt: 1 },
     recipe: { name: 'developer', version: 1, digest: 'sha256:x' }, readiness: 'ready', configuration: 'succeeded', lifecycle: 'running', actions: ['open', 'restart', 'stop', 'destroy'] }
@@ -78,10 +80,26 @@ it('starts one-click Developer setup from the Project conversation', async () =>
   const conversation: Conversation = { id: 'project-p1', projectId: 'p1', type: 'group', name: 'Fixture', agentIds: ['a1'], workspacePath: project.path,
     topics: [{ id: 'topic', title: '', createdAt: 1, updatedAt: 1 }], activeTopicId: 'topic', unread: 0, readAt: 1, createdAt: 1, updatedAt: 1 }
   await render(snapshot({ conversations: [conversation], activity: [], runtime: { mode: 'live', label: 'Connected' } }))
-  expect(node.querySelector('[aria-label="Project conversation"]')!.textContent).toContain('Your development environment isn’t configured yet.')
+  await click('Environment')
+  expect(node.querySelector('[aria-label="Environment"]')!.textContent).toContain('No environment')
   await click('Create Developer Environment')
   expect(api.environmentSetupDeveloper).toHaveBeenCalledWith('p1')
-  expect(node.querySelector('[aria-label="Project conversation"]')!.textContent).toContain('Developer environment is ready.')
+})
+
+it('creates and switches among multiple durable chats for one project', async () => {
+  const chat = (id: string, name: string): Conversation => ({ id, projectId: 'p1', type: 'group', name, agentIds: ['a1'], workspacePath: project.path,
+    topics: [{ id: `topic-${id}`, title: '', createdAt: 1, updatedAt: 1 }], activeTopicId: `topic-${id}`, unread: 0, readAt: 1, createdAt: 1, updatedAt: id === 'architecture' ? 2 : 1 })
+  const general = chat('general', 'General'), architecture = chat('architecture', 'Architecture')
+  api.projectConversations.mockResolvedValue([architecture, general])
+  api.createProjectConversation.mockResolvedValue(chat('release', 'Release planning'))
+  await render(snapshot({ conversations: [general, architecture], activity: [], runtime: { mode: 'live', label: 'Connected' } }))
+  expect([...node.querySelectorAll('.project-chat-list button')].map(button => button.querySelector('strong')?.textContent)).toEqual(['Architecture', 'General'])
+  await click('New chat')
+  const input = node.querySelector<HTMLInputElement>('[aria-label="Chat name"]')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Release planning'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+  await click('Create chat')
+  expect(api.createProjectConversation).toHaveBeenCalledWith({ projectId: 'p1', name: 'Release planning' })
+  expect(node.querySelector('.project-chat-list button.active strong')?.textContent).toBe('Release planning')
 })
 
 it('shows inspectable Jev decisions, rules, evidence, uncertainty and provenance on the project', async () => {
@@ -92,6 +110,7 @@ it('shows inspectable Jev decisions, rules, evidence, uncertainty and provenance
     evidence: [{ inputId: 'stores', relevance: ['one'] }], uncertainty: [], provenance: { jevVersion: '1.0.0', runtime: 'deterministic', model: 'none', questionId: 'q1', timestamp: new Date(1000).toISOString() },
     metrics: { validationMs: 1, deterministicMs: 1, modelMs: 0, resultValidationMs: 1, persistenceMs: 1, totalMs: 4 } } }])
   await render(snapshot())
+  await click('History')
   const section = node.querySelector('[aria-label="Structured decisions"]')!
   expect(section.textContent).toContain('PASS Single authority?')
   expect(section.textContent).toContain('1 rules · 1 evidence items · 0 uncertainty')
@@ -102,6 +121,7 @@ it('shows inspectable Jev decisions, rules, evidence, uncertainty and provenance
 
 it('separates staged, not staged and untracked, and shows each diff for what it is', async () => {
   await render(snapshot())
+  await click('Work')
   const tree = node.querySelector('[aria-label="Working tree"]')!
   expect(tree.textContent).toContain('Staged (2)'); expect(tree.textContent).toContain('Not staged (2)'); expect(tree.textContent).toContain('Untracked (1)')
   await click(/src\/both\.js.*Modified/)   // first match is in Staged
@@ -114,6 +134,7 @@ it('separates staged, not staged and untracked, and shows each diff for what it 
 
 it('stages, unstages and commits through the service, then reads Git again', async () => {
   await render(snapshot())
+  await click('Work')
   const reads = api.projectGitStatus.mock.calls.length
   await act(async () => { [...node.querySelectorAll('[aria-label="Working tree"] li')].find(item => item.textContent!.includes('notes.txt'))!.querySelector('button.secondary-button')!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
   expect(api.projectGitStage).toHaveBeenCalledWith('p1', ['notes.txt'])
@@ -131,6 +152,7 @@ it('offers no Git writes while a session runs in the project, and asks for the a
   const running = session({ status: 'running', finishedAt: undefined })
   const activity: CodingActivity = { sessionId: 's1', state: 'awaiting-approval', label: 'Waiting for approval: Edit src/math.js', source: 'douchat', since: 2000, approval: request }
   await render(snapshot({ codingSessions: [running], codingActivity: [activity] }))
+  await click(/^Work/)
   expect(node.textContent).toContain('Happening now'); expect(node.textContent).toContain('Waiting for approval'); expect(node.textContent).toContain('Agent wants to:'); expect(node.textContent).toContain('src/math.js')
   expect(node.textContent).toContain('A coding session is running here')
   expect([...node.querySelectorAll('[aria-label="Working tree"] button.secondary-button')].filter(button => ['Stage', 'Unstage', 'Stage all'].includes(button.textContent!)).every(button => (button as HTMLButtonElement).disabled)).toBe(true)
@@ -141,6 +163,7 @@ it('offers no Git writes while a session runs in the project, and asks for the a
 it('remembers what I was doing last time from the durable session, and continues an interrupted one in one click', async () => {
   const interrupted = session({ status: 'interrupted', error: 'The app closed while this coding session was running. Its process did not survive.', changes: [{ path: 'src/math.js', code: ' M', origin: 'session' }] })
   await render(snapshot({ codingSessions: [interrupted] }))
+  await click('Work')
   const last = node.querySelector('[aria-label="Now"]')!.textContent!
   expect(last).toContain('Last time'); expect(last).toContain('Interrupted'); expect(last).toContain('Fix add()'); expect(last).toContain('This Computer'); expect(last).toContain('1 changed files')
   await click('Continue')
@@ -150,6 +173,7 @@ it('remembers what I was doing last time from the durable session, and continues
 it('lists recent checks with argv, exit status, duration and time, and runs checks against the latest session', async () => {
   const withChecks = session({ commands: [{ argv: ['npm', 'test'], exitCode: 1, startedAt: 3000, durationMs: 2500, stdout: '', stderr: 'boom' }] })
   await render(snapshot({ codingSessions: [withChecks] }))
+  await click('Checks')
   const checks = node.querySelector('[aria-label="Check command"]')!.textContent!
   expect(checks).toContain('npm test'); expect(checks).toContain('✗'); expect(checks).toContain('exit 1'); expect(checks).toContain('2.5s')
   await click('Run checks')
@@ -158,13 +182,14 @@ it('lists recent checks with argv, exit status, duration and time, and runs chec
 
 it('makes Compute the default, labels local as fallback, and refuses to fake Compute when it is unavailable', async () => {
   await render(snapshot())
+  await click('Work')
   expect(node.textContent).toContain('If it is not ready, nothing starts here instead')
   const select = [...node.querySelectorAll('select')].find(item => item.closest('label')?.textContent?.startsWith('Execution')) as HTMLSelectElement
   expect(select.value).toBe('compute')
   expect([...select.options].map(option => option.textContent)).toEqual(['Compute environment (recommended)', 'This Computer — local fallback'])
   expect(node.textContent).toContain('If it is not ready, nothing starts here instead')
   expect(node.textContent).toContain('Start it with `compute start`')
-  const start = [...node.querySelectorAll('button')].find(item => item.textContent === 'Start session') as HTMLButtonElement
+  const start = [...node.querySelectorAll('button')].find(item => item.textContent === 'Start work') as HTMLButtonElement
   expect(start.disabled).toBe(true)
   expect(api.startCodingSession).not.toHaveBeenCalled()
 })

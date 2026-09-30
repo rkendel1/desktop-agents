@@ -446,6 +446,7 @@ describe('DouchatRuntime', () => {
     expect(prompt).toContain('original language')
     expect(prompt).toContain('only when the human requests it')
     expect(prompt).toContain('every day at 09:00')
+    expect(prompt).toContain('no work continues in the background')
     expect(internals.systemPrompt(agent, 'controller', true)).not.toContain('create_routine')
   })
 

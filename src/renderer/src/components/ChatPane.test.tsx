@@ -37,6 +37,7 @@ import {
   MessageDeliveries,
   MessageActions,
   ChatActivity,
+  ConversationActivityBar,
   ChatPane,
   MessageGroupRow,
   MessageRow,
@@ -725,6 +726,26 @@ describe('private delivery disclosure', () => {
       />
     ))
     expect(container.querySelector('.typing-activity-text')?.textContent).toBe('Preparing the result')
+  })
+
+  it('makes it explicit whether an agent action is running and provides a labeled stop control', async () => {
+    const stop = vi.fn()
+    await act(async () => root.render(<ConversationActivityBar agents={agents} sending={false} onStop={stop} />))
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('IdleNo agent action is running.')
+    expect(container.querySelector('button')).toBeNull()
+
+    const activity: ConversationActivityState = {
+      conversationId: directConversation.id, topicId: 'topic-2', phase: 'replying', agentIds: ['agent-1'],
+      label: 'Replying', startedAt: Date.now() - 12_000,
+      action: { id: 'tool-1', tool: 'computer_list_files', status: 'running', target: 'project' }
+    }
+    await act(async () => root.render(<ConversationActivityBar activity={activity} agents={agents} sending={false} onStop={stop} />))
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('拽姐 is working')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('Checking files in project · 0:12')
+    const button = container.querySelector<HTMLButtonElement>('button')
+    expect(button?.textContent).toContain('Stop')
+    await act(async () => button?.click())
+    expect(stop).toHaveBeenCalledOnce()
   })
 
   it.each(['planning', 'replying'] as const)('gives simultaneous members separate %s status rows', async phase => {

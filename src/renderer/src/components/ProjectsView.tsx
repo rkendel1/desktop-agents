@@ -5,7 +5,7 @@ import type { AppSnapshot, Conversation, DevelopmentEnvironmentView, GitState, P
 import type { StoredJevEvaluation } from '../../../shared/jev'
 import { t, tr } from '../preferences'
 import { CiPanel } from './CiPanel'
-import { EnvironmentPanel, EnvironmentStatus, type WorkRow } from './EnvironmentPanel'
+import { EnvironmentPanel, EnvironmentStatus } from './EnvironmentPanel'
 import { ApprovalCard, CodingSessionPanel } from './CodingSessionPanel'
 import { BranchLine, GitPanel, ToolingLine } from './GitPanel'
 import { SidebarResizer } from './common'
@@ -22,47 +22,73 @@ const seconds = (ms: number): string => `${(ms / 1000).toFixed(ms < 10_000 ? 1 :
  * what changed (Git, and what the last session changed), and what to do next (start, continue, review, check, commit).
  * Everything is read from Foundry's service, FeltDB and Git each time; nothing is kept here.
  */
-function ProjectConversation({ project, snapshot, environment, setupBusy, onSetup, onCreateWork }: { project: Project; snapshot: AppSnapshot; environment?: DevelopmentEnvironmentView; setupBusy: boolean; onSetup: () => void; onCreateWork: (draft: WorkDraft) => void }): ReactElement {
-  const projected = (snapshot.conversations ?? []).find(item => item.projectId === project.id)
-  const [created, setCreated] = useState<Conversation>()
+function ProjectConversation({ project, snapshot, onCreateWork }: { project: Project; snapshot: AppSnapshot; onCreateWork: (draft: WorkDraft) => void }): ReactElement {
+  const projected = (snapshot.conversations ?? []).filter(item => item.projectId === project.id)
+  const [loaded, setLoaded] = useState<Conversation[]>([])
+  const [activeId, setActiveId] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [name, setName] = useState('')
   const [error, setError] = useState('')
-  const conversation = projected ?? created
+  const chats = [...new Map([...loaded, ...projected].map(chat => [chat.id, chat])).values()].sort((a, b) => b.updatedAt - a.updatedAt)
+  const conversation = chats.find(chat => chat.id === activeId) ?? chats[0]
   useEffect(() => {
     let live = true
-    setCreated(undefined)
+    setLoaded([]); setActiveId('')
     setError('')
-    if (typeof window.douchat.projectConversation !== 'function') return () => { live = false }
-    window.douchat.projectConversation(project.id).then(value => { if (live) setCreated(value) }, cause => {
+    const request = typeof window.douchat.projectConversations === 'function'
+      ? window.douchat.projectConversations(project.id)
+      : typeof window.douchat.projectConversation === 'function'
+        ? window.douchat.projectConversation(project.id).then(value => [value])
+        : undefined
+    if (!request) return () => { live = false }
+    request.then(value => { if (live) { setLoaded(value); setActiveId(value[0]?.id ?? '') } }, cause => {
       if (live) setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause))
     })
     return () => { live = false }
   }, [project.id])
-  if (error) return <section className="coding-section project-conversation"><h3>{t('Conversation')}</h3><p className="coding-error" role="alert">{error}</p></section>
-  if (!conversation) return <section className="coding-section project-conversation"><h3>{t('Conversation')}</h3><p className="muted">{t('Opening project conversation…')}</p></section>
+  const createChat = async (): Promise<void> => {
+    if (!name.trim()) return
+    setError('')
+    try {
+      const chat = await window.douchat.createProjectConversation({ projectId: project.id, name: name.trim() })
+      setLoaded(current => [chat, ...current]); setActiveId(chat.id); setName(''); setCreating(false)
+    } catch (cause) { setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause)) }
+  }
+  if (error && !conversation) return <section className="coding-section project-conversation"><h3>{t('Chats')}</h3><p className="coding-error" role="alert">{error}</p></section>
+  if (!conversation) return <section className="coding-section project-conversation"><h3>{t('Chats')}</h3><p className="muted">{t('Opening project chats…')}</p></section>
   const topic = conversation.topics.find(item => item.id === conversation.activeTopicId) ?? conversation.topics[0]
   const messages = (snapshot.messages ?? []).filter(message => message.conversationId === conversation.id && (!topic || message.topicId === topic.id))
   const members = conversation.agentIds.map(id => snapshot.agents.find(agent => agent.id === id)).filter((agent): agent is NonNullable<typeof agent> => Boolean(agent))
   const activity = (snapshot.activity ?? []).find(item => item.conversationId === conversation.id && item.topicId === topic?.id)
-  return <section className="coding-section project-conversation" aria-label={t('Project conversation')}>
-    <div className="project-conversation-heading"><div><h3>{t('Conversation')}</h3><p className="muted">{t('Discuss, decide, and delegate work in this project. This history stays with the project.')}</p></div>
-      <span className="muted">{tr('{count} agents', { count: members.length })}</span></div>
-    {environment?.state === 'none' && <div className="project-environment-callout"><p><strong>{t('Your development environment isn’t configured yet.')}</strong></p>
-      <button className="primary-button" disabled={setupBusy} onClick={onSetup}>{t(setupBusy ? 'Setting up…' : 'Create Developer Environment')}</button></div>}
-    {(environment?.state === 'ready' || environment?.state === 'degraded') && <p className="project-environment-ready"><span className="coding-ok">✓</span> {t('Developer environment is ready.')} {t('What should we build?')}</p>}
-    <div className="project-chat-stage"><ChatPane
+  return <section className="coding-section project-conversation" aria-label={t('Project chats')}>
+    <div className="project-conversation-heading"><div><h3>{t('Chats')}</h3><p className="muted">{t('Discuss and plan here. Chat replies do not start coding work; use Turn into work or the Work tab when you want files changed.')}</p></div>
+      <button className="primary-button" onClick={() => setCreating(current => !current)}>{t(creating ? 'Cancel' : 'New chat')}</button></div>
+    {creating && <form className="project-new-chat" onSubmit={event => { event.preventDefault(); void createChat() }}>
+      <input autoFocus value={name} onChange={event => setName(event.target.value)} maxLength={80} placeholder={t('Chat name, e.g. Architecture')} aria-label={t('Chat name')} />
+      <button className="primary-button" type="submit" disabled={!name.trim()}>{t('Create chat')}</button>
+    </form>}
+    {error && <p className="coding-error" role="alert">{error}</p>}
+    <div className="project-chat-layout">
+      <nav className="project-chat-list" aria-label={t('Project chats')}>{chats.map(chat => {
+        const count = (snapshot.messages ?? []).filter(message => message.conversationId === chat.id).length
+        return <button key={chat.id} className={chat.id === conversation.id ? 'active' : ''} onClick={() => setActiveId(chat.id)}><strong>{chat.name}</strong><small>{tr('{count} messages', { count })}</small></button>
+      })}</nav>
+      <div className="project-chat-stage"><ChatPane
       key={`${conversation.id}:${topic?.id}`} userName={snapshot.userName} userAvatar={snapshot.userAvatar}
       conversation={conversation} topic={topic} messages={messages} allMessages={snapshot.messages ?? []}
       agents={snapshot.agents} members={members} activity={activity}
-      offline={snapshot.runtime.mode === 'offline' && !members.some(agent => agent.localAgentId)}
+      offline={snapshot.runtime?.mode === 'offline' && !members.some(agent => agent.localAgentId)}
       onConnect={() => undefined} inspectorOpen={false} onToggleInspector={() => undefined}
       onOpenAgentProfile={() => undefined} onOpenUserProfile={() => undefined} onCreateWork={onCreateWork}
       onSend={(text, images, files, mentions) => window.douchat.sendMessage(conversation.id, text, images, files, mentions)}
       onStop={() => { void window.douchat.stopConversation(conversation.id) }} />
+      </div>
     </div>
   </section>
 }
 
 function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { project: Project; snapshot: AppSnapshot; onOpenSession: (id: string) => void; onCreateWork?: (draft: WorkDraft) => void }): ReactElement {
+  const [section, setSection] = useState<'chats' | 'work' | 'environment' | 'checks' | 'history'>('chats')
   const [git, setGit] = useState<GitState | { error: string }>()
   const [agentId, setAgentId] = useState('')
   const [task, setTask] = useState('')
@@ -72,7 +98,6 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
   const [commandDiscoveryError, setCommandDiscoveryError] = useState('')
   const [execution, setExecution] = useState<'local' | 'compute'>('compute')
   const [environment, setEnvironment] = useState<DevelopmentEnvironmentView>()
-  const [setupBusy, setSetupBusy] = useState(false)
   const [evaluations, setEvaluations] = useState<StoredJevEvaluation[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -99,12 +124,12 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
   }, [refreshGit, running?.id])
   // The project's environment is asked of Compute when it is chosen as the place to run: Foundry keeps a reference, not a list of Computers.
   useEffect(() => {
-    if (execution !== 'compute') return
     let live = true
     setEnvironment(undefined)
     window.douchat.environmentState(project.id).then(value => { if (live) setEnvironment(value) }, () => { if (live) setEnvironment(undefined) })
     return () => { live = false }
-  }, [execution, project.id])
+  }, [project.id])
+  useEffect(() => { setSection('chats') }, [project.id])
   useEffect(() => {
     let live = true
     const saved = project.testCommand ? formatCommandLine(project.testCommand) : ''
@@ -142,19 +167,8 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
     try { await work() } catch (cause) { setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause)) }
     finally { setBusy(false) }
   }
-  const setupDevelopment = (): void => {
-    setSetupBusy(true); setError('')
-    void window.douchat.environmentSetupDeveloper(project.id).then(result => setEnvironment(result.view), cause => {
-      setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause))
-    }).finally(() => setSetupBusy(false))
-  }
   const recentChecks = sessions.flatMap(session => session.commands.map(result => ({ result, session }))).sort((a, b) => b.result.startedAt - a.result.startedAt).slice(0, 5)
   const lastState = latest ? codingDisplayState(latest) : undefined
-  const workRows: WorkRow[] = [
-    { label: 'Agent', value: running ? `${t('Running')} · ${agentOf(running.agentId)?.name ?? running.agentId}` : latest ? t(codingStateLabels[lastState!]) : '—' },
-    { label: 'Checks', value: recentChecks[0] ? `${recentChecks[0].result.exitCode === 0 ? '✓' : '✗'} ${formatCommandLine(recentChecks[0].result.argv)}` : '—' },
-    { label: 'CI', value: (snapshot.ciRuns ?? []).find(run => run.projectId === project.id) ? t(({ running: 'Running', passed: 'Passed', failed: 'Failed', cancelled: 'Cancelled', interrupted: 'Interrupted', blocked: 'Blocked' } as const)[(snapshot.ciRuns ?? []).find(run => run.projectId === project.id)!.status]) : '—' }
-  ]
   return <div className="coding-project">
     <header>
       <h2>{project.name}</h2>
@@ -163,9 +177,22 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
       <ToolingLine project={project} refreshKey={signature} />
     </header>
 
-    <ProjectConversation project={project} snapshot={snapshot} environment={environment} setupBusy={setupBusy} onSetup={setupDevelopment} onCreateWork={onCreateWork ?? (() => undefined)} />
+    <nav className="project-section-tabs" role="tablist" aria-label={t('Project sections')}>
+      {([['chats', 'Chats'], ['work', 'Work'], ['environment', 'Environment'], ['checks', 'Checks'], ['history', 'History']] as const).map(([id, label]) =>
+        <button key={id} role="tab" aria-selected={section === id} className={section === id ? 'active' : ''} onClick={() => setSection(id)}>{t(label)}
+          {id === 'work' && running ? <span className="project-tab-badge is-running">1</span> : null}
+          {id === 'environment' && environment ? <span className={`project-tab-dot is-${environment.state}`} aria-label={t(environment.state)} /> : null}
+        </button>)}
+    </nav>
+    <div className="project-section-summary" role="status">
+      <span><strong>{t('Chat')}</strong> {t('plan and decide')}</span><span aria-hidden>→</span><span><strong>{t('Work')}</strong> {t('assign executable changes')}</span><span aria-hidden>→</span><span><strong>{t('History')}</strong> {t('review results')}</span>
+    </div>
 
-    <EnvironmentPanel project={project} work={workRows} />
+    {section === 'chats' && <ProjectConversation project={project} snapshot={snapshot} onCreateWork={onCreateWork ?? (() => undefined)} />}
+
+    {section === 'environment' && <EnvironmentPanel project={project} />}
+
+    {section === 'work' && <>
 
     <section className="coding-section" aria-label={t('Now')}>
       <h3>{running ? t('Happening now') : t('Last time')}</h3>
@@ -194,8 +221,9 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
       </> : <p className="muted">{t('No sessions yet.')}</p>}
     </section>
 
-    <section className="coding-section" aria-label={t('Start a coding session')}>
-      <h3>{t('Start coding')}</h3>
+    <section className="coding-section project-assign-work" aria-label={t('Assign work')}>
+      <h3>{t('Assign executable work')}</h3>
+      <p className="muted">{t('Use this box when you want an agent to inspect or change project files. Work starts only after you click Start work, and its progress appears above.')}</p>
       {!agents.length ? <p className="muted">{t('Create an agent first.')}</p> : <form className="coding-start" onSubmit={event => {
         event.preventDefault()
         if (!task.trim()) return
@@ -217,14 +245,16 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
             {environment.state !== 'ready' && environment.state !== 'degraded' && <p className="coding-error" role="alert">{environment.reason ? `${t(environment.reason.title)} ${t(environment.reason.message)}` : environment.state === 'none' ? t('This project has no development environment yet. Create one above.') : t('The environment is not ready for workloads.')} {t('Nothing will run on this computer instead.')}</p>}
           </>}
         </div>}
-        <textarea value={task} onChange={event => setTask(event.target.value)} rows={3} placeholder={t('What should the agent do in this project?')} aria-label={t('Task')} />
-        <button className="primary-button" type="submit" disabled={busy || !!running && running.agentId === chosenAgent || !task.trim() || (execution === 'compute' && environment?.state !== 'ready' && environment?.state !== 'degraded')}>{t('Start session')}</button>
+        <textarea value={task} onChange={event => setTask(event.target.value)} rows={3} placeholder={t('Describe the files, behavior, or result you want changed…')} aria-label={t('Work request')} />
+        <button className="primary-button" type="submit" disabled={busy || !!running && running.agentId === chosenAgent || !task.trim() || (execution === 'compute' && environment?.state !== 'ready' && environment?.state !== 'degraded')}>{t('Start work')}</button>
       </form>}
       {error && <p className="coding-error" role="alert">{error}</p>}
     </section>
 
     <GitPanel project={project} git={git} onRefresh={refreshGit} latest={latest} running={!!running} />
+    </>}
 
+    {section === 'checks' && <>
     <section className="coding-section" aria-label={t('Check command')}>
       <h3>{t('Checks')}</h3>
       <p className="muted">{project.testCommand ? <code>{formatCommandLine(project.testCommand)}</code> : t('None. Set the command that “Run checks” should run in this project, for example npm test.')}</p>
@@ -258,7 +288,9 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
     </section>
 
     {project.isGit && <CiPanel project={project} runs={(snapshot.ciRuns ?? []).filter(run => run.projectId === project.id)} />}
+    </>}
 
+    {section === 'history' && <>
     <section className="coding-section" aria-label="Structured decisions">
       <h3>Structured decisions</h3>
       {!evaluations.length ? <p className="muted">No Jev evaluations yet.</p> : <div className="jev-results">{evaluations.slice(0, 10).map(({ question, result, context }) =>
@@ -272,8 +304,8 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
         </details>)}</div>}
     </section>
 
-    <section className="coding-section" aria-label={t('Sessions')}>
-      <h3>{t('Sessions')}</h3>
+    <section className="coding-section" aria-label={t('Work history')}>
+      <h3>{t('Work history')}</h3>
       {!sessions.length ? <p className="muted">{t('No sessions yet.')}</p> : <ul className="coding-session-list">
         {sessions.map(session => {
           const state = codingDisplayState(session, snapshot.codingActivity?.find(item => item.sessionId === session.id))
@@ -284,6 +316,7 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
         })}
       </ul>}
     </section>
+    </>}
   </div>
 }
 

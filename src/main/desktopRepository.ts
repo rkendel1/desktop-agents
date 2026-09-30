@@ -877,11 +877,11 @@ export class DesktopRepository {
   }
 
   /**
-   * A Project owns exactly one long-lived group conversation. It is an ordinary
-   * conversation, so routing, delegation, Jev, memory and message persistence
-   * continue to use the existing runtime. Only references are stored here: the
-   * workspace remains the filesystem/Git authority and Compute remains the
-   * execution authority.
+   * A Project starts with one long-lived group conversation and may gain more
+   * named chats. They use the ordinary runtime, so routing, delegation, Jev,
+   * memory and message persistence remain unchanged. Only references are stored
+   * here: the workspace remains the filesystem/Git authority and Compute remains
+   * the execution authority.
    */
   ensureProjectConversation(projectId: string): Promise<Conversation> {
     return this.exclusive(async () => {
@@ -911,6 +911,34 @@ export class DesktopRepository {
       }
       await this.felt.transaction(batch => this.stageConversation(batch, conversation))
       return (await this.conversation(id))!
+    })
+  }
+
+  /** Every discussion attached to a Project. The original chat is created lazily for existing Projects. */
+  async projectConversations(projectId: string): Promise<Conversation[]> {
+    if (!(await this.project(projectId))) throw new Error('Project not found')
+    await this.ensureProjectConversation(projectId)
+    return (await this.conversations()).filter(conversation => conversation.projectId === projectId)
+      .sort((a, b) => b.updatedAt - a.updatedAt || a.createdAt - b.createdAt)
+  }
+
+  /** A separate project discussion with the same workspace and current agent roster. */
+  createProjectConversation(projectId: string, name: string): Promise<Conversation> {
+    return this.exclusive(async () => {
+      const project = await this.project(projectId)
+      if (!project) throw new Error('Project not found')
+      const clean = name.trim()
+      if (!clean || clean.length > 80) throw new Error('Chat name must be between 1 and 80 characters.')
+      const now = Date.now()
+      const agentIds = (await this.agentRows.all()).map(agent => agent.id)
+      const topic = newTopic('', now)
+      const conversation: Conversation = {
+        id: `project-${projectId}-${randomUUID()}`, projectId, type: 'group', autoNamed: false, hidden: true,
+        name: clean, description: `Project chat for ${project.name}`, agentIds, leadAgentId: agentIds[0], workspacePath: project.path,
+        topics: [topic], activeTopicId: topic.id, unread: 0, readAt: now, createdAt: now, updatedAt: now
+      }
+      await this.felt.transaction(batch => this.stageConversation(batch, conversation))
+      return (await this.conversation(conversation.id))!
     })
   }
 

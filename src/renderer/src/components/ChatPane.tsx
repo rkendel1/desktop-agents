@@ -388,6 +388,38 @@ export function ChatActivity({
   })}</>
 }
 
+/** Fixed beside the composer so a reply cannot imply background work after its run has actually ended. */
+export function ConversationActivityBar({ activity, agents, sending, onStop }: {
+  activity?: ConversationActivityState
+  agents: AgentConfig[]
+  sending: boolean
+  onStop: () => void
+}): ReactElement {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (!activity) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [activity?.conversationId, activity?.topicId, activity?.startedAt])
+  if (!activity) return <div className={`conversation-activity-bar ${sending ? 'is-starting' : 'is-idle'}`} role="status" aria-live="polite">
+    <span className="conversation-activity-dot" aria-hidden="true" />
+    <strong>{t(sending ? 'Starting agent action…' : 'Idle')}</strong>
+    {!sending && <span>{t('No agent action is running.')}</span>}
+  </div>
+  const names = activity.agentIds.map(id => agents.find(agent => agent.id === id)).filter((agent): agent is AgentConfig => Boolean(agent)).map(agentDisplayName)
+  const owner = names.length ? names.join(', ') : activity.serviceName || t(activity.label)
+  const elapsedSeconds = Math.max(0, Math.floor((now - activity.startedAt) / 1000))
+  const elapsed = `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+  const detail = activityDetailLabel(activity).replace(/\n/g, ' · ')
+  return <div className="conversation-activity-bar is-working" role="status" aria-live="polite">
+    <span className="conversation-activity-dot" aria-hidden="true" />
+    <strong>{tr('{name} is working', { name: owner })}</strong>
+    <span>{detail} · {elapsed}</span>
+    <button type="button" className="conversation-activity-stop" onClick={onStop}><Square size={10} fill="currentColor" /> {t('Stop')}</button>
+  </div>
+}
+
 function deliveryRecipientName(delivery: MessageDelivery): string {
   return delivery.recipientName === 'Dr. Dou' ? t('Dr. Dou') : delivery.recipientName
 }
@@ -1667,6 +1699,7 @@ export function ChatPane({
             <button onClick={onConnect}>{t('Choose agent')}</button>
           </div>
         )}
+        {conversation && <ConversationActivityBar activity={activity} agents={agents} sending={sending} onStop={onStop} />}
         {mention && mentionOptions.length > 0 && (
           <div className="mention-menu" role="listbox" aria-label={t('Mention a member')}>
             <div className="mention-title">{t('Mention a member')}</div>
@@ -1773,11 +1806,6 @@ export function ChatPane({
             </div>
             {emojiOpen && <div className="emoji-picker" aria-label={t('Choose an emoji')}>{['😀', '😂', '🥰', '👍', '🎉', '❤️', '🙏', '🤔'].map((emoji) => <button key={emoji} onClick={() => { setDraft((text) => text + emoji); setEmojiOpen(false); textareaRef.current?.focus() }}>{emoji}</button>)}</div>}
           <div className="composer-send-actions">
-          {working && (
-            <button className="stop-button" onClick={onStop} aria-label={t('Stop the current reply')} title={t('Stop')}>
-              <Square size={13} fill="currentColor" />
-            </button>
-          )}
             {!working && <button
               className="send-button"
               onClick={() => void send()}

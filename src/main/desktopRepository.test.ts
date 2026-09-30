@@ -87,6 +87,22 @@ describe('project conversations', () => {
     expect(after.id).toBe(before.id)
     expect(after.agentIds).toContain(agent.id)
   })
+
+  it('keeps multiple named chats attached to the same project workspace', async () => {
+    const desktop = await createTestDesktop()
+    const agent = await desktop.repository.createAgent(input('Forge'))
+    const project = await desktop.repository.addProject({ path: '/tmp/foundry-project-chats', name: 'Foundry', isGit: true })
+    const original = await desktop.repository.ensureProjectConversation(project.id)
+    const architecture = await desktop.repository.createProjectConversation(project.id, 'Architecture')
+    const release = await desktop.repository.createProjectConversation(project.id, 'Release planning')
+    expect(await desktop.repository.projectConversations(project.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: original.id, projectId: project.id }),
+      expect.objectContaining({ id: architecture.id, name: 'Architecture', projectId: project.id, workspacePath: project.path, agentIds: [agent.id] }),
+      expect.objectContaining({ id: release.id, name: 'Release planning', projectId: project.id })
+    ]))
+    const reopened = await desktop.restart()
+    expect((await reopened.projectConversations(project.id)).map(chat => chat.name)).toEqual(expect.arrayContaining(['Foundry', 'Architecture', 'Release planning']))
+  })
 })
 
 describe('DesktopRepository reactivity', () => {

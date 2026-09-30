@@ -1,12 +1,12 @@
 # The Foundry workbench
 
-**Foundry is the developer workbench where agents build software.** A developer opens a project, continues its durable group conversation,
-starts an agent, approves its work, reads exactly what changed, runs checks, continues the session, commits — and restarts Foundry
+**Foundry is the developer workbench where agents build software.** A developer opens a project, continues one of its durable conversations,
+assigns executable work to an agent, approves it, reads exactly what changed, runs checks, continues the session, commits — and restarts Foundry
 without losing any of it. This page describes that loop and which system is the authority for each part of it. Nothing here is a
 new engine: it is the coding service, the local-agent runtime, the Compute integration, PAX and Git, presented in one place.
 
 ```text
-Open project → see repository reality → start coding → agent works → review activity
+Open project → discuss in Chats → assign work → agent works → review activity
       → review changed files and diff → run checks → continue → commit / inspect Git → repeat
 ```
 
@@ -26,20 +26,19 @@ Git/PAX/Compute answers each time. It stores nothing that could disagree with th
 
 ## The project home
 
-Selecting a project answers four questions at once.
+The project header keeps repository identity and current Git/PAX reality visible. The rest of the page is divided by intent so that discussion, execution and evidence do not compete for the same space.
 
-- **What are we discussing?** One long-lived group conversation belongs to the project. It uses the existing chat/group runtime, points at the project workspace, and retains project/conversation/session/run provenance. It remains distinct from short-lived coding sessions.
-  When no execution environment is attached, this conversation offers **Create Developer Environment**; the same idempotent Compute setup is available in the Environment section.
+- **Chats** contains the project's durable conversations. A project can have multiple named chats for separate topics, all pointing at the same project workspace. Sending a chat message discusses or plans work; it does **not** start an agent process or change files. Use *Turn into work* on a useful reply, or move to **Work**, when the discussion is ready to execute.
+- **Work** shows what is happening now and what happened last, then provides **Assign executable work**. This is the box for a concrete request to inspect or change project files. Work begins only after *Start work* is pressed. The same tab shows the working tree, diffs, staging and commit controls.
+- **Environment** shows where Compute will run the work: recipe and version, Computer, configuration and readiness, plus lifecycle controls. Environment readiness does not itself start work.
+- **Checks** owns command discovery and selection, recent check results and CI. Selecting a command configures future checks; *Run checks* is the explicit execution action.
+- **History** contains durable work-session history and structured decisions, separate from the conversational histories in **Chats**.
 
-- **What am I working on?** Project, repository path, branch, the upstream it tracks and how far ahead/behind it is, the commit, and PAX's tooling line.
-- **What is happening?** The running session, its agent, where it runs, its live activity — and its approval, right there, with *Allow*, *Deny* and *Cancel session*. If nothing is running: **Last time**, the most recent session (status, agent, where it ran, when, result, changed files, checks).
-- **What changed?** The working tree as Git reports it — *Staged*, *Not staged*, *Untracked* — each file's diff (staged and unstaged shown separately), and, for the latest session, whether Git shows the change as arising *during the session* or as *already modified* beforehand.
-- **Where does it run?** The **Environment** section: recipe and version, Computer, configuration and readiness as Compute reports them, with Restart / Stop / Start / Retry / Destroy, and Work (agent, checks, CI).
-- **What next?** *Start coding*, *Continue*, *Review*, *Run checks*, *Stage / Unstage*, *Commit*, and CI.
+The summary above the tabs makes the intended progression explicit: **Chat — plan and decide → Work — assign executable changes → History — review results**. The chat composer always reports whether an agent action is currently running, so an idle chat never looks like invisible background work.
 
 Git is read when the project opens, whenever a session starts, ends or records a check, when the window regains focus, and every few seconds while an agent works. Nothing has to be refreshed by hand (a *Refresh* button exists anyway).
 
-## Start coding: where the agent runs
+## Assign work: where the agent runs
 
 | Choice | What it means |
 | --- | --- |
@@ -47,7 +46,7 @@ Git is read when the project opens, whenever a session starts, ends or records a
 | **This Computer — local fallback** | Explicit legacy fallback. The agent runs on this computer in the project's folder. Foundry never selects it because Compute is unavailable. |
 
 Selecting the Environment is a decision, not a preference. The session runs on the project's Compute environment, and only when Compute reports it ready. If it cannot — Compute not installed or too old, daemon not answering, no environment, environment stopped, failed or not ready —
-the reason is shown, *Start session* stays disabled, and the service itself refuses (`Compute was selected, so nothing was started on this computer`) with no session, no topic and no local process created. Foundry never falls back to running locally. If no
+the reason is shown, *Start work* stays disabled, and the service itself refuses (`Compute was selected, so nothing was started on this computer`) with no session, no topic and no local process created. Foundry never falls back to running locally. If no
 execution target is chosen the workbench requests Compute. Selecting local is explicit; a failed or missing environment never changes targets silently.
 
 ## Agent activity and approvals
