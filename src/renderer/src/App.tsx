@@ -359,7 +359,7 @@ function WorkspaceApp(): ReactElement {
       />
 
       {view === 'projects' ? (
-        <ProjectsView snapshot={uiSnapshot} selection={codingSelection} onSelect={setCodingSelection} />
+        <ProjectsView snapshot={uiSnapshot} selection={codingSelection} onSelect={setCodingSelection} onCreateWork={(draft) => setDialog({ kind: 'turn-into-work', draft })} />
       ) : view === 'contacts' ? (
         <>
           <ContactList

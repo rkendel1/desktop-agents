@@ -74,11 +74,16 @@ function CreateEnvironment({ project, onDone }: { project: Project; onDone: (vie
   const [resolution, setResolution] = useState<RecipeResolutionView | { error: string }>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  useEffect(() => {
+  const [creatingRecipe, setCreatingRecipe] = useState(false)
+  const loadRecipes = useCallback(() => {
     let live = true
-    window.douchat.environmentRecipes().then(list => { if (live) { setRecipes(list); setName(current => current || list[0]?.name || '') } }, cause => { if (live) setRecipes({ error: cleanMessage(cause) }) })
+    setRecipes(undefined)
+    window.douchat.environmentRecipes().then(list => { if (live) { setRecipes(list); setName(current => list.some(recipe => recipe.name === current) ? current : list[0]?.name || '') } }, cause => { if (live) setRecipes({ error: cleanMessage(cause) }) })
     return () => { live = false }
   }, [])
+  useEffect(() => {
+    return loadRecipes()
+  }, [loadRecipes])
   useEffect(() => {
     if (!name) { setResolution(undefined); return }
     let live = true
@@ -90,7 +95,16 @@ function CreateEnvironment({ project, onDone }: { project: Project; onDone: (vie
   return <div className="env-create" aria-label={t('Create developer environment')}>
     <Explained />
     {!recipes ? <p className="muted">{t('Asking Compute…')}</p> : 'error' in recipes ? <p className="coding-error" role="alert">{recipes.error}</p> : !recipes.length
-      ? <p className="muted">{t('Compute has no recipes yet. Recipes are Compute’s: create one there, for example')} <code>compute recipe create developer --file dev.json</code>.</p>
+      ? <div className="env-empty-recipes"><p className="muted">{t('Compute has no registered recipes. The Homebrew package does not seed them automatically.')}</p>
+        <p className="muted">{t('Compute’s source repository includes starter templates: dev, ci, agent-task, preview, staging, production, and migration.')}</p>
+        <p className="muted">{t('Choose Compute’s dev.json starter (or another recipe file) to register it through Compute:')}</p>
+        <pre className="coding-output">compute-configured recipe create developer --file examples/recipes/dev.json{`\n`}compute-configured recipe list</pre>
+        <div className="coding-actions"><button type="button" className="primary-button" disabled={creatingRecipe} onClick={() => {
+          setCreatingRecipe(true); setError('')
+          window.douchat.environmentCreateRecipe('developer').then(list => { if (list) { setRecipes(list); setName(list.find(recipe => recipe.name === 'developer')?.name ?? list[0]?.name ?? '') } }, cause => setError(cleanMessage(cause))).finally(() => setCreatingRecipe(false))
+        }}>{t(creatingRecipe ? 'Creating recipe…' : 'Create development recipe')}</button>
+        <button type="button" className="secondary-button" onClick={loadRecipes}>{t('Refresh recipes')}</button></div>
+      </div>
       : <label>{t('Recipe')}
         <select value={name} onChange={event => setName(event.target.value)}>{recipes.map(recipe => <option key={recipe.name} value={recipe.name}>{recipe.name} · v{recipe.version}{recipe.description ? ` — ${recipe.description}` : ''}</option>)}</select>
       </label>}

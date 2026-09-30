@@ -876,6 +876,44 @@ export class DesktopRepository {
     })
   }
 
+  /**
+   * A Project owns exactly one long-lived group conversation. It is an ordinary
+   * conversation, so routing, delegation, Jev, memory and message persistence
+   * continue to use the existing runtime. Only references are stored here: the
+   * workspace remains the filesystem/Git authority and Compute remains the
+   * execution authority.
+   */
+  ensureProjectConversation(projectId: string): Promise<Conversation> {
+    return this.exclusive(async () => {
+      const project = await this.project(projectId)
+      if (!project) throw new Error('Project not found')
+      const id = `project-${projectId}`
+      const existing = await this.conversation(id)
+      const knownAgentIds = (await this.agentRows.all()).map(agent => agent.id)
+      if (existing) {
+        existing.projectId = projectId
+        existing.name = project.name
+        existing.description = `Project conversation for ${project.name}`
+        existing.workspacePath = project.path
+        existing.hidden = true
+        existing.agentIds = [...new Set([...existing.agentIds.filter(agentId => knownAgentIds.includes(agentId)), ...knownAgentIds])]
+        if (!existing.leadAgentId || !existing.agentIds.includes(existing.leadAgentId)) existing.leadAgentId = existing.agentIds[0]
+        await this.felt.transaction(batch => this.stageConversation(batch, existing))
+        return (await this.conversation(id))!
+      }
+      const now = Date.now()
+      const topic = newTopic('', now)
+      const conversation: Conversation = {
+        id, projectId, type: 'group', autoNamed: false, hidden: true,
+        name: project.name, description: `Project conversation for ${project.name}`,
+        agentIds: knownAgentIds, leadAgentId: knownAgentIds[0], workspacePath: project.path,
+        topics: [topic], activeTopicId: topic.id, unread: 0, readAt: now, createdAt: now, updatedAt: now
+      }
+      await this.felt.transaction(batch => this.stageConversation(batch, conversation))
+      return (await this.conversation(id))!
+    })
+  }
+
   /** Read, change and write one conversation as a single operation. */
   private change<T>(conversationId: string, work: (conversation: Conversation, batch: Batch) => Promise<T> | T, missing: T): Promise<T> {
     return this.exclusive(async () => {
@@ -1145,14 +1183,24 @@ export class DesktopRepository {
   }
 
   addMessage(message: Omit<ChatMessage, 'id' | 'createdAt'> & { id?: string; createdAt?: number }): Promise<ChatMessage> {
-    const result: ChatMessage = {
+    let result: ChatMessage = {
       ...message,
       id: message.id ?? randomUUID(),
       createdAt: message.createdAt ?? Date.now()
     }
     return this.exclusive(() => this.felt.transaction(async batch => {
-      await this.stageMessage(batch, result)
       const session = await batch.get(this.sessions, result.conversationId)
+      const projectId = (session?.meta as { projectId?: unknown } | undefined)?.projectId
+      const activeRun = typeof projectId === 'string' && !result.runId
+        ? (await this.runRows.where({ sessionId: result.conversationId })).filter(run => run.status === 'running').sort((a, b) => b.createdAt - a.createdAt)[0]
+        : undefined
+      if (typeof projectId === 'string') result = {
+        ...result, projectId, sessionId: result.sessionId ?? result.conversationId,
+        ...(activeRun ? { runId: activeRun.id } : {}),
+        ...(result.authorId !== 'user' && result.authorId !== 'system' ? { agentId: result.authorId } : {}),
+        origin: result.origin ?? (result.authorId === 'user' ? 'user' : result.authorId === 'system' ? 'system' : result.sourceChannel ? 'channel' : 'agent')
+      }
+      await this.stageMessage(batch, result)
       if (!session) return result
       await batch.put(this.sessions, { ...session, updatedAt: result.createdAt, revision: (session.revision ?? 0) + 1 })
       const topic = await batch.get(this.topics, `${result.conversationId}/${result.topicId}`)
@@ -1166,6 +1214,14 @@ export class DesktopRepository {
       }
       return result
     }))
+  }
+
+  async attachMessageRun(messageId: string, runId: string): Promise<void> {
+    await this.exclusive(async () => {
+      const record = await this.messageRows.get(messageId)
+      if (!record) return
+      await this.messageRows.put({ ...record, metadata: { ...(record.metadata ?? {}), runId } })
+    })
   }
 
   /** Replace a message the runtime is still streaming into; the transcript stays durable while a turn runs. */
@@ -1477,7 +1533,9 @@ export class DesktopRepository {
         ...(input.testCommand ? { testCommand: input.testCommand } : {}) }
       if (!input.testCommand) delete record.testCommand
       await this.workspaces.put(record)
-      return projectFromRecord(record)
+      const project = projectFromRecord(record)
+      await this.ensureProjectConversation(project.id)
+      return project
     })
   }
 

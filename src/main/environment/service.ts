@@ -109,6 +109,15 @@ export class EnvironmentService {
       ...(recipe.spec.description ? { description: recipe.spec.description } : {}), ...(recipe.author ? { author: recipe.author } : {}) }))
   }
 
+  /** Ask Compute to register a recipe file. No recipe bytes or lifecycle state are persisted by Foundry. */
+  async createRecipe(name: string, file: string): Promise<RecipeSummary[]> {
+    const clean = name.trim()
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(clean)) throw new EnvironmentError('invalid', 'Recipe name must use lowercase letters, numbers, dots, dashes, or underscores.')
+    await this.requireContract()
+    try { await this.compute.createRecipe(clean, file) } catch (error) { throw new EnvironmentError('compute', message(error)) }
+    return this.recipes()
+  }
+
   /** What Compute says a recipe would do, and whether any target can host it. */
   async resolve(recipe: string, version?: number): Promise<RecipeResolutionView> {
     await this.requireContract()

@@ -59,6 +59,36 @@ describe('DesktopRepository transactions', () => {
   })
 })
 
+describe('project conversations', () => {
+  it('creates one durable project-scoped group with workspace and message provenance', async () => {
+    const desktop = await createTestDesktop()
+    const firstAgent = await desktop.repository.createAgent(input('Forge'))
+    const project = await desktop.repository.addProject({ path: '/tmp/foundry-project-conversation', name: 'Foundry', isGit: true })
+    const conversation = await desktop.repository.ensureProjectConversation(project.id)
+    expect(conversation).toMatchObject({ id: `project-${project.id}`, projectId: project.id, type: 'group', workspacePath: project.path, hidden: true, agentIds: [firstAgent.id] })
+    const same = await desktop.repository.ensureProjectConversation(project.id)
+    expect(same.id).toBe(conversation.id)
+    const message = await desktop.repository.addMessage({ conversationId: conversation.id, topicId: conversation.activeTopicId, authorId: 'user', authorName: 'You', text: 'Make Projects the workbench.', kind: 'message' })
+    expect(message).toMatchObject({ projectId: project.id, sessionId: conversation.id, origin: 'user' })
+    const agentMessage = await desktop.repository.addMessage({ conversationId: conversation.id, topicId: conversation.activeTopicId, authorId: firstAgent.id, authorName: firstAgent.name, text: 'Ready', kind: 'message' })
+    expect(agentMessage).toMatchObject({ projectId: project.id, sessionId: conversation.id, agentId: firstAgent.id, origin: 'agent' })
+
+    const reopened = await desktop.restart()
+    expect(await reopened.ensureProjectConversation(project.id)).toMatchObject({ id: conversation.id, projectId: project.id, workspacePath: project.path })
+    expect((await reopened.messages()).find(item => item.id === message.id)).toMatchObject({ projectId: project.id, sessionId: conversation.id, origin: 'user' })
+  })
+
+  it('adds newly created agents without replacing the project conversation', async () => {
+    const { repository } = await createTestDesktop()
+    const project = await repository.addProject({ path: '/tmp/foundry-project-members', name: 'Foundry', isGit: false })
+    const before = await repository.ensureProjectConversation(project.id)
+    const agent = await repository.createAgent(input('Atlas'))
+    const after = await repository.ensureProjectConversation(project.id)
+    expect(after.id).toBe(before.id)
+    expect(after.agentIds).toContain(agent.id)
+  })
+})
+
 describe('DesktopRepository reactivity', () => {
   it('announces every record a single operation changes, across collections', async () => {
     const { repository } = await createTestDesktop()

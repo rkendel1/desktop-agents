@@ -1,6 +1,6 @@
 # The Foundry workbench
 
-**Foundry is the developer workbench where agents build software.** A developer opens a project, sees what state it is really in,
+**Foundry is the developer workbench where agents build software.** A developer opens a project, continues its durable group conversation,
 starts an agent, approves its work, reads exactly what changed, runs checks, continues the session, commits — and restarts Foundry
 without losing any of it. This page describes that loop and which system is the authority for each part of it. Nothing here is a
 new engine: it is the coding service, the local-agent runtime, the Compute integration, PAX and Git, presented in one place.
@@ -16,7 +16,8 @@ Open project → see repository reality → start coding → agent works → rev
 | --- | --- | --- |
 | **Git / filesystem** | source, branches, commits, the index (staged state), the working tree, diffs, ahead/behind | Reads it every time it is shown. Runs the developer's own `git add`, `git restore --staged` and `git commit` and shows what Git then says. Keeps no source-control state of its own. |
 | **PAX** | package manager, lockfile interpretation, workspace detection, drift, native operation selection | Asks (`pax info`, `pax drift`) and shows PAX's words. Ambiguity stays ambiguous and drift is never repaired. PAX is read-only and optional: if it is not installed the workbench says so and carries on. |
-| **FeltDB** | projects, coding sessions, activity/evidence, approvals' outcomes, checks, CI runs | One shared `desktop.flow`. Sessions hold references and bounded evidence, never source. |
+| **FeltDB** | projects, project conversations/messages, coding sessions, activity/evidence, approvals' outcomes, checks, CI runs | One shared `desktop.flow`. Conversations and sessions hold references and bounded evidence, never source. |
+| **Compute** | recipes, environments, Computers, runtime, execution and lifecycle | Foundry stores only the project’s environment reference and asks Compute for current reality. |
 | **OS processes** | nothing durable | The agent and check processes are ephemeral; a session that was running when Foundry closed becomes `interrupted`. |
 | **Foundry** | the workflow: sessions, agent interaction, approvals, activity presentation, check orchestration, history | `CodingService` — used identically by the desktop and by AppPort. |
 
@@ -26,6 +27,8 @@ Git/PAX/Compute answers each time. It stores nothing that could disagree with th
 ## The project home
 
 Selecting a project answers four questions at once.
+
+- **What are we discussing?** One long-lived group conversation belongs to the project. It uses the existing chat/group runtime, points at the project workspace, and retains project/conversation/session/run provenance. It remains distinct from short-lived coding sessions.
 
 - **What am I working on?** Project, repository path, branch, the upstream it tracks and how far ahead/behind it is, the commit, and PAX's tooling line.
 - **What is happening?** The running session, its agent, where it runs, its live activity — and its approval, right there, with *Allow*, *Deny* and *Cancel session*. If nothing is running: **Last time**, the most recent session (status, agent, where it ran, when, result, changed files, checks).
@@ -39,12 +42,12 @@ Git is read when the project opens, whenever a session starts, ends or records a
 
 | Choice | What it means |
 | --- | --- |
-| **This Computer** (the default) | Local execution. The agent runs on this computer in the project's folder. No network, account, Compute or hosted service is needed for anything in the local loop. |
-| **Environment** | The project's development environment on Compute (see [environments.md](environments.md)). The agent runs on the project's environment (a Compute Computer that Compute has verified ready), on a checkout of the *committed* revision ([environments.md](environments.md), [compute-integration.md](compute-integration.md)). |
+| **Compute environment** (the default) | The project's development environment on Compute. The agent runs only after Compute reports its Computer ready, on a checkout of the *committed* revision. |
+| **This Computer — local fallback** | Explicit legacy fallback. The agent runs on this computer in the project's folder. Foundry never selects it because Compute is unavailable. |
 
 Selecting the Environment is a decision, not a preference. The session runs on the project's Compute environment, and only when Compute reports it ready. If it cannot — Compute not installed or too old, daemon not answering, no environment, environment stopped, failed or not ready —
 the reason is shown, *Start session* stays disabled, and the service itself refuses (`Compute was selected, so nothing was started on this computer`) with no session, no topic and no local process created. Foundry never falls back to running locally. If no
-execution target is chosen the existing default (local) applies.
+execution target is chosen the workbench requests Compute. Selecting local is explicit; a failed or missing environment never changes targets silently.
 
 ## Agent activity and approvals
 
@@ -78,7 +81,7 @@ The desktop and AppPort call the same `CodingService`. `douchat.projects.gitstat
 
 ## Offline
 
-The local loop — open projects, read Git, run local agents (with a provider or a local CLI that itself works offline), approve, review diffs, run checks, continue, stage and commit, read history — needs no network, Compute, GitHub, account or hosted service. PAX, Compute and CI are optional and each says so plainly when absent.
+The explicitly selected local fallback can work offline. Compute remains the normal coding target and its absence is reported rather than hidden.
 
 ## Known baseline
 

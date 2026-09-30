@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { TestKit, waitUntil, type Booted } from '../coding/testkit'
 import type { DevelopmentEnvironmentView } from '../../shared/types'
 import { ComputeMain, FixtureCompute, type ComputeBackend } from './testkit'
@@ -49,6 +51,18 @@ for (const { label, enabled, make } of backends) {
       const recipes = await service.recipes()
       expect(recipes.map(recipe => recipe.name)).toEqual(expect.arrayContaining(['developer', 'needs-terminal']))
       expect(recipes.find(recipe => recipe.name === 'developer')).toMatchObject({ version: 1, digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/), lifecycle: 'persistent' })
+    })
+
+    it('registers a recipe file through Compute instead of storing a Foundry recipe', async () => {
+      const booted = await kit.boot()
+      const project = await booted.desktop.repository.addProject({ path: kit.repository(), name: 'Recipe import', isGit: true })
+      const service = new EnvironmentService(booted.desktop.repository, backend.client, options)
+      const file = join(kit.temporary('recipe-file-'), 'dev.json')
+      writeFileSync(file, JSON.stringify({ description: 'Imported development recipe', lifecycle: 'persistent', requirements: {} }))
+      const recipes = await service.createRecipe('imported-developer', file)
+      expect(recipes).toContainEqual(expect.objectContaining({ name: 'imported-developer', version: 1, lifecycle: 'persistent' }))
+      expect((await backend.client.recipes()).map(recipe => recipe.name)).toContain('imported-developer')
+      expect(await booted.desktop.repository.developmentEnvironment(project.id)).toBeUndefined()
     })
 
     it('resolves a recipe in Compute: requirements, placement, and satisfiable', async () => {

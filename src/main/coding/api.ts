@@ -69,6 +69,12 @@ export class CodingApi {
     return projectView(await this.requireProject(id))
   }
 
+  async projectConversation(id: string): Promise<{ id: string; projectId: string; workspace: string; agentIds: string[]; activeTopicId: string }> {
+    await this.requireProject(id)
+    const conversation = await this.repository.ensureProjectConversation(id)
+    return { id: conversation.id, projectId: id, workspace: conversation.workspacePath!, agentIds: conversation.agentIds, activeTopicId: conversation.activeTopicId }
+  }
+
   async addProject(path: string, name?: string): Promise<ProjectView> {
     if (typeof path !== 'string' || !path.trim()) throw new CodingApiError('invalid', 'A project needs a folder path.')
     try { return projectView(await this.coding.addProject(path, name)) } catch (error) { throw new CodingApiError('invalid', error instanceof Error ? error.message : String(error)) }

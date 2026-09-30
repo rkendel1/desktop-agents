@@ -304,6 +304,12 @@ export class ComputeClient {
     return this.json<ComputeRecipe[]>(['recipe', 'list', '--json', ...this.daemonArgs()], { timeoutMs: 30_000 })
   }
 
+  /** Register a recipe through Compute's real CLI contract. The file remains an input to Compute; Foundry does not store or interpret it. */
+  async createRecipe(name: string, file: string): Promise<void> {
+    const result = await this.cli(['recipe', 'create', name, '--file', realpathSync(file), ...this.daemonArgs()], { timeoutMs: 60_000 })
+    if (result.exitCode !== 0) throw this.failure(['recipe', 'create', name], result)
+  }
+
   /** Compute's resolution of a recipe: read-only, nothing is acquired. `unsatisfied` and `invalid` are answers, not failures. */
   async resolveRecipe(name: string, version?: number): Promise<ComputeRecipeResolution> {
     const args = ['recipe', 'resolve', name, ...(version !== undefined ? ['--version', String(version)] : []), '--json', ...this.daemonArgs()]

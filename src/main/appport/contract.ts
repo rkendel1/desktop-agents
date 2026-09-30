@@ -135,6 +135,8 @@ export function codingCapabilities(api: CodingApi, remote?: RemoteLookup): AnyCa
       input: s.empty(), output: s.object({ projects: s.array(project) }), handler: () => mapped(async () => ({ projects: await api.listProjects() })) }),
     defineCapability({ name: 'douchat.projects.get', version: 1, description: 'One project.', effect: 'observation', authorization: [PERMISSIONS.projectsRead],
       input: idInput, output: project, handler: input => mapped(() => api.getProject(input.id)) }),
+    defineCapability({ name: 'douchat.projects.conversation', version: 1, description: 'The durable group conversation owned by a project. It uses Foundry’s existing conversation runtime and points at the project workspace; source code is not copied into application state.', effect: 'observation', authorization: [PERMISSIONS.projectsRead],
+      input: idInput, output: s.object({ id: s.string(), projectId: s.string(), workspace: s.string(), agentIds: s.array(s.string()), activeTopicId: s.string() }), handler: input => mapped(() => api.projectConversation(input.id)) }),
     defineCapability({ name: 'douchat.projects.gitstate', version: 1, description: 'The project’s branch, commit and changed files, read from Git now.', effect: 'observation', authorization: [PERMISSIONS.projectsRead],
       input: idInput, output: gitState, handler: input => mapped(() => api.gitState(input.id)) }),
     ...(remote ? [defineCapability({ name: 'douchat.projects.remote', version: 1, description: 'The project’s remote repository: its origin URL from Git, and its metadata from the @appport/github capability.', effect: 'observation', authorization: [PERMISSIONS.projectsRead],

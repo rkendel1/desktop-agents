@@ -44,7 +44,7 @@ const freePort = (): Promise<number> => new Promise(resolve => { const server = 
 export class FixtureCompute implements ComputeBackend {
   readonly name = 'fixture' as const
   readonly home = mkdtempSync(join(tmpdir(), 'foundry-fixture-'))
-  readonly script = join(this.home, 'compute')
+  readonly script = join(this.home, 'compute.cjs')
   readonly state = join(this.home, 'state.json')
   readonly client: ComputeClient
   private readonly env: NodeJS.ProcessEnv

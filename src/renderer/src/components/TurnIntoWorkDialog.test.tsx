@@ -32,9 +32,8 @@ it('lets the user edit the handoff and choose the project, agent, and execution 
   })
   const selects = node.querySelectorAll('select')
   expect((selects[1] as HTMLSelectElement).value).toBe('a2')
+  expect((selects[2] as HTMLSelectElement).value).toBe('compute')
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(selects[2], 'compute')
-    selects[2].dispatchEvent(new Event('change', { bubbles: true }))
     node.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   })
   expect(window.douchat.startCodingSession).toHaveBeenCalledWith({ projectId: 'p1', agentId: 'a2', task: 'Build and test it.', execution: { kind: 'compute' } })

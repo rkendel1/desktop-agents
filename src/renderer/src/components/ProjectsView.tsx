@@ -1,7 +1,7 @@
 import { FolderGit2, Plus, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
-import type { AppSnapshot, DevelopmentEnvironmentView, GitState, Project, ProjectCommandOption } from '../../../shared/types'
+import type { AppSnapshot, Conversation, DevelopmentEnvironmentView, GitState, Project, ProjectCommandOption } from '../../../shared/types'
 import type { StoredJevEvaluation } from '../../../shared/jev'
 import { t, tr } from '../preferences'
 import { CiPanel } from './CiPanel'
@@ -9,6 +9,8 @@ import { EnvironmentPanel, EnvironmentStatus, type WorkRow } from './Environment
 import { ApprovalCard, CodingSessionPanel } from './CodingSessionPanel'
 import { BranchLine, GitPanel, ToolingLine } from './GitPanel'
 import { SidebarResizer } from './common'
+import { ChatPane } from './ChatPane'
+import type { WorkDraft } from './TurnIntoWorkDialog'
 
 export interface ProjectSelection { projectId?: string; sessionId?: string }
 
@@ -20,7 +22,44 @@ const seconds = (ms: number): string => `${(ms / 1000).toFixed(ms < 10_000 ? 1 :
  * what changed (Git, and what the last session changed), and what to do next (start, continue, review, check, commit).
  * Everything is read from Foundry's service, FeltDB and Git each time; nothing is kept here.
  */
-function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; snapshot: AppSnapshot; onOpenSession: (id: string) => void }): ReactElement {
+function ProjectConversation({ project, snapshot, onCreateWork }: { project: Project; snapshot: AppSnapshot; onCreateWork: (draft: WorkDraft) => void }): ReactElement {
+  const projected = (snapshot.conversations ?? []).find(item => item.projectId === project.id)
+  const [created, setCreated] = useState<Conversation>()
+  const [error, setError] = useState('')
+  const conversation = projected ?? created
+  useEffect(() => {
+    let live = true
+    setCreated(undefined)
+    setError('')
+    if (typeof window.douchat.projectConversation !== 'function') return () => { live = false }
+    window.douchat.projectConversation(project.id).then(value => { if (live) setCreated(value) }, cause => {
+      if (live) setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause))
+    })
+    return () => { live = false }
+  }, [project.id])
+  if (error) return <section className="coding-section project-conversation"><h3>{t('Conversation')}</h3><p className="coding-error" role="alert">{error}</p></section>
+  if (!conversation) return <section className="coding-section project-conversation"><h3>{t('Conversation')}</h3><p className="muted">{t('Opening project conversation…')}</p></section>
+  const topic = conversation.topics.find(item => item.id === conversation.activeTopicId) ?? conversation.topics[0]
+  const messages = (snapshot.messages ?? []).filter(message => message.conversationId === conversation.id && (!topic || message.topicId === topic.id))
+  const members = conversation.agentIds.map(id => snapshot.agents.find(agent => agent.id === id)).filter((agent): agent is NonNullable<typeof agent> => Boolean(agent))
+  const activity = (snapshot.activity ?? []).find(item => item.conversationId === conversation.id && item.topicId === topic?.id)
+  return <section className="coding-section project-conversation" aria-label={t('Project conversation')}>
+    <div className="project-conversation-heading"><div><h3>{t('Conversation')}</h3><p className="muted">{t('Discuss, decide, and delegate work in this project. This history stays with the project.')}</p></div>
+      <span className="muted">{tr('{count} agents', { count: members.length })}</span></div>
+    <div className="project-chat-stage"><ChatPane
+      key={`${conversation.id}:${topic?.id}`} userName={snapshot.userName} userAvatar={snapshot.userAvatar}
+      conversation={conversation} topic={topic} messages={messages} allMessages={snapshot.messages ?? []}
+      agents={snapshot.agents} members={members} activity={activity}
+      offline={snapshot.runtime.mode === 'offline' && !members.some(agent => agent.localAgentId)}
+      onConnect={() => undefined} inspectorOpen={false} onToggleInspector={() => undefined}
+      onOpenAgentProfile={() => undefined} onOpenUserProfile={() => undefined} onCreateWork={onCreateWork}
+      onSend={(text, images, files, mentions) => window.douchat.sendMessage(conversation.id, text, images, files, mentions)}
+      onStop={() => { void window.douchat.stopConversation(conversation.id) }} />
+    </div>
+  </section>
+}
+
+function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { project: Project; snapshot: AppSnapshot; onOpenSession: (id: string) => void; onCreateWork?: (draft: WorkDraft) => void }): ReactElement {
   const [git, setGit] = useState<GitState | { error: string }>()
   const [agentId, setAgentId] = useState('')
   const [task, setTask] = useState('')
@@ -28,7 +67,7 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
   const [commandChoice, setCommandChoice] = useState('')
   const [commandOptions, setCommandOptions] = useState<ProjectCommandOption[]>()
   const [commandDiscoveryError, setCommandDiscoveryError] = useState('')
-  const [execution, setExecution] = useState<'local' | 'compute'>('local')
+  const [execution, setExecution] = useState<'local' | 'compute'>('compute')
   const [environment, setEnvironment] = useState<DevelopmentEnvironmentView>()
   const [evaluations, setEvaluations] = useState<StoredJevEvaluation[]>([])
   const [busy, setBusy] = useState(false)
@@ -114,6 +153,8 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
       <ToolingLine project={project} refreshKey={signature} />
     </header>
 
+    <ProjectConversation project={project} snapshot={snapshot} onCreateWork={onCreateWork ?? (() => undefined)} />
+
     <EnvironmentPanel project={project} work={workRows} />
 
     <section className="coding-section" aria-label={t('Now')}>
@@ -155,8 +196,8 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
         </label>
         <label>{t('Execution')}
           <select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}>
-            <option value="local">{t('This Computer')}</option>
-            <option value="compute">{t('Environment')}</option>
+            <option value="compute">{t('Compute environment (recommended)')}</option>
+            <option value="local">{t('This Computer — local fallback')}</option>
           </select>
         </label>
         <p className="muted coding-note">{execution === 'local' ? t('Local execution: the agent runs on this computer, in this folder. No network or Compute is needed.') : t('Environment: the agent runs on this project’s Compute environment, on a checkout of the committed revision, once Compute reports it ready. If it is not ready, nothing starts here instead.')}</p>
@@ -237,7 +278,7 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
 }
 
 /** The Projects surface: folders agents work in, and the coding sessions run there. Everything shown comes from the snapshot or from Git. */
-export function ProjectsView({ snapshot, selection, onSelect }: { snapshot: AppSnapshot; selection: ProjectSelection; onSelect: (selection: ProjectSelection) => void }): ReactElement {
+export function ProjectsView({ snapshot, selection, onSelect, onCreateWork }: { snapshot: AppSnapshot; selection: ProjectSelection; onSelect: (selection: ProjectSelection) => void; onCreateWork?: (draft: WorkDraft) => void }): ReactElement {
   const projects = snapshot.projects ?? []
   const sessions = snapshot.codingSessions ?? []
   const [error, setError] = useState('')
@@ -279,7 +320,7 @@ export function ProjectsView({ snapshot, selection, onSelect }: { snapshot: AppS
     <main className="workspace coding-workspace">
       {session ? <CodingSessionPanel session={session} project={project} messages={(snapshot.messages ?? []).filter(message => message.conversationId === session.conversationId && message.topicId === session.topicId)} agent={snapshot.agents.find(agent => agent.id === session.agentId)}
           activity={snapshot.codingActivity?.find(activity => activity.sessionId === session.id)} />
-        : project ? <ProjectPanel project={project} snapshot={snapshot} onOpenSession={id => onSelect({ projectId: project.id, sessionId: id })} />
+        : project ? <ProjectPanel project={project} snapshot={snapshot} onCreateWork={onCreateWork} onOpenSession={id => onSelect({ projectId: project.id, sessionId: id })} />
           : <div className="contact-empty-copy"><h2>{t('Projects')}</h2><p className="muted">{t('Choose a project, or add a local repository.')}</p>
             <button className="primary-button" onClick={() => void add()}>{t('Add project')}</button></div>}
     </main>

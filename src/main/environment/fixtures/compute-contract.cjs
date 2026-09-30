@@ -30,7 +30,7 @@ let args = process.argv.slice(2)
 const flag = name => { const index = args.indexOf(name); if (index < 0) return undefined; const value = args[index + 1]; args.splice(index, 2); return value }
 const bool = name => { const index = args.indexOf(name); if (index < 0) return false; args.splice(index, 1); return true }
 const dash = args.indexOf('--'); const tail = dash >= 0 ? args.splice(dash).slice(1) : []
-const daemon = flag('--daemon') ?? 'http://127.0.0.1:8787'; const json = bool('--json'); const recipeFlag = flag('--recipe'); const versionFlag = args[0] === 'recipe' ? flag('--version') : undefined
+const daemon = flag('--daemon') ?? 'http://127.0.0.1:8787'; const json = bool('--json'); const recipeFlag = flag('--recipe'); const fileFlag = flag('--file'); const versionFlag = args[0] === 'recipe' ? flag('--version') : undefined
 const state = load()
 const probe = args[0] === '--version' || args.includes('--help')   // read-only probes leave the state file alone
 if (!probe) state.calls.push(args.join(' '))
@@ -118,6 +118,13 @@ if (a === 'node' && b === 'info') {
 }
 
 if (a === 'recipe' && b === 'list') { persist(Object.values(state.recipes).map(({ satisfiable, ...recipe }) => recipe)); process.exit(0) }
+if (a === 'recipe' && b === 'create') {
+  const name = args[2]
+  if (!fileFlag || !fs.existsSync(fileFlag)) fail('runtime error: recipe file not found')
+  const spec = JSON.parse(fs.readFileSync(fileFlag, 'utf8')); const existing = state.recipes[name]; const version = (existing?.version ?? 0) + 1
+  state.recipes[name] = { name, version, status: 'current', digest: digest(spec), spec, author: 'development', created_at: now(), satisfiable: spec.__unsatisfiable ? false : true }
+  persist(); process.exit(0)
+}
 if (a === 'recipe' && b === 'resolve') {
   const recipe = state.recipes[args[2]]
   if (!recipe) { save(state); fail(`runtime error: not found: recipe ${args[2]}`) }

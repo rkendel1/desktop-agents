@@ -23,6 +23,7 @@ beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   api = { environmentState: vi.fn(async () => view()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => [{ name: 'developer', version: 3, digest: 'sha256:x', lifecycle: 'persistent', description: 'A dev computer' }]),
+    environmentCreateRecipe: vi.fn(async () => [{ name: 'developer', version: 1, digest: 'sha256:dev', lifecycle: 'persistent' }]),
     environmentResolve: vi.fn(async () => satisfiable), environmentCreate: vi.fn(async () => view({ state: 'creating', readiness: 'created', configuration: 'not_started', actions: ['destroy'] })), environmentAct: vi.fn() }
   ;(window as unknown as { douchat: unknown }).douchat = api
   node = document.createElement('div'); document.body.append(node); root = createRoot(node)
@@ -122,6 +123,20 @@ it('creates an environment from a recipe Compute resolved: Recipe, Computer, Env
   await click('Create environment')
   expect(api.environmentCreate).toHaveBeenCalledWith({ projectId: 'p1', recipe: 'developer', version: 3 })
   expect(node.querySelector('[role=status]')!.textContent).toBe('Creating')
+})
+
+it('creates a starter recipe through the Compute boundary without pretending it is installed', async () => {
+  api.environmentState.mockResolvedValue(view({ state: 'none', reference: undefined, recipe: undefined, computer: undefined, readiness: undefined, configuration: undefined, lifecycle: undefined, actions: ['create'] }))
+  api.environmentRecipes.mockResolvedValueOnce([])
+  await render()
+  await click('Create developer environment')
+  expect(text()).toContain('Homebrew package does not seed them automatically')
+  expect(text()).toContain('dev, ci, agent-task, preview, staging, production, and migration')
+  expect(text()).toContain('compute-configured recipe create developer --file examples/recipes/dev.json')
+  expect(text()).not.toContain('compute recipe create developer --file dev.json')
+  await click('Create development recipe')
+  expect(api.environmentCreateRecipe).toHaveBeenCalledWith('developer')
+  expect(node.querySelector<HTMLSelectElement>('.env-create select')?.value).toBe('developer')
 })
 
 it('does not offer to create from a recipe Compute says cannot be satisfied here, and shows why per target', async () => {

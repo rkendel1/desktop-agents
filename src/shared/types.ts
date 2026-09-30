@@ -93,6 +93,8 @@ export interface Conversation {
   avatar?: string
   avatarEmoji?: string
   id: string
+  /** Present only for the durable conversation owned by a Project. The Project record remains the authority for the workspace. */
+  projectId?: string
   type: 'group' | 'direct'
   name: string
   description?: string
@@ -225,6 +227,12 @@ export interface ChatMessage {
   localization?: import('./groupText').GroupNotice
   deliveryState?: 'sending' | 'confirming' | 'failed'
   id: string
+  /** Durable provenance for messages in a project conversation. */
+  projectId?: string
+  sessionId?: string
+  runId?: string
+  agentId?: string
+  origin?: 'user' | 'agent' | 'system' | 'channel'
   conversationId: string
   topicId: string
   authorId: 'user' | 'system' | string
@@ -638,6 +646,8 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   listJevEvaluations: (projectId?: string) => Promise<import('./jev').StoredJevEvaluation[]>
   /** Opens a folder picker; resolves with the project, or undefined if cancelled. */
   chooseProject: () => Promise<Project | undefined>
+  /** Returns the one durable group conversation associated with this project, creating it if necessary. */
+  projectConversation: (projectId: string) => Promise<Conversation>
   removeProject: (id: string) => Promise<boolean>
   projectGitStatus: (id: string, sessionId?: string) => Promise<GitState>
   projectGitDiff: (id: string, path?: string, sessionId?: string, mode?: GitDiffMode) => Promise<{ diff: string; truncated: boolean }>
@@ -658,6 +668,8 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   environmentState: (projectId: string) => Promise<DevelopmentEnvironmentView>
   environmentDetail: (projectId: string) => Promise<DevelopmentEnvironmentDetail>
   environmentRecipes: () => Promise<RecipeSummary[]>
+  /** Opens a trusted main-process file picker and asks Compute to register that recipe file. */
+  environmentCreateRecipe: (name: string) => Promise<RecipeSummary[] | undefined>
   environmentResolve: (recipe: string, version?: number) => Promise<RecipeResolutionView>
   environmentCreate: (input: { projectId: string; recipe: string; version?: number }) => Promise<DevelopmentEnvironmentView>
   /** Destroy asks the owner to confirm in the main process. The answer is Compute's confirmation, not the request. */

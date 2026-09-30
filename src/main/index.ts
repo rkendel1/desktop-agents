@@ -1097,6 +1097,10 @@ app.whenReady().then(async () => {
     if (result.canceled || !result.filePaths[0]) return undefined
     return coding.addProject(result.filePaths[0])
   })
+  ipcMain.handle('douchat:project-conversation', (event, projectId: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof projectId !== 'string') throw new Error('Unauthorized')
+    return store.ensureProjectConversation(projectId)
+  })
   ipcMain.handle('douchat:remove-project', (event, id: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
     return store.removeProject(id)
@@ -1148,6 +1152,19 @@ app.whenReady().then(async () => {
   ipcMain.handle('douchat:environment-state', (event, projectId: unknown) => { environmentGuard(event, projectId); return environments.view(projectId as string) })
   ipcMain.handle('douchat:environment-detail', (event, projectId: unknown) => { environmentGuard(event, projectId); return environments.detail(projectId as string) })
   ipcMain.handle('douchat:environment-recipes', event => { environmentGuard(event); return environments.recipes() })
+  ipcMain.handle('douchat:environment-create-recipe', async (event, name: unknown) => {
+    environmentGuard(event, name)
+    if (typeof name !== 'string') throw new Error('Unauthorized')
+    if (process.platform === 'darwin') app.focus({ steal: true })
+    BrowserWindow.fromWebContents(event.sender)?.focus()
+    const result = await dialog.showOpenDialog({
+      title: ui('Choose a Compute recipe JSON file', 'Choose a Compute recipe JSON file'),
+      buttonLabel: ui('Create recipe', 'Create recipe'), properties: ['openFile'],
+      filters: [{ name: 'Compute recipe', extensions: ['json'] }]
+    })
+    if (result.canceled || !result.filePaths[0]) return undefined
+    return environments.createRecipe(name, result.filePaths[0])
+  })
   ipcMain.handle('douchat:environment-resolve', (event, recipe: unknown, version?: unknown) => {
     environmentGuard(event, recipe, version)
     if (typeof recipe !== 'string' || (version !== undefined && typeof version !== 'number')) throw new Error('Unauthorized')

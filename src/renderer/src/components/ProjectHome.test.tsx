@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { AgentConfig, AppSnapshot, CodingActivity, CodingSession, DevelopmentEnvironmentView, GitState, Project } from '../../../shared/types'
+import type { AgentConfig, AppSnapshot, CodingActivity, CodingSession, Conversation, DevelopmentEnvironmentView, GitState, Project } from '../../../shared/types'
 import type { PermissionRequest } from '../../../shared/agentPermissions'
 import { ProjectsView } from './ProjectsView'
 
@@ -55,6 +55,17 @@ it('answers what am I working on: project, repository, branch, upstream distance
   await render(snapshot())
   const head = node.querySelector('header')!.textContent!
   expect(head).toContain('Fixture'); expect(head).toContain('/work/fixture'); expect(head).toContain('main'); expect(head).toContain('origin/main ↑2 ↓1'); expect(head).toContain('abc123ab'); expect(head).toContain('4 changed files')
+})
+
+it('renders the project’s own durable group conversation and history', async () => {
+  const conversation: Conversation = { id: 'project-p1', projectId: 'p1', type: 'group', name: 'Fixture', agentIds: ['a1'], leadAgentId: 'a1', workspacePath: project.path,
+    topics: [{ id: 'topic', title: 'AppPort', createdAt: 1, updatedAt: 1 }], activeTopicId: 'topic', unread: 0, readAt: 1, createdAt: 1, updatedAt: 1 }
+  await render(snapshot({ conversations: [conversation], activity: [], runtime: { mode: 'live', label: 'Connected' }, userName: 'Randy', userAvatar: '',
+    messages: [{ id: 'm1', projectId: 'p1', sessionId: conversation.id, runId: 'run-1', origin: 'agent', conversationId: conversation.id, topicId: 'topic', authorId: 'a1', authorName: 'Coder', text: 'The project context is loaded.', kind: 'message', createdAt: 2 }] }))
+  const projectChat = node.querySelector('[aria-label="Project conversation"]')!
+  expect(projectChat.textContent).toContain('Discuss, decide, and delegate work in this project')
+  expect(projectChat.textContent).toContain('The project context is loaded.')
+  expect(projectChat.querySelector('textarea')).not.toBeNull()
 })
 
 it('shows inspectable Jev decisions, rules, evidence, uncertainty and provenance on the project', async () => {
@@ -129,12 +140,12 @@ it('lists recent checks with argv, exit status, duration and time, and runs chec
   expect(api.runCodingChecks).toHaveBeenCalledWith('s1')
 })
 
-it('makes local the honest default and refuses to fake Compute: with Compute unavailable, starting on the environment is impossible', async () => {
+it('makes Compute the default, labels local as fallback, and refuses to fake Compute when it is unavailable', async () => {
   await render(snapshot())
-  expect(node.textContent).toContain('Local execution: the agent runs on this computer')
+  expect(node.textContent).toContain('If it is not ready, nothing starts here instead')
   const select = [...node.querySelectorAll('select')].find(item => item.closest('label')?.textContent?.startsWith('Execution')) as HTMLSelectElement
-  expect([...select.options].map(option => option.textContent)).toEqual(['This Computer', 'Environment'])
-  await act(async () => { select.value = 'compute'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  expect(select.value).toBe('compute')
+  expect([...select.options].map(option => option.textContent)).toEqual(['Compute environment (recommended)', 'This Computer — local fallback'])
   expect(node.textContent).toContain('If it is not ready, nothing starts here instead')
   expect(node.textContent).toContain('Start it with `compute start`')
   const start = [...node.querySelectorAll('button')].find(item => item.textContent === 'Start session') as HTMLButtonElement

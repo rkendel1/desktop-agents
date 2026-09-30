@@ -23,7 +23,7 @@ export function TurnIntoWorkDialog({ draft, projects, agents, onClose, onAddProj
   const [projectId, setProjectId] = useState(initialProject?.id ?? '')
   const [agentId, setAgentId] = useState(agents.some(agent => agent.id === draft.preferredAgentId) ? draft.preferredAgentId! : agents[0]?.id ?? '')
   const [task, setTask] = useState(draft.task)
-  const [execution, setExecution] = useState<'local' | 'compute'>('local')
+  const [execution, setExecution] = useState<'local' | 'compute'>('compute')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const submit = async (event: FormEvent): Promise<void> => {
@@ -51,7 +51,7 @@ export function TurnIntoWorkDialog({ draft, projects, agents, onClose, onAddProj
           <label><span>{t('Project')}</span><select autoFocus value={projectId} onChange={event => setProjectId(event.target.value)}>{projects.map(project => <option key={project.id} value={project.id}>{project.name} — {project.path}</option>)}</select></label>
           <label><span>{t('Agent')}</span><select value={agentId} onChange={event => setAgentId(event.target.value)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
         </div>
-        <label className="field-row"><span>{t('Execution')}</span><select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}><option value="local">{t('This Computer')}</option><option value="compute">{t('Environment')}</option></select></label>
+        <label className="field-row"><span>{t('Execution')}</span><select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}><option value="compute">{t('Compute environment (recommended)')}</option><option value="local">{t('This Computer — local fallback')}</option></select></label>
         <label className="field-row"><span>{t('Work instructions')}</span><textarea rows={12} value={task} onChange={event => setTask(event.target.value)} /></label>
         <p className="settings-note">{t('Review the instructions before starting. The agent will work in the selected project and the session will appear under Projects.')}</p>
         <div className="modal-footer"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('Cancel')}</button><button className="primary-button" disabled={busy || !projectId || !agentId || !task.trim()}>{t(busy ? 'Starting…' : 'Start work')}</button></div>
