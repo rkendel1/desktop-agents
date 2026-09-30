@@ -142,6 +142,9 @@ describe('project tooling is PAX’s to say', () => {
     const info = await booted.coding.paxProject(project.id, 'info')
     expect(info.exitCode).toBe(0)
     expect((info.json as { manager: { name: string } }).manager.name).toBe('npm')
+    expect(await booted.coding.discoverProjectCommands(project.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: 'test', command: ['npm', 'run', 'test'] })
+    ]))
     writeFileSync(join(path, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n')
     const drift = await booted.coding.paxProject(project.id, 'drift')
     expect(drift.findings.ambiguous).toBe(true)
@@ -153,6 +156,7 @@ describe('project tooling is PAX’s to say', () => {
     const booted = await kit.boot(undefined, { pax: '/nonexistent/pax' })
     const project = await booted.coding.addProject(kit.repository())
     await expect(booted.coding.paxProject(project.id, 'info')).rejects.toThrow('PAX is not installed, so project tooling is not shown.')
+    await expect(booted.coding.discoverProjectCommands(project.id)).rejects.toThrow('PAX is not installed, so project commands cannot be discovered.')
   })
 })
 

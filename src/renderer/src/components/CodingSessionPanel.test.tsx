@@ -38,6 +38,7 @@ beforeEach(() => {
       platform: { platform: 'linux-x86_64', status: 'certified', label: 'Linux x86_64 — Certified', evidence: 'compute-configured-verify' },
       environments: [{ name: 'stopped-one', environmentId: 'e0', observed: 'stopped' }, { name: 'workbench', environmentId: 'e1', observed: 'running' }] })), projectGitStatus: vi.fn(async () => ({ branch: 'main', changes: [] })), projectGitDiff: vi.fn(async () => ({ diff: '', truncated: false })),
     startCodingSession: vi.fn(async () => session({ status: 'running' })), chooseProject: vi.fn(async () => project), setProjectTestCommand: vi.fn(async () => project),
+    discoverProjectCommands: vi.fn(async () => [{ operation: 'lint', command: ['npm', 'run', 'lint'], tool: 'npm' }, { operation: 'test', command: ['npm', 'test'], tool: 'npm' }]),
     listJevEvaluations: vi.fn(async () => [])
   }
   ;(window as unknown as { douchat: unknown }).douchat = api
@@ -231,15 +232,25 @@ it('adds a project through the folder picker and starts a session with the chose
   expect(select).toHaveBeenLastCalledWith({ projectId: 'p1', sessionId: 's1' })
 })
 
-it('proposes a check command as text; the main process confirms and stores it', async () => {
+it('discovers project check commands for selection and keeps a custom command option', async () => {
   await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={vi.fn()} />)
-  const input = node.querySelector<HTMLInputElement>('input[aria-label="Check command"]')!
+  await vi.waitFor(() => expect(api.discoverProjectCommands).toHaveBeenCalledWith('p1'))
+  const select = node.querySelector<HTMLSelectElement>('select[aria-label="Check command"]')!
+  expect([...select.options].map(option => option.textContent)).toEqual(expect.arrayContaining(['lint — npm run lint', 'test — npm test', 'Custom command…']))
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'npm run lint')
+    select.value = '0'; select.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  await click('Use command')
+  expect(api.setProjectTestCommand).toHaveBeenCalledWith('p1', 'npm run lint')
+
+  await act(async () => { select.value = 'custom'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  const input = node.querySelector<HTMLInputElement>('input[aria-label="Custom check command"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'node verify.mjs')
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
-  await click('Set…')
-  expect(api.setProjectTestCommand).toHaveBeenCalledWith('p1', 'npm run lint')
+  await click('Use command')
+  expect(api.setProjectTestCommand).toHaveBeenLastCalledWith('p1', 'node verify.mjs')
 })
 
 it('shows the session panel when a session is selected', async () => {

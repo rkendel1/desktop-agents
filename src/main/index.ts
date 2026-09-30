@@ -1114,6 +1114,10 @@ app.whenReady().then(async () => {
     if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (command !== 'info' && command !== 'drift')) throw new Error('Unauthorized')
     return coding.paxProject(id, command)
   })
+  ipcMain.handle('douchat:discover-project-commands', (event, id: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof id !== 'string') throw new Error('Unauthorized')
+    return coding.discoverProjectCommands(id)
+  })
   // The developer's own Git actions. Git stays the authority; the service refuses them while a session runs in the project.
   const isPaths = (value: unknown): value is string[] => Array.isArray(value) && value.length > 0 && value.length <= 5000 && value.every(item => typeof item === 'string' && item.length > 0 && !item.includes('\0'))
   ipcMain.handle('douchat:project-git-stage', (event, id: unknown, paths: unknown) => {

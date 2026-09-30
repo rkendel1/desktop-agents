@@ -5442,6 +5442,9 @@ html[data-platform='win32'] .messenger .app-rail {
 .messenger .turn-work-modal textarea { min-height: 220px; font-family: inherit; }
 .messenger .turn-work-modal .modal-footer { justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .messenger .turn-work-empty { display: grid; justify-items: start; gap: 14px; color: var(--muted); }
+.messenger .coding-check-command { display: grid; gap: 8px; }
+.messenger .coding-check-command .coding-inline select { flex: 1; min-width: 0; }
+.messenger .coding-check-command > input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); color: var(--ink); font: inherit; }
 @keyframes typing-activity-text-in {
   from { opacity: .35; }
   to { opacity: 1; }

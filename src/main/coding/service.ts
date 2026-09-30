@@ -1,10 +1,10 @@
 import type { PermissionEvent } from '../agentPermissions'
-import type { CodingActivity, CodingEvent, CodingSession, CommandResult, ExecutionTarget, GitDiffMode, GitState, Project } from '../../shared/types'
+import type { CodingActivity, CodingEvent, CodingSession, CommandResult, ExecutionTarget, GitDiffMode, GitState, Project, ProjectCommandOption } from '../../shared/types'
 import type { LocalLauncher } from '../../shared/agentExecutor'
 import { ComputeClient } from '../compute/client'
 import { EnvironmentRefusal, type Admission, type EnvironmentService } from '../environment/service'
 import { computeLauncher, ComputeInterruption } from '../compute/launcher'
-import { runPax, type PaxInspection, type PaxOperation, type PaxRun } from '../compute/pax'
+import { PAX_OPERATIONS, runPax, type PaxInspection, type PaxOperation, type PaxRun } from '../compute/pax'
 import { describeApproval, formatCommandLine } from '../../shared/coding'
 import type { CodingNotification } from '../../shared/codingApi'
 import type { DesktopRepository } from '../desktopRepository'
@@ -178,6 +178,32 @@ export class CodingService {
     try { return await runPax((argv, o) => runCommand(argv, { cwd: directory, signal: o.signal, timeoutMs: 30_000 }), this.paxPath, command) }
     catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' || /ENOENT|not found|spawn/i.test(error instanceof Error ? error.message : '')) throw new Error('PAX is not installed, so project tooling is not shown.')
+      throw error
+    }
+  }
+
+  /** Ask PAX which native verification commands this project supports. Dry-run plans are discovery only; nothing executes. */
+  async discoverProjectCommands(projectId: string): Promise<ProjectCommandOption[]> {
+    const { directory } = await this.requireProject(projectId)
+    try {
+      const runs = await Promise.all(PAX_OPERATIONS.map(operation => runPax(
+        (argv, options) => runCommand(argv, { cwd: directory, signal: options.signal, timeoutMs: 30_000 }),
+        this.paxPath,
+        operation,
+        { dryRun: true }
+      )))
+      return runs.flatMap((run): ProjectCommandOption[] => {
+        const plan = run.json as { command?: unknown; tool?: unknown; evidence?: unknown; supported?: unknown } | undefined
+        if (run.exitCode !== 0 || plan?.supported === false || !Array.isArray(plan?.command) || !plan.command.length || !plan.command.every(part => typeof part === 'string')) return []
+        return [{
+          operation: run.command as ProjectCommandOption['operation'],
+          command: plan.command as string[],
+          ...(typeof plan.tool === 'string' ? { tool: plan.tool } : {}),
+          ...(Array.isArray(plan.evidence) && plan.evidence.every(item => typeof item === 'string') ? { evidence: plan.evidence as string[] } : {})
+        }]
+      })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT' || /ENOENT|not found|spawn/i.test(error instanceof Error ? error.message : '')) throw new Error('PAX is not installed, so project commands cannot be discovered.')
       throw error
     }
   }

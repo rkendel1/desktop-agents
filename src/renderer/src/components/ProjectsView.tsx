@@ -1,7 +1,7 @@
 import { FolderGit2, Plus, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
-import type { AppSnapshot, DevelopmentEnvironmentView, GitState, Project } from '../../../shared/types'
+import type { AppSnapshot, DevelopmentEnvironmentView, GitState, Project, ProjectCommandOption } from '../../../shared/types'
 import type { StoredJevEvaluation } from '../../../shared/jev'
 import { t, tr } from '../preferences'
 import { CiPanel } from './CiPanel'
@@ -25,6 +25,9 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
   const [agentId, setAgentId] = useState('')
   const [task, setTask] = useState('')
   const [command, setCommand] = useState('')
+  const [commandChoice, setCommandChoice] = useState('')
+  const [commandOptions, setCommandOptions] = useState<ProjectCommandOption[]>()
+  const [commandDiscoveryError, setCommandDiscoveryError] = useState('')
   const [execution, setExecution] = useState<'local' | 'compute'>('local')
   const [environment, setEnvironment] = useState<DevelopmentEnvironmentView>()
   const [evaluations, setEvaluations] = useState<StoredJevEvaluation[]>([])
@@ -59,6 +62,28 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
     window.douchat.environmentState(project.id).then(value => { if (live) setEnvironment(value) }, () => { if (live) setEnvironment(undefined) })
     return () => { live = false }
   }, [execution, project.id])
+  useEffect(() => {
+    let live = true
+    const saved = project.testCommand ? formatCommandLine(project.testCommand) : ''
+    setCommand(saved); setCommandChoice(''); setCommandOptions(undefined); setCommandDiscoveryError('')
+    window.douchat.discoverProjectCommands(project.id).then(options => {
+      if (!live) return
+      setCommandOptions(options)
+      const matched = options.findIndex(option => formatCommandLine(option.command) === saved)
+      if (matched >= 0) setCommandChoice(String(matched))
+      else if (saved) setCommandChoice('custom')
+      else {
+        const recommended = Math.max(0, options.findIndex(option => option.operation === 'test'))
+        if (options[recommended]) { setCommandChoice(String(recommended)); setCommand(formatCommandLine(options[recommended].command)) }
+        else setCommandChoice('custom')
+      }
+    }, cause => {
+      if (!live) return
+      setCommandOptions([]); setCommandChoice('custom')
+      setCommandDiscoveryError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause))
+    })
+    return () => { live = false }
+  }, [project.id, project.testCommand])
   useEffect(() => {
     let live = true
     const refresh = (): void => {
@@ -152,10 +177,25 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
     <section className="coding-section" aria-label={t('Check command')}>
       <h3>{t('Checks')}</h3>
       <p className="muted">{project.testCommand ? <code>{formatCommandLine(project.testCommand)}</code> : t('None. Set the command that “Run checks” should run in this project, for example npm test.')}</p>
-      <form className="coding-inline" onSubmit={event => { event.preventDefault(); void guard(async () => { await window.douchat.setProjectTestCommand(project.id, command); setCommand('') }) }}>
-        <input value={command} onChange={event => setCommand(event.target.value)} placeholder="npm test" aria-label={t('Check command')} />
-        <button className="secondary-button" type="submit" disabled={busy}>{t('Set…')}</button>
+      <form className="coding-check-command" onSubmit={event => { event.preventDefault(); void guard(async () => { await window.douchat.setProjectTestCommand(project.id, command) }) }}>
+        <div className="coding-inline">
+          <select value={commandChoice} disabled={commandOptions === undefined} aria-label={t('Check command')} onChange={event => {
+            const choice = event.target.value
+            setCommandChoice(choice)
+            if (choice === 'none') setCommand('')
+            else if (choice !== 'custom') setCommand(formatCommandLine(commandOptions?.[Number(choice)]?.command ?? []))
+          }}>
+            {commandOptions === undefined && <option value="">{t('Discovering project commands…')}</option>}
+            {commandOptions?.map((option, index) => <option key={`${option.operation}:${formatCommandLine(option.command)}`} value={String(index)}>{t(option.operation)} — {formatCommandLine(option.command)}</option>)}
+            <option value="custom">{t('Custom command…')}</option>
+            <option value="none">{t('No check command')}</option>
+          </select>
+          <button className="secondary-button" type="submit" disabled={busy || commandOptions === undefined}>{t('Use command')}</button>
+        </div>
+        {commandChoice === 'custom' && <input value={command} onChange={event => setCommand(event.target.value)} placeholder="npm test" aria-label={t('Custom check command')} />}
       </form>
+      {commandDiscoveryError && <p className="muted coding-note">{t(commandDiscoveryError)} {t('You can still enter a custom command.')}</p>}
+      {commandOptions?.length === 0 && !commandDiscoveryError && <p className="muted coding-note">{t('No project check commands were discovered. You can still enter a custom command.')}</p>}
       {project.testCommand && latest && !running && <button className="primary-button" disabled={busy} onClick={() => void guard(async () => { await window.douchat.runCodingChecks(latest.id) })}>{t('Run checks')}</button>}
       {project.testCommand && !latest && <p className="muted">{t('Checks are recorded in a coding session; start one to run them.')}</p>}
       {!!recentChecks.length && <ul className="coding-checks">{recentChecks.map(({ result, session }) => <li key={`${session.id}-${result.startedAt}`} className="coding-check">

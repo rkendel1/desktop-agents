@@ -130,6 +130,7 @@ const api: DouchatApi = {
   projectGitStatus: (id, sessionId) => ipcRenderer.invoke('douchat:project-git-status', id, sessionId),
   projectGitDiff: (id, path, sessionId, mode) => ipcRenderer.invoke('douchat:project-git-diff', id, path, sessionId, mode),
   projectPax: (id, command) => ipcRenderer.invoke('douchat:project-pax', id, command),
+  discoverProjectCommands: id => ipcRenderer.invoke('douchat:discover-project-commands', id),
   projectGitStage: (id, paths) => ipcRenderer.invoke('douchat:project-git-stage', id, paths),
   projectGitUnstage: (id, paths) => ipcRenderer.invoke('douchat:project-git-unstage', id, paths),
   projectGitCommit: (id, message) => ipcRenderer.invoke('douchat:project-git-commit', id, message),

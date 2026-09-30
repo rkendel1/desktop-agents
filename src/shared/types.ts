@@ -642,6 +642,7 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   projectGitStatus: (id: string, sessionId?: string) => Promise<GitState>
   projectGitDiff: (id: string, path?: string, sessionId?: string, mode?: GitDiffMode) => Promise<{ diff: string; truncated: boolean }>
   projectPax: (id: string, command: 'info' | 'drift') => Promise<PaxAnswer>
+  discoverProjectCommands: (id: string) => Promise<ProjectCommandOption[]>
   projectGitStage: (id: string, paths: string[]) => Promise<GitState>
   projectGitUnstage: (id: string, paths: string[]) => Promise<GitState>
   projectGitCommit: (id: string, message: string) => Promise<{ state: GitState; commit: string; summary: string }>
@@ -686,6 +687,14 @@ export interface Project {
   testCommand?: string[]
   createdAt: number
   updatedAt: number
+}
+
+/** A project-native verification command discovered by PAX without executing it. */
+export interface ProjectCommandOption {
+  operation: 'build' | 'test' | 'lint' | 'typecheck'
+  command: string[]
+  tool?: string
+  evidence?: string[]
 }
 
 /** One path's state in `git status --porcelain`. No file contents are ever stored. */

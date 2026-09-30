@@ -36,7 +36,7 @@ beforeEach(() => {
     projectPax: vi.fn(async (_id: string, command: string) => command === 'info'
       ? { command, exitCode: 0, json: { manager: { name: 'npm', selectedBy: 'lockfile precedence' } }, stdout: '', stderr: '', findings: { ambiguous: false, drift: false, failedClosed: false } }
       : { command, exitCode: 2, json: { issues: [{ status: 'ambiguous', expected: 'one JavaScript package-manager authority', actual: 'pnpm-lock.yaml, package-lock.json' }] }, stdout: '', stderr: '', findings: { ambiguous: true, drift: false, failedClosed: false } }),
-    openComputeUi: vi.fn(async () => undefined), environmentState: vi.fn(async () => unavailable()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => []), environmentResolve: vi.fn(), environmentCreate: vi.fn(), environmentAct: vi.fn(), setProjectTestCommand: vi.fn(async () => project), chooseProject: vi.fn(),
+    openComputeUi: vi.fn(async () => undefined), environmentState: vi.fn(async () => unavailable()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => []), environmentResolve: vi.fn(), environmentCreate: vi.fn(), environmentAct: vi.fn(), setProjectTestCommand: vi.fn(async () => project), discoverProjectCommands: vi.fn(async () => [{ operation: 'test', command: ['npm', 'test'] }]), chooseProject: vi.fn(),
     ciPlan: vi.fn(async () => ({ projectId: 'p1', projectName: 'Fixture', ready: false, blockers: ['x'], computer: { lifecycle: 'ephemeral' } })), startCi: vi.fn(), cancelCi: vi.fn(),
     listJevEvaluations: vi.fn(async () => [])
   }
