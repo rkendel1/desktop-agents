@@ -111,6 +111,11 @@ describe('settings panel', () => {
     expect(container.textContent).toContain('They do not appear under Models → Add provider')
   })
 
+  it('exposes the shared About me memory in the settings navigation', async () => {
+    await renderGeneral()
+    expect(container.querySelector('#memory-tab')?.textContent).toBe('About me')
+  })
+
   it('defers dialog focus until after mount and restores the opener on dismissal', async () => {
     vi.useFakeTimers()
     const opener = document.createElement('button')

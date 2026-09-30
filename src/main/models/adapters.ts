@@ -40,11 +40,30 @@ const headers = (record: CustomProviderRecord): Record<string, string> => custom
 
 interface CatalogEntry {
   id?: unknown; name?: unknown; pricing?: unknown; context_length?: unknown; supported_parameters?: unknown
+  capabilities?: unknown; thinking?: unknown
   architecture?: { input_modalities?: unknown; output_modalities?: unknown }
   top_provider?: { context_length?: unknown; max_completion_tokens?: unknown }
 }
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 const positive = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+const ollamaBase = (record: CustomProviderRecord): string => record.apiBase.trim().replace(/\/+$/, '') || 'http://127.0.0.1:11434'
+
+// Older Ollama versions omit capabilities from /api/show. Keep their chat models usable, while failing closed for the well-known
+// embedding-only model families instead of sending them to /api/chat. Current Ollama versions are decided from capabilities below.
+const looksLikeEmbeddingModel = (id: string): boolean => /(?:^|[/:_-])(?:embed(?:ding)?|embeddinggemma|all[-_]?minilm|bge(?:[-_]|$)|e5(?:[-_]|$)|gte(?:[-_]|$))|nomic-embed|mxbai-embed|snowflake-arctic-embed/i.test(id)
+
+async function mapConcurrent<T, U>(items: readonly T[], limit: number, run: (item: T) => Promise<U>): Promise<U[]> {
+  const results = new Array<U>(items.length)
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const index = next++
+      if (index >= items.length) return
+      results[index] = await run(items[index]!)
+    }
+  }))
+  return results
+}
 
 /** What the catalog entry says the model can do. Coding is inferred (no catalog states it): tool use, reasoning, or a coder’s name. */
 function catalogCapabilities(entry: CatalogEntry, record: CustomProviderRecord, id: string): ModelCapabilities {
@@ -90,16 +109,53 @@ export function customProviderAdapter(record: CustomProviderRecord, deps: Adapte
           catalog = Array.isArray(list) ? list as Record<string, unknown>[] : []
         }
       }
-      for (const raw of (catalog ?? []).slice(0, MAX_DISCOVERED)) {
+      const catalogEntries = (catalog ?? []).slice(0, MAX_DISCOVERED)
+      const rawById = new Map<string, Record<string, unknown>>()
+      for (const raw of catalogEntries) {
         const id = typeof raw.id === 'string' ? raw.id : typeof raw.model === 'string' ? raw.model : typeof raw.name === 'string' ? raw.name : ''
-        if (!id) continue
+        if (id) rawById.set(id, raw)
+      }
+
+      // /api/tags intentionally has no reliable chat-vs-embedding signal. Ollama exposes it through /api/show instead.
+      // Inspect configured models too, otherwise an explicit stale embedding entry would be added back below.
+      const ollamaDetails = new Map<string, CatalogEntry>()
+      if (record.kind === 'ollama') {
+        const ids = [...new Set([...rawById.keys(), ...record.models])].slice(0, MAX_DISCOVERED)
+        const inspected = await mapConcurrent(ids, 8, async id => {
+          const tagged = rawById.get(id) as CatalogEntry | undefined
+          if (tagged && strings(tagged.capabilities).length) return [id, tagged] as const // forward-compatible if /api/tags gains this field
+          try {
+            const response = await doFetch(`${ollamaBase(record)}/api/show`, { method: 'POST', headers: { ...headers(record), 'content-type': 'application/json' }, body: JSON.stringify({ model: id, verbose: false }), redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000) })
+            if (!response.ok) return [id, tagged ?? {}] as const
+            return [id, await response.json() as CatalogEntry] as const
+          } catch (error) {
+            if (signal?.aborted) throw error
+            return [id, tagged ?? {}] as const
+          }
+        })
+        for (const [id, detail] of inspected) ollamaDetails.set(id, detail)
+      }
+
+      for (const [id, raw] of rawById) {
         const outputs = strings((raw as CatalogEntry).architecture?.output_modalities)
         if (outputs.length && !outputs.includes('text')) continue   // not a chat model
-        found.set(id, record.kind === 'ollama' ? { ...build(id, undefined, undefined) } : build(id, raw as CatalogEntry, record.pricing?.[id]))
+        if (record.kind === 'ollama') {
+          const detail = ollamaDetails.get(id)
+          const capabilities = strings(detail?.capabilities)
+          if ((capabilities.length && !capabilities.includes('completion')) || (!capabilities.length && looksLikeEmbeddingModel(id))) continue
+          const candidate = build(id, undefined, undefined)
+          const toolUse = capabilities.includes('tools')
+          const reasoning = capabilities.includes('thinking') || Boolean(detail?.thinking) || Boolean(record.reasoningModels?.includes(id))
+          found.set(id, { ...candidate, capabilities: { ...candidate.capabilities, toolUse, reasoning, vision: capabilities.includes('vision'),
+            structuredOutput: false, coding: toolUse || reasoning || /cod(?:e|er|ing)|devstral|codestral/i.test(id) } })
+        } else found.set(id, build(id, raw as CatalogEntry, record.pricing?.[id]))
       }
       // The person’s explicit entries are always in the pool — they are how a provider without a catalog is used.
       for (const model of record.models) {
         const existing = found.get(model)
+        const ollamaCapabilities = strings(ollamaDetails.get(model)?.capabilities)
+        const rejectedOllama = record.kind === 'ollama' && ((ollamaCapabilities.length > 0 && !ollamaCapabilities.includes('completion')) || (!ollamaCapabilities.length && looksLikeEmbeddingModel(model)))
+        if (rejectedOllama) continue
         if (!existing) found.set(model, build(model, undefined, record.pricing?.[model]))
         else if (existing.access === 'unknown' && record.pricing?.[model]) found.set(model, build(model, undefined, record.pricing[model]))
       }
@@ -117,7 +173,10 @@ export function customProviderAdapter(record: CustomProviderRecord, deps: Adapte
 
     classifyError(error: unknown): ClassifiedError | undefined {
       // A local model that is still loading answers with a 5xx-ish “loading”; that is transient.
-      return record.kind === 'ollama' && /loading|not ready|starting/i.test(String((error as Error)?.message)) ? { retry: 'capacity-unavailable' } : undefined
+      if (record.kind !== 'ollama') return undefined
+      const message = String((error as Error)?.message)
+      if (/does not support (?:chat|completion)/i.test(message)) return { retry: 'temporary-provider-error' }
+      return /loading|not ready|starting/i.test(message) ? { retry: 'capacity-unavailable' } : undefined
     }
   }
 }

@@ -84,7 +84,7 @@ function parseTokenResponse(value: TokenResponse): { accessToken: string; refres
   if (typeof value.access_token !== 'string' || typeof value.refresh_token !== 'string' || typeof value.id_token !== 'string') throw new Error('OpenAI did not return complete credentials.')
   const expiresIn = typeof value.expires_in === 'number' && value.expires_in > 0 ? value.expires_in : 3600
   const scopes = typeof value.scope === 'string' ? value.scope.split(/\s+/).filter(Boolean) : []
-  if (!scopes.includes('chatgpt.tokens.use.direct')) throw new Error('ChatGPT plan access was not granted for Foundry.')
+  if (!scopes.includes('chatgpt.tokens.use.direct')) throw new OpenAIAuthError('plan_access_unavailable', 'ChatGPT granted basic profile access, but this workspace or plan did not allow Foundry to use models. Choose an eligible personal Plus or Pro workspace, or add OpenAI with an API key. ChatGPT history and memory are not transferred.', 403)
   return { accessToken: value.access_token, refreshToken: value.refresh_token, idToken: value.id_token, expiresIn, scopes }
 }
 
@@ -97,7 +97,7 @@ async function tokenFailure(response: Response): Promise<OpenAIAuthError> {
   } catch { /* OAuth servers may return an empty or non-JSON error body. */ }
   if (code === 'invalid_grant') return new OpenAIAuthError(code, 'ChatGPT did not accept the one-time authorization code. Select Continue with ChatGPT again to finish connecting.', response.status)
   if (code === 'invalid_client') return new OpenAIAuthError(code, 'ChatGPT rejected the saved app registration. Select Continue with ChatGPT again to create a fresh connection.', response.status)
-  if (code === 'access_denied') return new OpenAIAuthError(code, 'ChatGPT plan access was not granted. Select Continue with ChatGPT and approve plan usage.', response.status)
+  if (code === 'access_denied') return new OpenAIAuthError(code, 'This ChatGPT workspace or plan did not allow Foundry to use models. A basic-profile connection is not enough. Choose an eligible personal Plus or Pro workspace, or add OpenAI with an API key.', response.status)
   return new OpenAIAuthError(code, `OpenAI token exchange failed (HTTP ${response.status}, ${code}).`, response.status)
 }
 
@@ -116,7 +116,11 @@ export async function authorizeOpenAI(openExternal: (url: string) => Promise<unk
     await openExternal(url.toString())
     const result = await callback
     if (result.searchParams.get('state') !== state) throw new Error('OpenAI sign-in state validation failed.')
-    if (result.searchParams.get('error')) throw new Error(result.searchParams.get('error_description') || 'OpenAI sign-in was denied.')
+    if (result.searchParams.get('error')) {
+      const code = result.searchParams.get('error')!
+      if (code === 'access_denied') throw new OpenAIAuthError(code, 'This ChatGPT workspace or plan did not allow Foundry to use models. A basic-profile connection is not enough. Choose an eligible personal Plus or Pro workspace, or add OpenAI with an API key.', 403)
+      throw new OpenAIAuthError(code, result.searchParams.get('error_description') || 'OpenAI sign-in was denied.')
+    }
     const code = result.searchParams.get('code')
     const returnedClientId = result.searchParams.get('client_id')
     const issued = returnedClientId ?? clientId

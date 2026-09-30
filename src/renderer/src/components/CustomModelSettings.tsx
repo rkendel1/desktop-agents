@@ -35,6 +35,13 @@ export function CustomModelSettings() {
     setDraft(p ? { ...p, preset: presets.find(x => x.apiBase === p.apiBase)?.id ?? 'custom', apiKey: '' }
       : { ...preset, preset: preset.id, id: preset.id, apiKey: '', hasKey: false, modelLabels: {} })
   }
+  function useOpenAIKey() {
+    const existing = config.providers.find(provider => provider.id === 'openai' && provider.authentication !== 'chatgpt-oauth')
+    if (existing) { edit(existing); return }
+    const preset = presets.find(provider => provider.id === 'openai')!
+    generation.current++; setError(''); setResult(null); setAuthMode('apikey'); setAuthorized(false)
+    setDraft({ ...preset, preset: preset.id, apiKey: '', hasKey: false, modelLabels: {} })
+  }
   function close() { generation.current++; authRequest.current++; void window.douchat.cancelTokenDanceAuthorization(); setAuthorizing(false); setDraft(null) }
   function useDetectedOllama() {
     if (!detectedOllama) return
@@ -89,11 +96,11 @@ export function CustomModelSettings() {
     {loading ? <p role="status">{t("Loading model settings…")}</p> : <>
       <section className="provider-auth-card" aria-label="OpenAI connection">
         <div className="provider-auth-heading"><span className="provider-auth-icon"><ShieldCheck size={19} /></span><div className="provider-auth-copy"><strong>OpenAI</strong>
-          {openAIProvider?.authentication === 'chatgpt-oauth' ? <><p className="settings-note">{t('Connected')}</p><p className="settings-note">{t('Account: ')}{openAIProvider.account}</p><p className="settings-note">{t('Authentication: Sign in with ChatGPT')}</p><p className="settings-note">{t('Uses eligible ChatGPT plan access. Foundry context is separate from ChatGPT history and memory.')}</p></> : <><p className="settings-note">{t('Not connected')}</p><p className="settings-note">{t('Sign in with ChatGPT uses eligible plan access. OpenAI API keys use separate API billing.')}</p></>}
+          {openAIProvider?.authentication === 'chatgpt-oauth' ? <><p className="settings-note">{t('Connected')}</p><p className="settings-note">{t('Account: ')}{openAIProvider.account}</p><p className="settings-note">{t('Authentication: Sign in with ChatGPT')}</p><p className="settings-note">{t('Uses eligible ChatGPT plan access. Foundry context is separate from ChatGPT history and memory.')}</p></> : <><p className="settings-note">{t('Not connected')}</p><p className="settings-note">{t('ChatGPT sign-in can power replies only when the selected workspace grants plan usage. A basic-profile connection shown in ChatGPT is not a model connection.')}</p><p className="settings-note">{t('ChatGPT history and memory are never imported. Add personal facts under Settings → About me; Foundry supplies them to your private agent chats.')}</p></>}
         </div></div>
         <div className="provider-auth-actions">{openAIProvider?.authentication === 'chatgpt-oauth'
           ? <><button type="button" className="secondary-button" disabled={busy || authorizing} onClick={() => void connectOpenAI()}>{t('Reconnect')}</button><button type="button" className="secondary-button danger" disabled={busy || authorizing} onClick={() => void disconnectOpenAI()}>{t('Disconnect')}</button></>
-          : <><button type="button" className="primary-button" disabled={busy || authorizing} onClick={() => void connectOpenAI()}>{authorizing ? t('Waiting for browser authorization…') : t('Continue with ChatGPT')}</button>{authorizing && <button type="button" className="secondary-button" onClick={() => void window.douchat.cancelOpenAIConnection()}>{t('Cancel')}</button>}</>}
+          : <><button type="button" className="primary-button" disabled={busy || authorizing} onClick={() => void connectOpenAI()}>{authorizing ? t('Waiting for browser authorization…') : t('Continue with ChatGPT')}</button><button type="button" className="secondary-button" disabled={busy || authorizing} onClick={useOpenAIKey}>{t('Use OpenAI API key')}</button>{authorizing && <button type="button" className="secondary-button" onClick={() => void window.douchat.cancelOpenAIConnection()}>{t('Cancel')}</button>}</>}
         </div>
       </section>
       {config.providers.length > 0 && <div className="field-row custom-default-model">

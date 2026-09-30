@@ -49,6 +49,29 @@ describe('official OpenAI connection', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('explains that an identity-only connection cannot power model replies', async () => {
+    const request = vi.fn(async () => Response.json({ access_token: 'access', refresh_token: 'refresh', id_token: 'identity', expires_in: 3600, scope: 'openid profile email' })) as unknown as typeof fetch
+    let finish!: (url: URL) => void
+    const listen = async () => ({ server: { close: vi.fn() }, redirectUri: 'http://127.0.0.1:1455/auth/callback', callback: new Promise<URL>(resolve => { finish = resolve }) })
+    await expect(authorizeOpenAI(async value => {
+      const auth = new URL(value), callback = new URL(auth.searchParams.get('redirect_uri')!)
+      callback.searchParams.set('code', 'code'); callback.searchParams.set('state', auth.searchParams.get('state')!); callback.searchParams.set('client_id', 'oaiapp_foundry')
+      finish(callback)
+    }, new AbortController().signal, { request, listen })).rejects.toThrow(/basic profile access.*API key.*memory are not transferred/i)
+  })
+
+  it('turns a denied plan-usage callback into an actionable error without exchanging a code', async () => {
+    const request = vi.fn() as unknown as typeof fetch
+    let finish!: (url: URL) => void
+    const listen = async () => ({ server: { close: vi.fn() }, redirectUri: 'http://127.0.0.1:1455/auth/callback', callback: new Promise<URL>(resolve => { finish = resolve }) })
+    await expect(authorizeOpenAI(async value => {
+      const auth = new URL(value), callback = new URL(auth.searchParams.get('redirect_uri')!)
+      callback.searchParams.set('error', 'access_denied'); callback.searchParams.set('state', auth.searchParams.get('state')!)
+      finish(callback)
+    }, new AbortController().signal, { request, listen })).rejects.toThrow(/workspace or plan.*basic-profile connection.*API key/i)
+    expect(request).not.toHaveBeenCalled()
+  })
+
   it('checkpoints a new registration before a failed one-time code exchange', async () => {
     const events: string[] = []
     const request = vi.fn(async () => {

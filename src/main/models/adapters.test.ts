@@ -72,11 +72,22 @@ describe('discovery from a provider’s own catalog', () => {
     await expect(customProviderAdapter(record(broken), { stream: () => { throw new Error('unused') } }).discover()).rejects.toThrow(/HTTP 502/)
   })
   it('takes only Ollama’s own service as local — not its cloud models, and not a loopback address, which may be a gateway to a paid provider', async () => {
-    const base = await serve((request, response) => { response.writeHead(200); response.end(JSON.stringify(request.url === '/api/tags' ? { models: [{ name: 'llama-x' }, { model: 'qwen-y' }, { name: 'big:cloud' }] } : {})) })
-    const ollama = record(base, { kind: 'ollama', apiKey: '', models: [] })
+    const base = await serve((request, response, body) => {
+      response.writeHead(200)
+      if (request.url === '/api/tags') { response.end(JSON.stringify({ models: [{ name: 'llama-x' }, { model: 'qwen-y' }, { name: 'nomic-embed-text:latest' }, { name: 'big:cloud' }] })); return }
+      const model = JSON.parse(body).model as string
+      response.end(JSON.stringify({ capabilities: model === 'nomic-embed-text:latest' ? ['embedding'] : model === 'qwen-y' ? ['completion', 'tools'] : ['completion'] }))
+    })
+    const ollama = record(base, { kind: 'ollama', apiKey: '', models: ['nomic-embed-text:latest'] })
     expect(runsLocally(ollama, 'llama-x')).toBe(true); expect(runsLocally(ollama, 'big:cloud')).toBe(false); expect(runsLocally(record('http://localhost:1234'), 'anything')).toBe(false)
     const found = await customProviderAdapter(ollama, { stream: () => { throw new Error('unused') } }).discover()
     expect(found.map(item => [item.model, item.access, item.accessBasis])).toEqual([['llama-x', 'local', 'local-endpoint'], ['qwen-y', 'local', 'local-endpoint'], ['big:cloud', 'unknown', 'none']])
+    expect(found.find(item => item.model === 'qwen-y')?.capabilities.toolUse).toBe(true)
+    expect(found.find(item => item.model === 'llama-x')?.capabilities.toolUse).toBe(false)
+  })
+  it('does not route Ollama chat-capability errors as request-wide failures', () => {
+    const ollama = customProviderAdapter(record('http://127.0.0.1:11434', { kind: 'ollama', apiKey: '', models: [] }), { stream: () => { throw new Error('unused') } })
+    expect(ollama.classifyError?.(new Error('400: {"message":"nomic-embed-text does not support chat"}'))).toEqual({ retry: 'temporary-provider-error' })
   })
   it('classifies an OpenAI-compatible server on a loopback address from its catalog, not from where it listens', async () => {
     const base = await serve((_request, response) => { response.writeHead(200); response.end(JSON.stringify({ data: [{ id: 'behind-gateway' }] })) })

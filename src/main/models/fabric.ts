@@ -9,7 +9,7 @@ import { planRoute, routeWithFallback, ModelRoutingError, type ClassifiedError }
  * What the fabric persists — in Foundry’s existing settings, alongside every other preference. Policy and the last discovery only:
  * no credentials, no health, no counters. (Health is operational and lives in the fabric instance; see health.ts.)
  */
-export interface PersistedFabric { version: 1; policy: ModelPolicy; registry: ModelRegistrySnapshot; disabled: ModelId[] }
+export interface PersistedFabric { version: 2; policy: ModelPolicy; registry: ModelRegistrySnapshot; disabled: ModelId[] }
 export interface FabricStore { load(): Promise<unknown>; save(value: PersistedFabric): Promise<void> }
 
 export const DEFAULT_TTL_MS = 6 * 60 * 60_000
@@ -21,8 +21,11 @@ export function loadPersisted(raw: unknown): PersistedFabric {
   const value = (raw && typeof raw === 'object' ? raw : {}) as Partial<PersistedFabric>
   const p = (value.policy ?? {}) as Partial<ModelPolicy>
   const policy: ModelPolicy = { budget: { kind: 'free-only' }, automatic: p.automatic === true, failover: p.failover !== false, useBeta: p.useBeta !== false }
-  const candidates = Array.isArray(value.registry?.candidates) ? value.registry!.candidates.filter((c): c is ModelCandidate => Boolean(c) && typeof c.id === 'string' && typeof c.provider === 'string' && ACCESS.includes(c.access) && typeof c.expiresAt === 'number') : []
-  return { version: 1, policy, registry: { candidates, discoveredAt: typeof value.registry?.discoveredAt === 'number' ? value.registry.discoveredAt : 0, errors: Array.isArray(value.registry?.errors) ? value.registry!.errors : [] },
+  // Version 2 adds verified Ollama chat capabilities. Discard version-1 discovery so an embedding-only model cached as chat-capable
+  // cannot be invoked while the replacement discovery is still running.
+  const compatible = value.version === 2
+  const candidates = compatible && Array.isArray(value.registry?.candidates) ? value.registry!.candidates.filter((c): c is ModelCandidate => Boolean(c) && typeof c.id === 'string' && typeof c.provider === 'string' && ACCESS.includes(c.access) && typeof c.expiresAt === 'number') : []
+  return { version: 2, policy, registry: { candidates, discoveredAt: compatible && typeof value.registry?.discoveredAt === 'number' ? value.registry.discoveredAt : 0, errors: compatible && Array.isArray(value.registry?.errors) ? value.registry!.errors : [] },
     disabled: Array.isArray(value.disabled) ? value.disabled.filter((id): id is string => typeof id === 'string') : [] }
 }
 

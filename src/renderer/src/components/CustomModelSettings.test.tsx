@@ -28,6 +28,22 @@ it('connects and disconnects OpenAI without exposing credentials to the renderer
   } finally { vi.restoreAllMocks(); await act(async () => root.unmount()); container.remove() }
 })
 
+it('explains identity-only ChatGPT access and offers the OpenAI API-key fallback', async () => {
+  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  Object.defineProperty(window, 'douchat', { configurable: true, value: { getCustomModels: vi.fn(async () => ({ providers: [], defaultModel: '' })), detectOllama: vi.fn(async () => null), cancelTokenDanceAuthorization: vi.fn(async () => {}) } })
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  try {
+    await act(async () => root.render(<CustomModelSettings />))
+    expect(container.textContent).toContain('A basic-profile connection shown in ChatGPT is not a model connection.')
+    expect(container.textContent).toContain('Settings → About me')
+    const apiKey = [...container.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Use OpenAI API key')!
+    await act(async () => apiKey.click())
+    expect(container.querySelector<HTMLSelectElement>('select')?.value).toBe('openai')
+    expect(container.querySelector<HTMLInputElement>('input[type="password"]')).not.toBeNull()
+  } finally { await act(async () => root.unmount()); container.remove() }
+})
+
 it('offers a detected Ollama service with its installed models and no API key', async () => {
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   const config = { providers: [], defaultModel: '' }

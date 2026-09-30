@@ -211,7 +211,7 @@ export function BotModal({
           <input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder={t('Enter agent name')} />
         </label>
         <div className="field-row"><span>{t('OpenAI')}</span><button type="button" className="secondary-button" disabled={!openAIProvider?.models.length} onClick={chooseChatGPT}>{t('Create ChatGPT')}</button>
-          <p className="settings-note">{openAIProvider?.models.length ? t('Creates a fully configured, editable ChatGPT agent using your connected OpenAI provider.') : <>{t('Connect OpenAI in Settings → Providers first.')} <button type="button" className="local-settings-link" onClick={onModelSettings ?? onSettings}>{t('Open provider settings')}</button></>}</p>
+          <p className="settings-note">{openAIProvider?.models.length ? t('Creates a fully configured, editable ChatGPT agent using your connected OpenAI provider. Personal facts come from Settings → About me and this agent’s Memory; ChatGPT account history and memory are not imported.') : <>{t('Connect usable OpenAI model access in Settings → Providers first. Basic-profile access from ChatGPT cannot power replies; use an eligible ChatGPT plan workspace or an OpenAI API key.')} <button type="button" className="local-settings-link" onClick={onModelSettings ?? onSettings}>{t('Open provider settings')}</button></>}</p>
         </div>
         <div className="field-row agent-source-field claude-quick-start"><span>{t('Claude')}</span>
           <div className="agent-source-cards" role="radiogroup" aria-label={t('Claude')}>

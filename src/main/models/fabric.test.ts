@@ -349,6 +349,10 @@ describe('the fabric: discovery, persistence, status, and integration with fake 
   })
   it('ignores a corrupt or hostile persisted value rather than trusting it', () => {
     expect(loadPersisted('garbage').policy).toEqual({ budget: { kind: 'free-only' }, automatic: false, failover: true, useBeta: true })
-    expect(loadPersisted({ registry: { candidates: [{ id: 1 }, { id: 'a/b', provider: 'a', access: 'freebie', expiresAt: 1 }, candidate('a', 'ok')] } }).registry.candidates.map(item => item.id)).toEqual(['a/ok'])
+    expect(loadPersisted({ version: 2, registry: { candidates: [{ id: 1 }, { id: 'a/b', provider: 'a', access: 'freebie', expiresAt: 1 }, candidate('a', 'ok')] } }).registry.candidates.map(item => item.id)).toEqual(['a/ok'])
+  })
+  it('invalidates the old discovery cache so Ollama capabilities are rediscovered before routing', () => {
+    const loaded = loadPersisted({ version: 1, policy: { automatic: true }, registry: { discoveredAt: T0, candidates: [candidate('ollama', 'nomic-embed-text:latest')], errors: [] } })
+    expect(loaded).toMatchObject({ version: 2, policy: { automatic: true }, registry: { discoveredAt: 0, candidates: [] } })
   })
 })

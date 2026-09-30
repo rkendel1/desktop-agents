@@ -9,7 +9,7 @@ import { reportDiagnostic } from '../diagnostics'
 import { agentIcons } from '../agentIcons'
 import foundryLogo from '../../../../resources/icons/foundry.png'
 import { setPreferences, usePreferences, t, tr, type LanguagePreference } from '../preferences'
-import { SlidersHorizontal, Bot, CalendarClock, Camera, CircleUserRound, Cpu, ExternalLink, FolderOpen, Info, Pause, Play, Plus, RefreshCw, ScanSearch, SquareArrowOutUpRight, Trash2, Workflow, X } from 'lucide-react'
+import { SlidersHorizontal, Bot, Brain, CalendarClock, Camera, CircleUserRound, Cpu, ExternalLink, FolderOpen, Info, Pause, Play, Plus, RefreshCw, ScanSearch, SquareArrowOutUpRight, Trash2, Workflow, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ReactElement } from 'react'
 import type { AgentConfig, Conversation, LocalAgent, Routine, RoutineSchedule, TaskRun, UpdateProfileInput, UpdateState } from '../../../shared/types'
@@ -114,6 +114,7 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
       <div className="settings-modal-title"><div id="settings-title" className="wordmark">{t('Settings')}</div></div>
       <div className="settings-tabs" role="tablist" aria-label={t('Settings')}>
         <button id="profile-tab" role="tab" aria-selected={tab === 'profile'} aria-controls="settings-content" className={tab === 'profile' ? 'active' : ''} onClick={() => onTab('profile')}><CircleUserRound size={18} /><span>{t('Profile')}</span></button>
+        <button id="memory-tab" role="tab" aria-selected={tab === 'memory'} aria-controls="settings-content" className={tab === 'memory' ? 'active' : ''} onClick={() => onTab('memory')}><Brain size={18} /><span>{t('About me')}</span></button>
         <button id="general-tab" role="tab" aria-selected={tab === 'general'} aria-controls="settings-content" className={tab === 'general' ? 'active' : ''} onClick={() => onTab('general')}><SlidersHorizontal size={18} /><span>{t('General')}</span></button>
         <button id="automation-tab" role="tab" aria-selected={tab === 'automation'} aria-controls="settings-content" className={tab === 'automation' ? 'active' : ''} onClick={() => onTab('automation')}><CalendarClock size={18} /><span>{t('Automation')}</span></button>
         <button id="models-tab" role="tab" aria-selected={tab === 'models'} aria-controls="settings-content" className={tab === 'models' ? 'active' : ''} onClick={() => onTab('models')}><Cpu size={18} /><span>{t("Providers")}</span></button>
