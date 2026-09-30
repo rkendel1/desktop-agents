@@ -1,4 +1,4 @@
-import type { CiRun, CodingSession, Project, AgentConfig, ExecutionEventKind, ChatMessage, Conversation, PrivateMessage, RunEvent, Routine, TaskRun, Topic } from '../../shared/types'
+import type { CiRun, DevelopmentEnvironmentRef, CodingSession, Project, AgentConfig, ExecutionEventKind, ChatMessage, Conversation, PrivateMessage, RunEvent, Routine, TaskRun, Topic } from '../../shared/types'
 
 /** The stored shapes declared in desktop.flow, and the domain types they compose. */
 
@@ -34,6 +34,7 @@ export interface CiRunRecord {
   id: string; workspaceId: string; number: number; status: string; phase: string; createdAt: number; startedAt?: number; finishedAt?: number
   source: unknown; platform?: unknown; computer?: unknown; plan?: unknown; operations?: unknown; failure?: unknown; events?: unknown
 }
+export interface DevelopmentEnvironmentRecord { id: string; workspaceId: string; environment: string; environmentId?: string; recipe?: unknown; createdAt: number }
 export interface MessageRecord {
   id: string; sessionId: string; topicId: string; role: 'user' | 'assistant' | 'system'
   authorId: string; authorName: string; content: string; kind: string; timestamp: number
@@ -268,4 +269,13 @@ export function ciRunFromRecord(record: CiRunRecord): CiRun {
     source: record.source as CiRun['source'], ...(record.platform ? { platform: record.platform as CiRun['platform'] } : {}), ...(record.computer ? { computer: record.computer as CiRun['computer'] } : {}),
     ...(record.plan ? { plan: record.plan as CiRun['plan'] } : {}), operations: (record.operations as CiRun['operations']) ?? [],
     ...(record.failure ? { failure: record.failure as CiRun['failure'] } : {}), events: (record.events as CiRun['events']) ?? [] }
+}
+
+export function developmentEnvironmentToRecord(ref: DevelopmentEnvironmentRef): DevelopmentEnvironmentRecord {
+  return { id: ref.projectId, workspaceId: ref.projectId, environment: ref.environment, ...(ref.environmentId ? { environmentId: ref.environmentId } : {}), ...(ref.requestedRecipe ? { recipe: ref.requestedRecipe } : {}), createdAt: ref.createdAt }
+}
+
+export function developmentEnvironmentFromRecord(record: DevelopmentEnvironmentRecord): DevelopmentEnvironmentRef {
+  return { projectId: record.workspaceId, environment: record.environment, ...(record.environmentId ? { environmentId: record.environmentId } : {}),
+    ...(record.recipe ? { requestedRecipe: record.recipe as NonNullable<DevelopmentEnvironmentRef['requestedRecipe']> } : {}), createdAt: record.createdAt }
 }

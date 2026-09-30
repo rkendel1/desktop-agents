@@ -1,0 +1,286 @@
+{
+  "recipe": {
+    "name": "basic",
+    "version": 1,
+    "digest": "sha256:dd46e874c76dd0dbf7f1835a31e2d354a37840506c8c8d28162d160887f042cd"
+  },
+  "verdict": "satisfiable",
+  "resolved": {
+    "computer": {
+      "lifecycle": "persistent",
+      "requirements": {
+        "network": "network",
+        "isolation": "process"
+      }
+    }
+  },
+  "implied_capabilities": [
+    "claim"
+  ],
+  "lifecycle": [
+    "persistent: the computer is kept until it is destroyed; Compute never expires it",
+    "no `persistent_storage` capability is required: the computer does not expire, but the recipe does not ask the target to promise the disk survives the machine",
+    "isolation: process; network: network"
+  ],
+  "primitives": [
+    {
+      "operation": "environment create (computer)",
+      "effect": "records the environment and its computer, places it on a target that satisfies the requirements, and provisions a session there"
+    },
+    {
+      "operation": "environment destroy",
+      "effect": "the only release: explicit; the record stays as evidence"
+    }
+  ],
+  "placement": {
+    "placement_version": "compute.placement@1",
+    "placement_id": "sha256:3c6683684c082f3d19a739d337c2e13267f192183c74f806161abeac0612c3dc",
+    "outcome": "placed",
+    "selection_mode": "pool",
+    "placement_policy": {
+      "mode": "auto"
+    },
+    "policy_id": "sha256:6524d537d9bdab39bb4b29746e5e924b1f9fad7fe853db76ecd67117c37d4b9d",
+    "providers": [
+      {
+        "provider_id": "local",
+        "provider_kind": "local",
+        "priority": 0,
+        "discovery": "discovered",
+        "health": "healthy",
+        "capability_version": "sha256:e4e643c99f08e253191db69e8d61fe473a34b8dfe34493315a49a873360345cb",
+        "provider_identity": {
+          "kind": "local",
+          "id": "local"
+        },
+        "runtime_lifecycle": "ready",
+        "platform": {
+          "os": "linux",
+          "architecture": "x86_64"
+        },
+        "resources": {
+          "capacity": {
+            "cpu_count": 4,
+            "memory_bytes": 16876515328,
+            "disk_bytes": 270553174016
+          },
+          "available": {
+            "cpu_count": 4,
+            "memory_bytes": 8557125632,
+            "disk_bytes": 25524711424
+          }
+        },
+        "status": "incompatible",
+        "capacity_status": "available",
+        "candidate": {
+          "eligible": false,
+          "selected": false,
+          "reasons": [
+            "sessions_unsupported",
+            "incompatible"
+          ]
+        },
+        "reasons": [
+          {
+            "code": "sessions_unsupported",
+            "dimension": "execution",
+            "required": "sessions",
+            "available": [
+              "run"
+            ],
+            "detail": "the provider does not host sessions"
+          }
+        ]
+      },
+      {
+        "provider_id": "this-machine",
+        "provider_kind": "remote",
+        "priority": 0,
+        "endpoint": "http://127.0.0.1:33791",
+        "discovery": "discovered",
+        "health": "healthy",
+        "capability_version": "sha256:0db44f1e89127c0504ccda330f2458c6471f2a8e4cbc7ed8be830608e10251b9",
+        "provider_identity": {
+          "kind": "remote",
+          "id": "http://127.0.0.1:33791",
+          "endpoint": "http://127.0.0.1:33791"
+        },
+        "runtime_lifecycle": "ready",
+        "platform": {
+          "os": "linux",
+          "architecture": "x86_64"
+        },
+        "resources": {
+          "capacity": {
+            "cpu_count": 4,
+            "memory_bytes": 16876515328,
+            "disk_bytes": 270553174016
+          },
+          "available": {
+            "cpu_count": 4,
+            "memory_bytes": 16876515328,
+            "disk_bytes": 270553174016
+          }
+        },
+        "status": "compatible",
+        "capacity_status": "available",
+        "candidate": {
+          "eligible": true,
+          "selected": true,
+          "rank": 1,
+          "reasons": [
+            "sufficient_capacity",
+            "runtime_ready",
+            "remote",
+            "pool_priority:0"
+          ]
+        },
+        "reasons": []
+      }
+    ],
+    "compatible_providers": [
+      "this-machine"
+    ],
+    "capacity_available_providers": [
+      "this-machine"
+    ],
+    "capacity_unavailable_providers": [],
+    "incompatible_providers": [
+      "local"
+    ],
+    "excluded_providers": [],
+    "selected": {
+      "provider_id": "this-machine",
+      "provider_kind": "remote",
+      "provider_identity": {
+        "kind": "remote",
+        "id": "http://127.0.0.1:33791",
+        "endpoint": "http://127.0.0.1:33791"
+      },
+      "provider_protocol": "compute.remote@1",
+      "capability_version": "sha256:0db44f1e89127c0504ccda330f2458c6471f2a8e4cbc7ed8be830608e10251b9",
+      "policy_id": "sha256:6524d537d9bdab39bb4b29746e5e924b1f9fad7fe853db76ecd67117c37d4b9d",
+      "admission_id": "sha256:88837a738f072c9c69c2109da4ca74b9c64d2d3b659a76a82581b9d7714ce5f0",
+      "selection_reason": {
+        "compatibility_result": "compatible",
+        "selection_priority": 0,
+        "ordering": "capacity,runtime_readiness,locality,priority_descending,provider_id_ascending",
+        "compatible_candidates": 1
+      },
+      "runtime_lifecycle": "ready",
+      "runtime_distribution": {
+        "id": "sha256:fcce2ccc2315d8e733e9dc5267f8d330307df19cf6ec9f6953f27442ce9e1a46",
+        "runtime": "shell",
+        "version": "1.37.0",
+        "platform": {
+          "os": "linux",
+          "architecture": "x86_64"
+        },
+        "artifact": "file:///tmp/cat/shell-fixture",
+        "digest": "sha256:6f3626a93b17027a573f92a1bc0dab43f81de629d97c22060461540e1cbfbeec",
+        "source": "compute-runtime-lock",
+        "executable": "runtimes/shell/bin/sh",
+        "capabilities": {
+          "stdin": {
+            "supported": true
+          },
+          "stdout": {
+            "supported": true
+          },
+          "stderr": {
+            "supported": true
+          },
+          "environment": {
+            "supported": true
+          },
+          "filesystem_isolation": {
+            "supported": false
+          },
+          "artifacts": {
+            "supported": true
+          },
+          "timeout": {
+            "supported": true
+          },
+          "cancellation": {
+            "supported": false
+          },
+          "stdout_limit": {
+            "supported": true
+          },
+          "stderr_limit": {
+            "supported": true
+          },
+          "memory_limit": {
+            "supported": false
+          },
+          "cpu_limit": {
+            "supported": false
+          },
+          "process_limit": {
+            "supported": false
+          },
+          "network": {
+            "localhost": {
+              "supported": false
+            },
+            "network": {
+              "supported": true
+            },
+            "none": {
+              "supported": false
+            }
+          },
+          "isolation": {
+            "process_boundary": true,
+            "filesystem_boundary": false,
+            "network_boundary": false,
+            "environment_boundary": true,
+            "timeout_enforcement": true,
+            "memory_enforcement": false,
+            "cpu_enforcement": false,
+            "process_enforcement": false
+          },
+          "host_profiles": [
+            "restricted",
+            "isolated"
+          ]
+        }
+      },
+      "platform": {
+        "os": "linux",
+        "architecture": "x86_64"
+      },
+      "resources": {
+        "capacity": {
+          "cpu_count": 4,
+          "memory_bytes": 16876515328,
+          "disk_bytes": 270553174016
+        },
+        "available": {
+          "cpu_count": 4,
+          "memory_bytes": 16876515328,
+          "disk_bytes": 270553174016
+        }
+      }
+    },
+    "explanation": {
+      "requires": [
+        "runtime shell (any version)",
+        "distribution: not pinned by the caller",
+        "dependency capsule: none",
+        "isolation process",
+        "network network",
+        "resources: no enforced limits requested",
+        "platform: any",
+        "artifact bundle transport of 9545 bytes, session submission",
+        "session capabilities: claim, network"
+      ],
+      "considered": [
+        "local (local, priority 0, health healthy), runtime shell ready, distribution sha256:fcce2ccc2315d8e733e9dc5267f8d330307df19cf6ec9f6953f27442ce9e1a46: incompatible (policy would admit): sessions_unsupported (required \"sessions\", available [\"run\"]); candidate: not ranked, not selected; reasons: sessions_unsupported, incompatible",
+        "this-machine (remote, priority 0, health healthy), runtime shell ready, distribution sha256:fcce2ccc2315d8e733e9dc5267f8d330307df19cf6ec9f6953f27442ce9e1a46: compatible; capacity available; candidate: rank 1, selected; reasons: sufficient_capacity, runtime_ready, remote, pool_priority:0"
+      ],
+      "selection": "selected provider this-machine: compatible and admitted by policy, with selection priority 0, first among 1 candidate(s) ordered by capacity,runtime_readiness,locality,priority_descending,provider_id_ascending"
+    }
+  }
+}

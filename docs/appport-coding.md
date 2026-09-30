@@ -108,6 +108,8 @@ Two capabilities reach the Compute integration ([compute-integration.md](compute
 (read-only PAX inspections of a session's project on its Computer). `sessions.start` takes an optional `execution`, and a
 session view reports it. No route to the Computer's filesystem or to running commands is added.
 
+The project's environment ([environments.md](environments.md)) adds `douchat.environment.get | detail | recipes | resolve | create | restart | stop | start | retry | destroy` over the same `EnvironmentService` as the desktop. Every answer is Compute's, `destroy` needs `confirm: true`, and `sessions.start` with `execution.kind = compute` runs on the project's environment only when Compute reports it ready.
+
 CI ([compute-integration.md §11](compute-integration.md)) adds `douchat.ci.plan` and `douchat.ci.runs.start | get | list | cancel`. They call the
 same `CiService` as the desktop. A start takes a project and, to resolve a PAX ambiguity, a tool name — never a command, folder, environment or Computer.
 

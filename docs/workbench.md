@@ -30,6 +30,7 @@ Selecting a project answers four questions at once.
 - **What am I working on?** Project, repository path, branch, the upstream it tracks and how far ahead/behind it is, the commit, and PAX's tooling line.
 - **What is happening?** The running session, its agent, where it runs, its live activity — and its approval, right there, with *Allow*, *Deny* and *Cancel session*. If nothing is running: **Last time**, the most recent session (status, agent, where it ran, when, result, changed files, checks).
 - **What changed?** The working tree as Git reports it — *Staged*, *Not staged*, *Untracked* — each file's diff (staged and unstaged shown separately), and, for the latest session, whether Git shows the change as arising *during the session* or as *already modified* beforehand.
+- **Where does it run?** The **Environment** section: recipe and version, Computer, configuration and readiness as Compute reports them, with Restart / Stop / Start / Retry / Destroy, and Work (agent, checks, CI).
 - **What next?** *Start coding*, *Continue*, *Review*, *Run checks*, *Stage / Unstage*, *Commit*, and CI.
 
 Git is read when the project opens, whenever a session starts, ends or records a check, when the window regains focus, and every few seconds while an agent works. Nothing has to be refreshed by hand (a *Refresh* button exists anyway).
@@ -39,9 +40,9 @@ Git is read when the project opens, whenever a session starts, ends or records a
 | Choice | What it means |
 | --- | --- |
 | **This Computer** (the default) | Local execution. The agent runs on this computer in the project's folder. No network, account, Compute or hosted service is needed for anything in the local loop. |
-| **Compute** | Remote Computer. The agent runs on a Computer from the installed Compute Configured, on a checkout of the *committed* revision ([compute-integration.md](compute-integration.md)). |
+| **Environment** | The project's development environment on Compute (see [environments.md](environments.md)). The agent runs on the project's environment (a Compute Computer that Compute has verified ready), on a checkout of the *committed* revision ([environments.md](environments.md), [compute-integration.md](compute-integration.md)). |
 
-Selecting Compute is a decision, not a preference. If Compute cannot run the session — not installed, daemon not answering, Computer not running, no Computer chosen —
+Selecting the Environment is a decision, not a preference. The session runs on the project's Compute environment, and only when Compute reports it ready. If it cannot — Compute not installed or too old, daemon not answering, no environment, environment stopped, failed or not ready —
 the reason is shown, *Start session* stays disabled, and the service itself refuses (`Compute was selected, so nothing was started on this computer`) with no session, no topic and no local process created. Foundry never falls back to running locally. If no
 execution target is chosen the existing default (local) applies.
 

@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { AgentConfig, AppSnapshot, CodingActivity, CodingSession, Project } from '../../../shared/types'
+import type { AgentConfig, AppSnapshot, CodingActivity, CodingSession, DevelopmentEnvironmentView, Project } from '../../../shared/types'
 import type { PermissionRequest } from '../../../shared/agentPermissions'
 import { CodingSessionPanel } from './CodingSessionPanel'
 import { ProjectsView } from './ProjectsView'
@@ -19,6 +19,11 @@ const request: PermissionRequest = { id: 'r1', agentId: 'a1', agentName: 'Coder'
   details: JSON.stringify({ tool: 'Bash', input: { command: 'npm test | head' } }) }
 const approval = (): CodingActivity => ({ sessionId: 's1', state: 'awaiting-approval', label: 'Waiting for approval: Run npm test | head', source: 'douchat', since: 2000, approval: request })
 
+const environmentView = (patch: Partial<DevelopmentEnvironmentView> = {}): DevelopmentEnvironmentView => ({ projectId: 'p1', compute: { ok: true, installed: { binary: '/x/compute', version: '0.1.5' } },
+  reference: { projectId: 'p1', environment: 'foundry-fixture-abc123', environmentId: 'env_1', requestedRecipe: { name: 'developer', version: 3 }, createdAt: 1 }, state: 'ready',
+  recipe: { name: 'developer', version: 3, digest: 'sha256:' + 'a'.repeat(64) }, computer: { target: 'this-machine', platform: 'linux/x86_64', platformLabel: 'Linux x86_64', lifecycle: 'persistent', status: 'running' },
+  readiness: 'ready', configuration: 'succeeded', lifecycle: 'running', workloads: 0, progress: [], actions: ['open', 'restart', 'stop', 'destroy'], observedAt: 1, ...patch })
+
 let api: Record<string, ReturnType<typeof vi.fn>>
 let node: HTMLDivElement
 let root: Root
@@ -28,7 +33,7 @@ beforeEach(() => {
     resolveAgentPermission: vi.fn(async () => undefined), cancelCodingSession: vi.fn(async () => undefined), continueCodingSession: vi.fn(async () => session({ status: 'running' })),
     projectPax: vi.fn(async () => { throw new Error('PAX is not installed, so project tooling is not shown.') }),
     ciPlan: vi.fn(async () => ({ projectId: 'p1', projectName: 'Fixture', ready: false, blockers: ['not now'], computer: { lifecycle: 'ephemeral' } })), startCi: vi.fn(), cancelCi: vi.fn(),
-    runCodingChecks: vi.fn(async () => undefined), openComputeUi: vi.fn(async () => undefined),
+    runCodingChecks: vi.fn(async () => undefined), openComputeUi: vi.fn(async () => undefined), environmentState: vi.fn(async () => environmentView()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => []), environmentResolve: vi.fn(), environmentCreate: vi.fn(), environmentAct: vi.fn(),
     computeInventory: vi.fn(async () => ({ available: true, daemon: { endpoint: 'http://127.0.0.1:8787', reachable: true }, installation: { binary: '/x/compute-configured', version: '0.1.5', configured: true },
       platform: { platform: 'linux-x86_64', status: 'certified', label: 'Linux x86_64 — Certified', evidence: 'compute-configured-verify' },
       environments: [{ name: 'stopped-one', environmentId: 'e0', observed: 'stopped' }, { name: 'workbench', environmentId: 'e1', observed: 'running' }] })), projectGitStatus: vi.fn(async () => ({ branch: 'main', changes: [] })), projectGitDiff: vi.fn(async () => ({ diff: '', truncated: false })),
@@ -222,31 +227,28 @@ it('shows the session panel when a session is selected', async () => {
   expect(node.querySelector('.coding-session h2')!.textContent).toBe('Old task')
 })
 
-it('offers Compute as an execution target from Compute’s own inventory, with its platform label, and starts the session there', async () => {
+it('offers the project’s environment as the place to run, shows what Compute says about it, and starts the session there without naming a Computer', async () => {
   await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={vi.fn()} />)
   const execution = [...node.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'compute'))!
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(execution, 'compute'); execution.dispatchEvent(new Event('change', { bubbles: true })) })
-  expect(api.computeInventory).toHaveBeenCalled()
-  expect(node.querySelector('.coding-platform')!.textContent).toBe('Linux x86_64 — Certified')
-  expect(node.querySelector('.coding-platform-certified')).not.toBeNull()
-  // The running Computer is preselected; the start button waits for a choice otherwise.
+  expect(api.environmentState).toHaveBeenCalledWith('p1')
+  expect(node.querySelector('.coding-compute')!.textContent).toContain('developer · Linux x86_64 · Ready')
   const task = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Task"]')!
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(task, 'Run the tests'); task.dispatchEvent(new Event('input', { bubbles: true })) })
   await click('Start session')
-  expect(api.startCodingSession).toHaveBeenCalledWith({ projectId: 'p1', agentId: 'a1', task: 'Run the tests', execution: { kind: 'compute', environment: 'workbench' } })
-  await click('Open Compute')
-  expect(api.openComputeUi).toHaveBeenCalled()
+  expect(api.startCodingSession).toHaveBeenCalledWith({ projectId: 'p1', agentId: 'a1', task: 'Run the tests', execution: { kind: 'compute' } })
 })
 
-it('never labels a preview platform as certified, and says when Compute is not available', async () => {
-  api.computeInventory.mockResolvedValueOnce({ available: false, reason: 'The Compute daemon is not answering at http://127.0.0.1:8787. Start it with `compute start`.', daemon: { endpoint: 'http://127.0.0.1:8787', reachable: false }, environments: [],
-    platform: { platform: 'macos-aarch64', status: 'preview', label: 'macOS ARM64 — Preview', evidence: 'compute-configured-verify' } })
+it('will not start on an environment Compute has not reported ready, says why, and never offers to run here instead', async () => {
+  api.environmentState.mockResolvedValue(environmentView({ state: 'not-ready', readiness: 'unavailable', actions: ['destroy'],
+    reason: { category: 'requirements_unsatisfied', title: 'Environment couldn’t become ready.', message: 'The selected Computer cannot satisfy what this environment requires.' } }))
   await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={vi.fn()} />)
   const execution = [...node.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'compute'))!
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(execution, 'compute'); execution.dispatchEvent(new Event('change', { bubbles: true })) })
-  expect(node.querySelector('.coding-platform')!.textContent).toBe('macOS ARM64 — Preview')
-  expect(node.querySelector('.coding-platform-certified')).toBeNull()
-  expect(node.querySelector('[role=alert]')!.textContent).toContain('compute start')
+  const alerts = [...node.querySelectorAll('.coding-compute [role=alert]')].map(item => item.textContent).join(' ')
+  expect(alerts).toContain('Environment couldn’t become ready.'); expect(alerts).toContain('Nothing will run on this computer instead.')
+  const task = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Task"]')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(task, 'Run the tests'); task.dispatchEvent(new Event('input', { bubbles: true })) })
   expect([...node.querySelectorAll('button')].find(item => item.textContent === 'Start session')!.disabled).toBe(true)
 })
 
@@ -257,6 +259,8 @@ it('shows that a session runs on a Computer, and reads its changes and diff from
   expect(api.projectGitStatus).toHaveBeenCalledWith('p1', 's1')
   await click(/a\.ts/)
   expect(api.projectGitDiff).toHaveBeenCalledWith('p1', 'a.ts', 's1')
+  // The session says which environment it runs on and what Compute says about it.
+  expect(node.querySelector('.env-context')!.textContent).toContain('Environment developer · Linux x86_64 · Ready')
   await click('Open Compute')
   expect(api.openComputeUi).toHaveBeenCalled()
 })

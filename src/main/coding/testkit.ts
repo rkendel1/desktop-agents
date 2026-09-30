@@ -9,6 +9,7 @@ import { addCustomLocalAgent, detectLocalAgents } from '../localAgents'
 import { DouchatRuntime } from '../runtime'
 import { CodingService } from './service'
 import type { ComputeClient } from '../compute/client'
+import { EnvironmentService } from '../environment/service'
 
 /** Shared by the coding tests: real repositories, real desktops, and the scripted stand-in agent (a real child process). */
 export const fixture = join(__dirname, 'fixtures', 'scripted-agent.cjs')
@@ -36,10 +37,12 @@ export class TestKit {
     return path
   }
 
-  async boot(root = this.temporary('coding-desktop-'), options: { compute?: ComputeClient; pax?: string } = {}): Promise<Booted> {
+  async boot(root = this.temporary('coding-desktop-'), options: { compute?: ComputeClient; environments?: EnvironmentService | true; pax?: string } = {}): Promise<Booted> {
     const desktop = await startDesktop({ userData: root, codec })
     const runtime = new DouchatRuntime(desktop.repository, idleComputer, () => undefined)
-    const booted = { root, desktop, runtime, coding: new CodingService(desktop.repository, runtime, () => undefined, options) }
+    // `environments: true`: the project's environment service over the same repository and Compute client, as the app wires it.
+    const environments = options.environments === true ? (options.compute ? new EnvironmentService(desktop.repository, options.compute) : undefined) : options.environments
+    const booted = { root, desktop, runtime, coding: new CodingService(desktop.repository, runtime, () => undefined, { ...options, environments }) }
     this.running.push(booted)
     return booted
   }

@@ -1,0 +1,21 @@
+[
+  {
+    "name": "developer",
+    "version": 1,
+    "status": "current",
+    "digest": "sha256:b155af4c8aa40b41a5ed5af064140e21b52210ca0e638ab9f46a6c742361c08a",
+    "spec": {
+      "description": "A developer-owned computer that is kept until it is destroyed, with a terminal.",
+      "lifecycle": "persistent",
+      "requirements": {
+        "network": "network",
+        "isolation": "process",
+        "capabilities": [
+          "terminal"
+        ]
+      }
+    },
+    "author": "development",
+    "created_at": "2026-09-30T11:24:34.590595975Z"
+  }
+]

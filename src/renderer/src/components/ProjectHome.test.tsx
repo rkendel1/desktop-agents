@@ -2,7 +2,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import type { AgentConfig, AppSnapshot, CodingActivity, CodingSession, GitState, Project } from '../../../shared/types'
+import type { AgentConfig, AppSnapshot, CodingActivity, CodingSession, DevelopmentEnvironmentView, GitState, Project } from '../../../shared/types'
 import type { PermissionRequest } from '../../../shared/agentPermissions'
 import { ProjectsView } from './ProjectsView'
 
@@ -20,6 +20,9 @@ const snapshot = (patch: Partial<AppSnapshot> = {}): AppSnapshot => ({ agents: [
 const git = (patch: Partial<GitState> = {}): GitState => ({ branch: 'main', head: 'abc123abc123', upstream: 'origin/main', ahead: 2, behind: 1, changes: [
   { path: 'src/staged.js', code: 'M ' }, { path: 'src/edited.js', code: ' M' }, { path: 'src/both.js', code: 'MM' }, { path: 'notes.txt', code: '??' }], ...patch })
 
+const unavailable = (): DevelopmentEnvironmentView => ({ projectId: 'p1', compute: { ok: false, reason: 'daemon-unreachable', message: 'The Compute daemon is not answering at http://127.0.0.1:8787. Start it with `compute start`.' },
+  state: 'compute-unavailable', reason: { category: 'daemon-unreachable', title: 'Compute is unavailable.', message: 'The Compute daemon is not answering at http://127.0.0.1:8787. Start it with `compute start`.' }, progress: [], actions: [], observedAt: 1 })
+
 let api: Record<string, ReturnType<typeof vi.fn>>
 let node: HTMLDivElement
 let root: Root
@@ -33,7 +36,7 @@ beforeEach(() => {
     projectPax: vi.fn(async (_id: string, command: string) => command === 'info'
       ? { command, exitCode: 0, json: { manager: { name: 'npm', selectedBy: 'lockfile precedence' } }, stdout: '', stderr: '', findings: { ambiguous: false, drift: false, failedClosed: false } }
       : { command, exitCode: 2, json: { issues: [{ status: 'ambiguous', expected: 'one JavaScript package-manager authority', actual: 'pnpm-lock.yaml, package-lock.json' }] }, stdout: '', stderr: '', findings: { ambiguous: true, drift: false, failedClosed: false } }),
-    openComputeUi: vi.fn(async () => undefined), setProjectTestCommand: vi.fn(async () => project), chooseProject: vi.fn(),
+    openComputeUi: vi.fn(async () => undefined), environmentState: vi.fn(async () => unavailable()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => []), environmentResolve: vi.fn(), environmentCreate: vi.fn(), environmentAct: vi.fn(), setProjectTestCommand: vi.fn(async () => project), chooseProject: vi.fn(),
     ciPlan: vi.fn(async () => ({ projectId: 'p1', projectName: 'Fixture', ready: false, blockers: ['x'], computer: { lifecycle: 'ephemeral' } })), startCi: vi.fn(), cancelCi: vi.fn()
   }
   ;(window as unknown as { douchat: unknown }).douchat = api
@@ -109,13 +112,13 @@ it('lists recent checks with argv, exit status, duration and time, and runs chec
   expect(api.runCodingChecks).toHaveBeenCalledWith('s1')
 })
 
-it('makes local the honest default and refuses to fake Compute: with Compute unavailable, starting there is impossible', async () => {
+it('makes local the honest default and refuses to fake Compute: with Compute unavailable, starting on the environment is impossible', async () => {
   await render(snapshot())
   expect(node.textContent).toContain('Local execution: the agent runs on this computer')
   const select = [...node.querySelectorAll('select')].find(item => item.closest('label')?.textContent?.startsWith('Execution')) as HTMLSelectElement
-  expect([...select.options].map(option => option.textContent)).toEqual(['This Computer', 'Compute'])
+  expect([...select.options].map(option => option.textContent)).toEqual(['This Computer', 'Environment'])
   await act(async () => { select.value = 'compute'; select.dispatchEvent(new Event('change', { bubbles: true })) })
-  expect(node.textContent).toContain('If Compute cannot run it, nothing starts here instead')
+  expect(node.textContent).toContain('If it is not ready, nothing starts here instead')
   expect(node.textContent).toContain('Start it with `compute start`')
   const start = [...node.querySelectorAll('button')].find(item => item.textContent === 'Start session') as HTMLButtonElement
   expect(start.disabled).toBe(true)

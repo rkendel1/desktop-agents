@@ -7058,3 +7058,21 @@ html.native-dialog-window,
 .coding-conversation { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .coding-conversation li[data-author='user'] { border-left: 3px solid var(--line); padding-left: 10px; }
 .coding-changes li > button.secondary-button { width: auto; flex: none; }
+
+/* The development environment (a client of Compute) */
+.env-facts { margin-top: 6px; }
+.env-reason { border-left: 3px solid #d92d20; background: #fde3e1; color: #7a1712; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+.env-reason p { margin: 2px 0; }
+.env-unsatisfied, .env-targets, .env-conditions, .env-progress { list-style: none; margin: 4px 0; padding: 0; }
+.env-unsatisfied li, .env-targets li, .env-conditions li { margin: 2px 0; }
+.env-progress .env-step { margin: 2px 0; color: var(--muted); }
+.env-progress .env-step-done { color: #16794a; }
+.env-progress .env-step-active { color: var(--accent-700); font-weight: 600; }
+.env-progress .env-step-failed { color: #b3261e; }
+.env-explained { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 8px 0; font-size: 13px; }
+.env-explained dt { font-weight: 600; }
+.env-explained dd { margin: 0; color: var(--muted); }
+.env-create, .env-detail, .env-work { margin-top: 10px; }
+.env-work h4 { margin: 8px 0 2px; font-size: 13px; color: var(--muted); }
+.env-diagnostics summary, .env-advanced summary { cursor: pointer; }
+.env-context { margin: 2px 0; }

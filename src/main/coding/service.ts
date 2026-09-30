@@ -2,6 +2,7 @@ import type { PermissionEvent } from '../agentPermissions'
 import type { CodingActivity, CodingEvent, CodingSession, CommandResult, ExecutionTarget, GitDiffMode, GitState, Project } from '../../shared/types'
 import type { LocalLauncher } from '../../shared/agentExecutor'
 import { ComputeClient } from '../compute/client'
+import { EnvironmentRefusal, type Admission, type EnvironmentService } from '../environment/service'
 import { computeLauncher, ComputeInterruption } from '../compute/launcher'
 import { runPax, type PaxInspection, type PaxOperation, type PaxRun } from '../compute/pax'
 import { describeApproval, formatCommandLine } from '../../shared/coding'
@@ -60,10 +61,12 @@ export class CodingService {
   /** A session that runs on a Compute Computer: its launcher (this turn's), and whether the Computer was lost while it ran. */
   private readonly onCompute = new Map<string, { launcher: LocalLauncher; interruption?: ComputeInterruption }>()
   private readonly compute?: ComputeClient
+  private readonly environments?: EnvironmentService
   private readonly paxPath: string
 
-  constructor(private readonly repository: DesktopRepository, private readonly runtime: CodingRuntime, private readonly onActivityChange: () => void = () => undefined, options: { compute?: ComputeClient; pax?: string } = {}) {
+  constructor(private readonly repository: DesktopRepository, private readonly runtime: CodingRuntime, private readonly onActivityChange: () => void = () => undefined, options: { compute?: ComputeClient; environments?: EnvironmentService; pax?: string } = {}) {
     this.compute = options.compute
+    this.environments = options.environments
     this.paxPath = options.pax ?? process.env.FOUNDRY_PAX ?? 'pax'
     runtime.setLaunchResolver?.(turn => {
       const live = [...this.live.values()].find(item => item.conversationId === turn.conversationId && item.topicId === turn.topicId)
@@ -180,6 +183,17 @@ export class CodingService {
   }
 
   /**
+   * A workload runs on the project's development environment or not at all. The environment must exist, be the one this project references,
+   * and be one Compute says admits workloads (ready); otherwise this throws the reason and nothing runs — here or anywhere else.
+   */
+  private async admit(projectId: string, named?: string): Promise<Admission> {
+    if (!this.environments) throw new Error('Compute environments are not available in this build.')
+    const admission = await this.environments.admit(projectId)
+    if (named && named !== admission.environment) throw new EnvironmentRefusal('mismatch', `“${named}” is not this project's environment (that is “${admission.environment}”).`, admission.view.state)
+    return admission
+  }
+
+  /**
    * Make the project available on the Computer through Compute's own mechanism — a repository in the environment, checked out at
    * a revision — and return what Foundry records: a reference, never the Computer's state. Uncommitted local changes are not on
    * the Computer, and the session says so.
@@ -216,6 +230,9 @@ export class CodingService {
     if (session.execution?.kind !== 'compute') return undefined
     const compute = this.requireCompute()
     const target = session.execution
+    // Every turn is admitted again: the environment may have been stopped, lost, or replaced since the last one.
+    const admitted = await this.admit(session.projectId).catch(error => { if (error instanceof EnvironmentRefusal) throw new ComputeInterruption(`${error.message} The task did not start.`, error.state); throw error })
+    if (admitted.environment !== target.environment) throw new ComputeInterruption(`This project's environment is now “${admitted.environment}”, not “${target.environment}”, where this session ran. The task did not start.`, 'replaced')
     const computer = await compute.computer(target.environment)
     if (computer.observed !== 'running') throw new ComputeInterruption(`The Computer for environment "${target.environment}" is ${computer.observed}. The task did not start.`, computer.observed)
     const pwd = await compute.exec(target.environment, ['pwd'], { repository: target.repository, timeoutMs: 30_000 })
@@ -248,7 +265,7 @@ export class CodingService {
    * runs on, and `settled` resolves with the finished session. Each session gets
    * its own topic, so its conversation stays apart from the agent's other chats.
    */
-  async start(input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment: string } }): Promise<CodingSession> {
+  async start(input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment?: string } }): Promise<CodingSession> {
     const task = input.task.trim()
     if (!task) throw new Error('Describe the task for the agent.')
     const { project, directory } = await this.requireProject(input.projectId)
@@ -263,7 +280,7 @@ export class CodingService {
     const notes: string[] = []
     if (input.execution?.kind === 'compute') {
       let prepared: Awaited<ReturnType<CodingService['prepareCompute']>>
-      try { prepared = await this.prepareCompute(project, directory, input.execution.environment) }
+      try { prepared = await this.prepareCompute(project, directory, (await this.admit(project.id, input.execution.environment)).environment) }
       catch (error) { throw new Error(`Compute was selected, so nothing was started on this computer. ${error instanceof Error ? error.message : String(error)}`) }
       execution = prepared.target; where = this.remoteGit(prepared.target); notes.push(`runs on Computer "${prepared.target.environment}" in ${prepared.workingDirectory}`, ...prepared.notes)
     }

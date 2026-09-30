@@ -27,7 +27,9 @@ const findBinary = (name: string, hints: string[]): string | undefined => {
 }
 const COMPUTE = findBinary('compute-configured', ['/opt/homebrew/bin/compute-configured', '/home/linuxbrew/.linuxbrew/bin/compute-configured', '/opt/homebrew-emulated/bin/compute-configured'])
 const PAX = findBinary('pax', ['/opt/pax/pax', '/opt/homebrew/bin/pax'])
-const installed = Boolean(COMPUTE && PAX)
+/** Foundry's Environment surface needs a Compute that declares the environment contract (recipes, bootstrap, readiness, lifecycle). Compute Configured 0.1.5 does not: these tests wait for the release that does. */
+const declaresContract = (): boolean => { try { execFileSync(COMPUTE!, ['recipe', '--help'], { stdio: 'ignore' }); return true } catch { return false } }
+const installed = Boolean(COMPUTE && PAX && declaresContract())
 const repositoryOf = (session: { execution?: { kind: string; repository?: string } }): string => session.execution?.repository ?? ''
 
 describe('what Compute says about the platform', () => {
@@ -60,6 +62,8 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     const created = await cli(['environment', 'create', name, '--cpu', '1', '--memory', '1Gi', '--persistent', '--json', '--daemon', env().COMPUTE_DAEMON!])
     expect(created.exitCode, created.stderr).toBe(0)
     await waitUntil(async () => (await client.computer(name)).observed === 'running', 60_000)
+    // A running Computer is not a ready environment: wait for Compute to say so.
+    await waitUntil(async () => (await client.inspectEnvironment(name)).computer?.readiness.state === 'ready', 60_000)
     return name
   }
 
@@ -87,7 +91,14 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     rmSync(home, { recursive: true, force: true })
   }, 90_000)
 
-  const boot = (): Promise<Booted> => kit.boot(undefined, { compute: client, pax: PAX })
+  const boot = (): Promise<Booted> => kit.boot(undefined, { compute: client, pax: PAX, environments: true })
+  /** The project’s development environment is the Computer this test made: the reference Foundry keeps after Create, made directly. */
+  const adopted = async (booted: Booted, path: string, name: string, environment: string) => {
+    const project = await booted.coding.addProject(path, name)
+    const record = await client.inspectEnvironment(environment)
+    await booted.desktop.repository.putDevelopmentEnvironment({ projectId: project.id, environment, environmentId: record.environment_id, createdAt: Date.now() })
+    return project
+  }
   const serveProcess = (): number | undefined => {
     for (const pid of readdirSync('/proc').filter(name => /^\d+$/.test(name))) {
       try { if (readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').includes(`--job-store ${stateDir}/local/computers/jobs`)) return Number(pid) } catch { /* gone */ }
@@ -110,7 +121,7 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     const path = repository()
     const booted = await boot()
     const agent = await kit.scriptedAgent(booted)
-    const project = await booted.coding.addProject(path, 'Compute fixture')
+    const project = await adopted(booted, path, 'Compute fixture', environment)
     const localBefore = readFileSync(join(path, 'src', 'math.js'), 'utf8')
 
     const started = await booted.coding.start({ projectId: project.id, agentId: agent.id, execution: { kind: 'compute', environment },
@@ -172,7 +183,7 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     const path = repository(dir => { writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n') })
     const booted = await boot()
     const agent = await kit.scriptedAgent(booted)
-    const project = await booted.coding.addProject(path, 'Ambiguous')
+    const project = await adopted(booted, path, 'Ambiguous', environment)
     const session = (await booted.coding.settled((await booted.coding.start({ projectId: project.id, agentId: agent.id, execution: { kind: 'compute', environment }, task: taskText('Look.', { action: 'none' }) })).id))!
     expect(session.status).toBe('succeeded')
 
@@ -200,7 +211,7 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     })
     const booted = await boot()
     const agent = await kit.scriptedAgent(booted)
-    const project = await booted.coding.addProject(path, 'Drift')
+    const project = await adopted(booted, path, 'Drift', environment)
     const session = (await booted.coding.settled((await booted.coding.start({ projectId: project.id, agentId: agent.id, execution: { kind: 'compute', environment }, task: taskText('Look.', { action: 'none' }) })).id))!
     const drift = await booted.coding.pax(session.id, 'drift')
     expect(drift.exitCode).toBe(1)
@@ -228,7 +239,7 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     const path = repository()
     const booted = await boot()
     const agent = await kit.scriptedAgent(booted)
-    const project = await booted.coding.addProject(path, 'Failing')
+    const project = await adopted(booted, path, 'Failing', environment)
     const seen: { exitCode?: number | null; state: string }[] = []
     const original = client.computer.bind(client)
     client.computer = async (...args) => { const value = await original(...args); for (const state of Object.values(value.processes)) seen.push(state); return value }
@@ -248,7 +259,7 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     const path = repository()
     const booted = await boot()
     const agent = await kit.scriptedAgent(booted)
-    const project = await booted.coding.addProject(path, 'Cancel')
+    const project = await adopted(booted, path, 'Cancel', environment)
     const pids = kit.pidfile()
     const started = await booted.coding.start({ projectId: project.id, agentId: agent.id, execution: { kind: 'compute', environment }, task: taskText('Keep editing.', { action: 'mutate-forever', pidfile: pids, target: 'growing.log' }) })
     await waitUntil(() => pidsReady(pids), 60_000)
@@ -271,7 +282,7 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     const path = repository(dir => { writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n') })
     const booted = await boot()
     const agent = await kit.scriptedAgent(booted)
-    const project = await booted.coding.addProject(path, 'Through AppPort')
+    const project = await adopted(booted, path, 'Through AppPort', environment)
     const api = new CodingApi(booted.desktop.repository, booted.coding, (id, allow) => booted.runtime.resolveAgentPermission(id, allow), client)
     const services = openDesktopServices(booted.desktop.databaseDirectory)
     const { secret } = await ensureClientApiKey(services, booted.root)
@@ -300,7 +311,7 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     const path = repository()
     const booted = await boot()
     const agent = await kit.scriptedAgent(booted)
-    const project = await booted.coding.addProject(path, 'Disconnect')
+    const project = await adopted(booted, path, 'Disconnect', environment)
     const pids = kit.pidfile()
     const started = await booted.coding.start({ projectId: project.id, agentId: agent.id, execution: { kind: 'compute', environment }, task: taskText('Keep editing.', { action: 'mutate-forever', pidfile: pids, target: 'growing.log' }) })
     await waitUntil(() => pidsReady(pids), 60_000)

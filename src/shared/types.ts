@@ -627,9 +627,16 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   projectGitUnstage: (id: string, paths: string[]) => Promise<GitState>
   projectGitCommit: (id: string, message: string) => Promise<{ state: GitState; commit: string; summary: string }>
   listCodingSessions: (projectId?: string) => Promise<CodingSession[]>
-  startCodingSession: (input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment: string } }) => Promise<CodingSession>
+  startCodingSession: (input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment?: string } }) => Promise<CodingSession>
   computeInventory: () => Promise<ComputeInventory>
   openComputeUi: () => Promise<void>
+  environmentState: (projectId: string) => Promise<DevelopmentEnvironmentView>
+  environmentDetail: (projectId: string) => Promise<DevelopmentEnvironmentDetail>
+  environmentRecipes: () => Promise<RecipeSummary[]>
+  environmentResolve: (recipe: string, version?: number) => Promise<RecipeResolutionView>
+  environmentCreate: (input: { projectId: string; recipe: string; version?: number }) => Promise<DevelopmentEnvironmentView>
+  /** Destroy asks the owner to confirm in the main process. The answer is Compute's confirmation, not the request. */
+  environmentAct: (projectId: string, action: 'restart' | 'stop' | 'start' | 'retry' | 'destroy') => Promise<DevelopmentEnvironmentView>
   cancelCodingSession: (id: string) => Promise<void>
   ciPlan: (projectId: string, tool?: string) => Promise<CiPlan>
   startCi: (input: { projectId: string; tool?: string }) => Promise<CiRun>
@@ -758,6 +765,113 @@ export interface ComputeInventory {
   environments: ComputeEnvironmentView[]
   /** Compute's own control-plane UI, where the same Computers are observed and managed. */
   uiUrl?: string
+}
+
+// ───────────────────────────── the development environment (a client of Compute) ─────────────────────────────
+//
+// Foundry keeps a *reference* from a project to a Compute environment (`DevelopmentEnvironmentRef`). Everything else below is Compute's
+// answer, translated for display and read again each time: recipe provenance, the Computer, configuration (bootstrap), readiness and
+// lifecycle. Nothing here is stored, and no field is derived from anything but a Compute field.
+
+/** What Foundry persists: identifiers only. The state of the environment is always asked of Compute. */
+export interface DevelopmentEnvironmentRef {
+  projectId: string
+  /** Compute's environment name (Foundry chose it; Compute owns it). */
+  environment: string
+  /** Compute's environment id, learned from Compute once it has recorded the environment. */
+  environmentId?: string
+  /** The recipe the person asked for (a request, not provenance — provenance is Compute's `recipe` on the environment). */
+  requestedRecipe?: { name: string; version?: number }
+  createdAt: number
+}
+
+/** How Foundry names what Compute reports. Each is a translation of Compute's readiness/lifecycle, never an inference. */
+export type EnvironmentState =
+  | 'none'           // the project has no environment reference
+  | 'creating'       // Compute: readiness created/starting, bootstrap not started
+  | 'configuring'    // Compute: readiness starting, bootstrap running
+  | 'ready'          // Compute: readiness ready
+  | 'degraded'       // Compute: readiness degraded (it admits workloads; something declared is impaired)
+  | 'not-ready'      // Compute: readiness unavailable (unreachable, lost, or its target no longer satisfies the requirements)
+  | 'failed'         // Compute: readiness failed
+  | 'stopping' | 'stopped' | 'destroying' | 'destroyed'
+  | 'missing'        // Compute has no such environment (or it is a different one)
+  | 'compute-unavailable' // Compute is not installed, not answering, or too old for this contract
+  | 'unknown'        // Compute said something Foundry does not know: never treated as ready
+
+export type EnvironmentAction = 'open' | 'restart' | 'stop' | 'start' | 'retry' | 'destroy' | 'create'
+
+export type ComputeContractStatus =
+  | { ok: true; installed: { binary: string; version: string } }
+  | { ok: false; reason: 'not-installed' | 'upgrade-required' | 'daemon-unreachable' | 'error'; message: string; installed?: { binary: string; version: string } }
+
+/** Compute's error, kept whole: a human sentence for the person, Compute's own category for diagnostics. */
+export interface EnvironmentReason {
+  /** Compute's category (`requirements_unsatisfied`, `configuration_failed`, `provider_failed`, `runtime_failed`, `bootstrap_cancelled`, `destruction_failed`), or Foundry's own refusal code. */
+  category?: string
+  title: string
+  message: string
+  /** Requirements the target does not satisfy, in placement's terms (`runtime_unavailable` …). */
+  unsatisfied?: { code: string; required?: string; available?: string; detail?: string }[]
+  /** Compute's own words, unedited. */
+  computeSays?: string
+  retryable?: boolean
+}
+
+export interface EnvironmentProgressStep { id: 'recipe' | 'computer' | 'configuration' | 'readiness' | 'ready'; label: string; status: 'done' | 'active' | 'pending' | 'failed' }
+
+export interface EnvironmentRecipeProvenance { name: string; version: number; digest: string }
+
+export interface DevelopmentEnvironmentView {
+  projectId: string
+  compute: ComputeContractStatus
+  reference?: DevelopmentEnvironmentRef
+  state: EnvironmentState
+  reason?: EnvironmentReason
+  /** Compute's recipe evidence on the environment: name, version, digest. Absent when Compute reports none. */
+  recipe?: EnvironmentRecipeProvenance
+  computer?: { target?: string; platform?: string; platformLabel?: string; lifecycle: string; status: string; certification?: ComputePlatformView }
+  /** Compute's words, unedited: the readiness state, bootstrap state and the observed lifecycle. */
+  readiness?: string
+  configuration?: string
+  lifecycle?: string
+  workloads?: number
+  progress: EnvironmentProgressStep[]
+  actions: EnvironmentAction[]
+  /** When Foundry asked Compute. */
+  observedAt: number
+}
+
+/** The optional inspection surface: Compute's inspect output, arranged for reading. */
+export interface DevelopmentEnvironmentDetail extends DevelopmentEnvironmentView {
+  detail?: {
+    environmentId: string
+    createdAt?: string
+    lastTransition?: { at: string; what: string }
+    readinessExplanation?: string
+    conditions: { name: string; satisfied: boolean; detail: string }[]
+    steps: { kind: string; name: string; outcome: string; error?: string }[]
+    requirements: Record<string, unknown>
+    machine?: Record<string, unknown>
+    processes: { name: string; desired: string; state: string }[]
+    placementId?: string
+    generation?: number
+  }
+}
+
+export interface RecipeSummary { name: string; version: number; digest: string; description?: string; lifecycle: string; author?: string }
+
+/** What Compute says a recipe will do — resolved by Compute, only displayed here. */
+export interface RecipeResolutionView {
+  recipe?: EnvironmentRecipeProvenance
+  verdict: 'satisfiable' | 'unsatisfied' | 'invalid'
+  problems: string[]
+  /** Recipe: what you asked Compute to provide. */
+  requirements?: { lifecycle: string; ttlSeconds?: number; cpu?: number; memoryBytes?: number; diskBytes?: number; architecture?: string; network?: string; isolation?: string; capabilities: string[]; features: string[]; runtimes: string[] }
+  /** Computer: where Compute would provide it — placement's own report. */
+  placement?: { selected?: string; explanation?: string; targets: { id: string; eligible: boolean; selected: boolean; reasons: { code: string; required?: string; available?: string; detail?: string }[] }[]; failure?: string }
+  lifecycle: string[]
+  impliedCapabilities: string[]
 }
 
 export interface CodingSession {

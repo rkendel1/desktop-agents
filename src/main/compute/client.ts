@@ -1,7 +1,7 @@
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import type { CommandResult, ComputeInventory, ComputePlatformView } from '../../shared/types'
+import type { CommandResult, ComputeContractStatus, ComputeInventory, ComputePlatformView } from '../../shared/types'
 import { runCommand } from '../coding/commands'
 import { spawnEnvironment } from '../shellPath'
 
@@ -14,7 +14,7 @@ import { spawnEnvironment } from '../shellPath'
 export const DEFAULT_DAEMON = 'http://127.0.0.1:8787'
 
 export class ComputeError extends Error {
-  constructor(readonly code: 'not-installed' | 'daemon-unreachable' | 'not-found' | 'failed' | 'unparseable', message: string, readonly detail?: string) {
+  constructor(readonly code: 'not-installed' | 'daemon-unreachable' | 'not-found' | 'failed' | 'unparseable' | 'unsupported', message: string, readonly detail?: string) {
     super(message)
     this.name = 'ComputeError'
   }
@@ -29,6 +29,8 @@ export interface ComputeClientOptions {
   env?: NodeJS.ProcessEnv
   /** The `pax` executable Compute discovers projects with (`COMPUTE_PAX`). Default: `$FOUNDRY_PAX`, else Compute's own lookup on PATH. */
   pax?: string
+  /** How long `exec` waits for an environment that is starting (re-verifying after its contents changed) to be admitted again. Default 60 s. */
+  admissionWaitMs?: number
 }
 
 const HOMEBREW_BINS = ['/opt/homebrew/bin', '/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin']
@@ -42,6 +44,11 @@ function findExecutable(name: string, path: string | undefined): string | undefi
 }
 
 const PLATFORM_NAMES: Record<string, string> = { 'linux-x86_64': 'Linux x86_64', 'macos-aarch64': 'macOS ARM64' }
+
+/** "Linux x86_64" for Compute's platform id, in either spelling it uses (`linux-x86_64`, `linux/x86_64`). Unknown platforms are shown as Compute wrote them. */
+export function platformName(platform: string): string {
+  return PLATFORM_NAMES[platform.replace('/', '-')] ?? platform
+}
 
 /** What Compute says about a distribution — `certified` and `preview` are Compute's words, and anything else is not called either. */
 export function platformView(evidence: { platform?: unknown; status?: unknown; compute?: unknown }, source: string): ComputePlatformView {
@@ -72,6 +79,73 @@ export interface ComputeComputer {
   repositories: Record<string, { revision: string; commit?: string }>
   processes: Record<string, ComputeProcessState>
   raw: Record<string, unknown>
+}
+
+
+// ─────────────── the environment contract (Compute: recipes, bootstrap, readiness, lifecycle, provenance) ───────────────
+//
+// These are the fields of Compute's own JSON (`compute recipe … --json`, `compute environment inspect --json`; docs/recipes.md, bootstrap.md,
+// readiness.md and lifecycle.md in the Compute repository), typed for the fields Foundry reads. Snake case is Compute's. They are read
+// and passed on; Foundry does not compute any of them.
+
+export interface ComputeRecipeRef { name: string; version: number; digest: string }
+export interface ComputeRecipe {
+  name: string; version: number; status: string; digest: string; author?: string; created_at?: string
+  spec: { description?: string; lifecycle?: string; ttl_seconds?: number; requirements?: ComputeRequirements }
+}
+export interface ComputeRequirements {
+  cpu_count?: number; memory_bytes?: number; disk_bytes?: number; architecture?: string; network?: string; isolation?: string
+  capabilities?: string[]; features?: string[]; runtimes?: unknown[]
+}
+export interface ComputeIncompatibility { code: string; dimension?: string; required?: unknown; available?: unknown; detail?: string }
+export interface ComputeRecipeResolution {
+  recipe?: ComputeRecipeRef
+  verdict: 'invalid' | 'unsatisfied' | 'satisfiable'
+  problems?: string[]
+  resolved?: { computer: { lifecycle: string; ttl_seconds?: number; requirements: ComputeRequirements } }
+  implied_capabilities?: string[]
+  lifecycle?: string[]
+  placement?: {
+    providers?: { provider_id: string; candidate?: { eligible?: boolean; selected?: boolean }; reasons?: ComputeIncompatibility[] }[]
+    failure?: { code: string; message: string }
+    explanation?: { selection?: string }
+  }
+}
+export type ComputeReadinessState = 'created' | 'starting' | 'ready' | 'degraded' | 'unavailable' | 'failed'
+export type ComputeFailureClass = 'requirements_unsatisfied' | 'configuration_failed' | 'provider_failed' | 'runtime_failed' | 'bootstrap_cancelled' | 'destruction_failed'
+export interface ComputeReadiness {
+  state: ComputeReadinessState
+  conditions: { name: string; satisfied: boolean; detail: string }[]
+  unsatisfied?: ComputeIncompatibility[]
+  explanation: string
+  class?: ComputeFailureClass
+  configuration?: { target: string; distribution?: string; runtime?: string; platform?: string }
+  evaluated_at?: string
+}
+export interface ComputeBootstrap {
+  state: 'not_started' | 'running' | 'succeeded' | 'failed'
+  contents_generation?: number; converged_generation?: number
+  steps: { kind: string; name: string; outcome: string; job_id?: string; error?: string }[]
+  completed_at?: string
+  failure?: { class: ComputeFailureClass; operation: string; message: string; retryable: boolean; job_id?: string; at?: string }
+}
+export interface ComputeEnvironmentComputer {
+  environment: string; environment_id: string; lifecycle: string; status: string
+  requirements?: ComputeRequirements
+  target?: string; placement_id?: string; session_id?: string; provider_kind?: string
+  machine?: Record<string, unknown>
+  generation?: number; created_at?: string; ready_at?: string; ended_at?: string; expires_at?: string
+  failure?: { phase: string; code: string; message: string; retryable?: boolean; target?: string; at?: string }
+  reality: { desired: string; observed: string; confirmed_at?: string; since?: string; explanation: string; processes?: Record<string, { desired: string; process: string }> }
+  readiness: ComputeReadiness
+  bootstrap: ComputeBootstrap
+}
+/** `compute environment inspect --json`: the environment with its computer, recipe evidence and machine. */
+export interface ComputeEnvironmentRecord {
+  environment_id: string; name: string; desired_state: string; actual_state: string; created_at?: string
+  workload_count?: number
+  computer?: ComputeEnvironmentComputer
+  recipe?: ComputeRecipeRef
 }
 
 export class ComputeClient {
@@ -169,6 +243,74 @@ export class ComputeClient {
     return { outcome: raw.outcome, providers: (raw.providers ?? []).map(provider => ({ id: provider.provider_id, eligible: provider.candidate?.eligible === true, reasons: provider.reasons ?? [] })) }
   }
 
+
+  // ─────────────── the environment contract ───────────────
+
+  /**
+   * Whether the installed Compute declares the contract Foundry's Environment surface is built on — Recipes, `environment create --recipe`,
+   * bootstrap/readiness on `environment inspect`, and lifecycle — and whether its daemon answers. An older Compute is reported as needing
+   * an update; nothing is emulated for it (no recipes, bootstrap or readiness are inferred from what it does have).
+   */
+  private contractDeclared?: { binary: string; version: string }
+  async environmentContract(options: { daemon?: boolean } = {}): Promise<ComputeContractStatus> {
+    if (!this.contractDeclared) {
+      let binary: string
+      try { binary = (await this.locate()).binary } catch (error) {
+        return { ok: false, reason: 'not-installed', message: error instanceof Error ? error.message : String(error) }
+      }
+      let version = 'unknown'
+      try { version = (await this.cli(['--version'], { timeoutMs: 15_000 })).stdout.trim().replace(/^compute(-configured)?\s+/, '') || 'unknown' } catch { /* reported below */ }
+      const [recipe, create] = await Promise.all([this.cli(['recipe', '--help'], { timeoutMs: 15_000 }).catch(() => undefined), this.cli(['environment', 'create', '--help'], { timeoutMs: 15_000 }).catch(() => undefined)])
+      if (recipe?.exitCode !== 0 || !create || !/--recipe\b/.test(create.stdout)) {
+        return { ok: false, reason: 'upgrade-required', installed: { binary, version }, message: `Compute update required. This version of Foundry requires Compute with Environment Recipes, Bootstrap, Readiness and lifecycle support. Installed: Compute Configured ${version}.` }
+      }
+      // What the installed binary declares does not change while Foundry runs; whether the daemon answers does, so that is asked every time.
+      this.contractDeclared = { binary, version }
+    }
+    if (options.daemon !== false && !(await this.reachable())) return { ok: false, reason: 'daemon-unreachable', installed: this.contractDeclared, message: `The Compute daemon is not answering at ${this.daemon}. Start it with \`compute start\`.` }
+    return { ok: true, installed: this.contractDeclared }
+  }
+
+  /** Recipes at their current version, as Compute lists them. */
+  async recipes(): Promise<ComputeRecipe[]> {
+    return this.json<ComputeRecipe[]>(['recipe', 'list', '--json', ...this.daemonArgs()], { timeoutMs: 30_000 })
+  }
+
+  /** Compute's resolution of a recipe: read-only, nothing is acquired. `unsatisfied` and `invalid` are answers, not failures. */
+  async resolveRecipe(name: string, version?: number): Promise<ComputeRecipeResolution> {
+    const args = ['recipe', 'resolve', name, ...(version !== undefined ? ['--version', String(version)] : []), '--json', ...this.daemonArgs()]
+    const result = await this.cli(args, { timeoutMs: 60_000 })
+    try { return JSON.parse(result.stdout) as ComputeRecipeResolution } catch { throw this.failure(args, result) }
+  }
+
+  /** `compute environment create NAME --recipe RECIPE@VERSION`: Compute resolves, places, records the environment and starts bootstrapping it. Returns as soon as it is recorded — not when it is ready. */
+  async createFromRecipe(name: string, recipe: { name: string; version: number }): Promise<ComputeEnvironmentRecord> {
+    return this.json<ComputeEnvironmentRecord>(['environment', 'create', name, '--recipe', `${recipe.name}@${recipe.version}`, '--json', ...this.daemonArgs()], { timeoutMs: 120_000 })
+  }
+
+  /** Everything Compute says about one environment now: its Computer, bootstrap, readiness, recipe evidence. Not-found is `ComputeError('not-found')`. */
+  async inspectEnvironment(name: string, signal?: AbortSignal): Promise<ComputeEnvironmentRecord> {
+    const record = await this.json<ComputeEnvironmentRecord>(['environment', 'inspect', name, '--json', ...this.daemonArgs()], { signal, timeoutMs: 30_000 })
+    if (record.computer && (!record.computer.readiness || !record.computer.bootstrap)) throw new ComputeError('unsupported', `Compute reported environment "${name}" without readiness or bootstrap; this Compute does not implement the environment contract.`)
+    return record
+  }
+
+  /** Ask Compute to start, stop or restart. The answer to the *request* is not the outcome; the outcome is read with `inspectEnvironment`. */
+  async lifecycle(name: string, action: 'start' | 'stop' | 'restart'): Promise<void> {
+    await this.json(['environment', action, name, '--json', ...this.daemonArgs()], { timeoutMs: 120_000 })
+  }
+
+  /** Compute's own retry: `environment reconcile` re-applies what failed. */
+  async reconcile(name: string): Promise<void> {
+    await this.json(['environment', 'reconcile', name, '--json', ...this.daemonArgs()], { timeoutMs: 120_000 })
+  }
+
+  /** Compute's destroy, which terminates what runs and waits for the target's confirmation. Exit 0 is Compute saying `destroyed`; otherwise Compute's own error (`termination_failed`, `destruction_failed`…) is thrown. */
+  async destroyEnvironment(name: string): Promise<void> {
+    const result = await this.cli(['environment', 'destroy', name, '--json', ...this.daemonArgs()], { timeoutMs: 180_000 })
+    if (result.exitCode !== 0) throw this.failure(['environment', 'destroy'], result)
+  }
+
   // ─────────────── computers ───────────────
 
   async computer(environment: string, signal?: AbortSignal): Promise<ComputeComputer> {
@@ -257,7 +399,19 @@ export class ComputeClient {
     const wrapped = options.repository ? ['sh', '-c', 'cd "repos/$0" && exec "$@"', options.repository, ...argv] : argv
     const flags = ['--json', ...Object.entries(options.env ?? {}).flatMap(([key, value]) => ['--env', `${key}=${value}`]), ...(options.timeoutMs ? ['--timeout', `${Math.ceil(options.timeoutMs / 1000)}s`] : [])]
     const started = Date.now()
-    const result = await this.cli(['environment', 'exec', environment, ...flags, ...this.daemonArgs(), '--', ...wrapped], { signal: options.signal, timeoutMs: (options.timeoutMs ?? 300_000) + 30_000 })
+    // Compute admits a workload only to an environment it has verified ready. Declaring new contents (a repository, an agent) sends the
+    // environment back through bootstrap for a moment, and Compute refuses `exec` with “is starting, not ready for workloads” until it has
+    // verified it again. Nothing ran (the refusal comes first), so waiting and asking again is safe; any other refusal — stopped, failed,
+    // unavailable — is final and is reported as Compute worded it.
+    const deadline = Date.now() + (this.options.admissionWaitMs ?? 60_000)
+    let result: CommandResult
+    for (;;) {
+      result = await this.cli(['environment', 'exec', environment, ...flags, ...this.daemonArgs(), '--', ...wrapped], { signal: options.signal, timeoutMs: (options.timeoutMs ?? 300_000) + 30_000 })
+      const refusal = result.exitCode !== 0 && !result.stdout.trim().startsWith('{') && /is (starting|created), not ready for workloads/.test(`${result.stderr}${result.stdout}`)
+      if (!refusal || Date.now() >= deadline) break
+      options.signal?.throwIfAborted()
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
     if (result.exitCode !== 0 && !result.stdout.trim().startsWith('{')) throw this.failure(['environment', 'exec'], result)
     let parsed: { status?: string; result?: { exit_code?: number | null; stdout?: { text?: string }; stderr?: { text?: string }; status?: string; error?: { message?: string } | string | null } }
     try { parsed = JSON.parse(result.stdout) } catch { throw new ComputeError('unparseable', 'Compute answered `environment exec` with something that is not JSON.', result.stdout.slice(0, 500)) }

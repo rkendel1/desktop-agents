@@ -47,6 +47,7 @@ import { DouchatRuntime } from './runtime'
 import { RoutineScheduler } from './scheduler'
 import { CodingService } from './coding/service'
 import { CiService } from './ci/service'
+import { EnvironmentService } from './environment/service'
 import { CodingApi } from './coding/api'
 import { ComputeClient } from './compute/client'
 import { startAppPortHost, type AppPortHost } from './appport/host'
@@ -208,6 +209,7 @@ let emailConnectors: EmailConnectorManager
 let projection: DesktopProjection
 let coding: CodingService
 let ci: CiService
+let environments: EnvironmentService
 let computeClient: ComputeClient
 let codingApi: CodingApi
 let appPort: AppPortHost | undefined
@@ -482,11 +484,12 @@ app.whenReady().then(async () => {
   scheduler = new RoutineScheduler(store, runtime)
   runtime.setRoutineCreator((input) => scheduler.createRoutine(input))
   computeClient = new ComputeClient()
-  coding = new CodingService(store, runtime, () => ephemeralChanged(), { compute: computeClient })
+  environments = new EnvironmentService(store, computeClient)
+  coding = new CodingService(store, runtime, () => ephemeralChanged(), { compute: computeClient, environments })
   // The one place approvals are answered: the desktop prompt and a remote client both end up here.
   const answerPermission = (id: string, allow: boolean): void => { runtime.resolveAgentPermission(id, allow); ephemeralChanged() }
   ci = new CiService(store, { compute: computeClient })
-  codingApi = new CodingApi(store, coding, answerPermission, computeClient, ci)
+  codingApi = new CodingApi(store, coding, answerPermission, computeClient, ci, environments)
   // A run left `running` by a Foundry that is gone: its Computer is released through Compute now.
   void ci.recover().catch(error => diagnostics.write('ci.recover.failed', error instanceof Error ? error.message : String(error)))
   coding.announceInterrupted(store.recoveredCodingSessions)
@@ -1053,6 +1056,36 @@ app.whenReady().then(async () => {
     if (!isDouchatRenderer(event.sender)) throw new Error('Unauthorized')
     await shell.openExternal(`${computeClient.daemon.replace(/\/$/, '')}/ui/`)
   })
+  // The project's development environment. Foundry stores a reference; every answer below is read from Compute each time.
+  const environmentGuard = (event: Electron.IpcMainInvokeEvent, ...values: unknown[]): void => {
+    if (!isDouchatRenderer(event.sender) || values.some(value => value !== undefined && typeof value !== 'string' && typeof value !== 'number')) throw new Error('Unauthorized')
+  }
+  ipcMain.handle('douchat:environment-state', (event, projectId: unknown) => { environmentGuard(event, projectId); return environments.view(projectId as string) })
+  ipcMain.handle('douchat:environment-detail', (event, projectId: unknown) => { environmentGuard(event, projectId); return environments.detail(projectId as string) })
+  ipcMain.handle('douchat:environment-recipes', event => { environmentGuard(event); return environments.recipes() })
+  ipcMain.handle('douchat:environment-resolve', (event, recipe: unknown, version?: unknown) => {
+    environmentGuard(event, recipe, version)
+    if (typeof recipe !== 'string' || (version !== undefined && typeof version !== 'number')) throw new Error('Unauthorized')
+    return environments.resolve(recipe, version)
+  })
+  ipcMain.handle('douchat:environment-create', (event, input: { projectId?: unknown; recipe?: unknown; version?: unknown }) => {
+    if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.recipe !== 'string' || (input.version !== undefined && typeof input.version !== 'number')) throw new Error('Unauthorized')
+    return environments.create({ projectId: input.projectId, recipe: input.recipe, ...(input.version !== undefined ? { version: input.version as number } : {}) })
+  })
+  ipcMain.handle('douchat:environment-act', async (event, projectId: unknown, action: unknown) => {
+    if (!isDouchatRenderer(event.sender) || typeof projectId !== 'string' || !['restart', 'stop', 'start', 'retry', 'destroy'].includes(action as string)) throw new Error('Unauthorized')
+    if (action === 'destroy') {
+      // Destroying removes the Computer and everything on it: the owner confirms in the main process, and only Compute's confirmation ends it.
+      const view = await environments.view(projectId)
+      const parent = BrowserWindow.fromWebContents(event.sender)
+      const options = { type: 'warning' as const, message: ui('Destroy this environment?', '销毁此环境？'),
+        detail: `${view.reference?.environment ?? ''}${view.recipe ? ` · ${view.recipe.name} v${view.recipe.version}` : ''}\n\n${ui('Compute will stop everything running on its Computer and remove the Computer. This cannot be undone.', 'Compute 会停止其 Computer 上运行的所有内容并移除该 Computer，此操作无法撤销。')}`,
+        buttons: [ui('Cancel', '取消'), ui('Destroy', '销毁')], defaultId: 0, cancelId: 0 }
+      const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+      if (result.response !== 1) return view
+    }
+    return environments.act(projectId, action as 'restart' | 'stop' | 'start' | 'retry' | 'destroy')
+  })
   ipcMain.handle('douchat:ci-plan', (event, projectId: unknown, tool?: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof projectId !== 'string' || (tool !== undefined && typeof tool !== 'string')) throw new Error('Unauthorized')
     return ci.plan(projectId, tool as string | undefined)
@@ -1071,7 +1104,7 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('douchat:start-coding-session', (event, input: { projectId?: unknown; agentId?: unknown; task?: unknown; execution?: { kind?: unknown; environment?: unknown } }) => {
     if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.agentId !== 'string' || typeof input.task !== 'string') throw new Error('Unauthorized')
-    const execution = input.execution?.kind === 'compute' && typeof input.execution.environment === 'string' ? { kind: 'compute' as const, environment: input.execution.environment } : undefined
+    const execution = input.execution?.kind === 'compute' ? { kind: 'compute' as const, ...(typeof input.execution.environment === 'string' ? { environment: input.execution.environment } : {}) } : undefined
     return coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task, ...(execution ? { execution } : {}) })
   })
   ipcMain.handle('douchat:continue-coding-session', (event, id: unknown, text?: unknown) => {

@@ -205,7 +205,7 @@ network or Compute. See [docs/workbench.md](docs/workbench.md).
 
 ## Running on Compute
 
-A coding session can run on a Computer from an installed [Compute Configured](https://github.com/rkendel1/compute)
+Each project can have a development **Environment** created and controlled from Project Home through Compute (recipe → Computer → bootstrap → readiness); Foundry only shows what Compute reports, and workloads never run unless Compute says the environment is ready ([docs/environments.md](docs/environments.md)). It needs a Compute with the environment contract (not Compute Configured 0.1.5). Separately, a coding session can run on a Computer from an installed [Compute Configured](https://github.com/rkendel1/compute)
 (`brew install compute-configured`, then `compute-configured-verify`) instead of on this machine: choose **Execution →
 Compute** and a Computer when you start it. The agent, its files, tests and PAX commands then run on that Computer, and
 there is no fallback to running locally. Foundry shows the platform as Compute states it (Linux x86_64 — Certified, macOS
