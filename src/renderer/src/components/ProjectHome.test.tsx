@@ -36,7 +36,8 @@ beforeEach(() => {
     projectPax: vi.fn(async (_id: string, command: string) => command === 'info'
       ? { command, exitCode: 0, json: { manager: { name: 'npm', selectedBy: 'lockfile precedence' } }, stdout: '', stderr: '', findings: { ambiguous: false, drift: false, failedClosed: false } }
       : { command, exitCode: 2, json: { issues: [{ status: 'ambiguous', expected: 'one JavaScript package-manager authority', actual: 'pnpm-lock.yaml, package-lock.json' }] }, stdout: '', stderr: '', findings: { ambiguous: true, drift: false, failedClosed: false } }),
-    openComputeUi: vi.fn(async () => undefined), environmentState: vi.fn(async () => unavailable()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => []), environmentResolve: vi.fn(), environmentCreate: vi.fn(), environmentAct: vi.fn(), setProjectTestCommand: vi.fn(async () => project), discoverProjectCommands: vi.fn(async () => [{ operation: 'test', command: ['npm', 'test'] }]), chooseProject: vi.fn(),
+    openComputeUi: vi.fn(async () => undefined), environmentState: vi.fn(async () => unavailable()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => []), environmentResolve: vi.fn(), environmentCreate: vi.fn(), environmentAct: vi.fn(),
+    environmentSetupDeveloper: vi.fn(), onEnvironmentSetupProgress: vi.fn(() => () => undefined), setProjectTestCommand: vi.fn(async () => project), discoverProjectCommands: vi.fn(async () => [{ operation: 'test', command: ['npm', 'test'] }]), chooseProject: vi.fn(),
     ciPlan: vi.fn(async () => ({ projectId: 'p1', projectName: 'Fixture', ready: false, blockers: ['x'], computer: { lifecycle: 'ephemeral' } })), startCi: vi.fn(), cancelCi: vi.fn(),
     listJevEvaluations: vi.fn(async () => [])
   }
@@ -66,6 +67,21 @@ it('renders the project’s own durable group conversation and history', async (
   expect(projectChat.textContent).toContain('Discuss, decide, and delegate work in this project')
   expect(projectChat.textContent).toContain('The project context is loaded.')
   expect(projectChat.querySelector('textarea')).not.toBeNull()
+})
+
+it('starts one-click Developer setup from the Project conversation', async () => {
+  const none: DevelopmentEnvironmentView = { projectId: 'p1', compute: { ok: true, installed: { binary: '/compute', version: '0.1.6' } }, state: 'none', progress: [], actions: ['create'], observedAt: 1 }
+  const ready: DevelopmentEnvironmentView = { ...none, state: 'ready', reference: { projectId: 'p1', environment: 'dev', environmentId: 'env_1', createdAt: 1 },
+    recipe: { name: 'developer', version: 1, digest: 'sha256:x' }, readiness: 'ready', configuration: 'succeeded', lifecycle: 'running', actions: ['open', 'restart', 'stop', 'destroy'] }
+  api.environmentState.mockResolvedValue(none)
+  api.environmentSetupDeveloper.mockResolvedValue({ projectId: 'p1', steps: [], view: ready })
+  const conversation: Conversation = { id: 'project-p1', projectId: 'p1', type: 'group', name: 'Fixture', agentIds: ['a1'], workspacePath: project.path,
+    topics: [{ id: 'topic', title: '', createdAt: 1, updatedAt: 1 }], activeTopicId: 'topic', unread: 0, readAt: 1, createdAt: 1, updatedAt: 1 }
+  await render(snapshot({ conversations: [conversation], activity: [], runtime: { mode: 'live', label: 'Connected' } }))
+  expect(node.querySelector('[aria-label="Project conversation"]')!.textContent).toContain('Your development environment isn’t configured yet.')
+  await click('Create Developer Environment')
+  expect(api.environmentSetupDeveloper).toHaveBeenCalledWith('p1')
+  expect(node.querySelector('[aria-label="Project conversation"]')!.textContent).toContain('Developer environment is ready.')
 })
 
 it('shows inspectable Jev decisions, rules, evidence, uncertainty and provenance on the project', async () => {

@@ -228,7 +228,7 @@ it('adds a project through the folder picker and starts a session with the chose
     task.dispatchEvent(new Event('input', { bubbles: true }))
   })
   await click('Start session')
-  expect(api.startCodingSession).toHaveBeenCalledWith({ projectId: 'p1', agentId: 'a1', task: 'Add a test' })
+  expect(api.startCodingSession).toHaveBeenCalledWith({ projectId: 'p1', agentId: 'a1', task: 'Add a test', execution: { kind: 'compute' } })
   expect(select).toHaveBeenLastCalledWith({ projectId: 'p1', sessionId: 's1' })
 })
 

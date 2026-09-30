@@ -29,6 +29,7 @@ Git/PAX/Compute answers each time. It stores nothing that could disagree with th
 Selecting a project answers four questions at once.
 
 - **What are we discussing?** One long-lived group conversation belongs to the project. It uses the existing chat/group runtime, points at the project workspace, and retains project/conversation/session/run provenance. It remains distinct from short-lived coding sessions.
+  When no execution environment is attached, this conversation offers **Create Developer Environment**; the same idempotent Compute setup is available in the Environment section.
 
 - **What am I working on?** Project, repository path, branch, the upstream it tracks and how far ahead/behind it is, the commit, and PAX's tooling line.
 - **What is happening?** The running session, its agent, where it runs, its live activity — and its approval, right there, with *Allow*, *Deny* and *Cancel session*. If nothing is running: **Last time**, the most recent session (status, agent, where it ran, when, result, changed files, checks).

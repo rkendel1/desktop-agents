@@ -24,6 +24,10 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
   api = { environmentState: vi.fn(async () => view()), environmentDetail: vi.fn(), environmentRecipes: vi.fn(async () => [{ name: 'developer', version: 3, digest: 'sha256:x', lifecycle: 'persistent', description: 'A dev computer' }]),
     environmentCreateRecipe: vi.fn(async () => [{ name: 'developer', version: 1, digest: 'sha256:dev', lifecycle: 'persistent' }]),
+    environmentSetupDeveloper: vi.fn(async () => ({ projectId: 'p1', steps: [
+      { id: 'compute', label: 'Compute available', status: 'done' }, { id: 'recipe', label: 'Developer recipe created', status: 'done' },
+      { id: 'validation', label: 'Developer recipe validated', status: 'done' }, { id: 'environment', label: 'Development environment created', status: 'done' }, { id: 'computer', label: 'Computer ready', status: 'done' }
+    ], view: view() })), onEnvironmentSetupProgress: vi.fn(() => () => undefined), openComputeUi: vi.fn(async () => undefined),
     environmentResolve: vi.fn(async () => satisfiable), environmentCreate: vi.fn(async () => view({ state: 'creating', readiness: 'created', configuration: 'not_started', actions: ['destroy'] })), environmentAct: vi.fn() }
   ;(window as unknown as { douchat: unknown }).douchat = api
   node = document.createElement('div'); document.body.append(node); root = createRoot(node)
@@ -108,13 +112,13 @@ it('does not silently replace a lost environment: it says so and waits for the p
   expect(text()).toContain('The Compute environment associated with this project no longer exists.')
   expect(api.environmentCreate).not.toHaveBeenCalled()
   expect(api.environmentRecipes).not.toHaveBeenCalled()
-  expect([...node.querySelectorAll('.coding-actions button')].map(button => button.textContent)).toEqual(['Create developer environment'])
+  expect([...node.querySelectorAll('.coding-actions button')].map(button => button.textContent)).toEqual(['Create Developer Environment'])
 })
 
 it('creates an environment from a recipe Compute resolved: Recipe, Computer, Environment and Readiness explained, requirements and placement shown, Create enabled only when satisfiable', async () => {
   api.environmentState.mockResolvedValue(view({ state: 'none', reference: undefined, recipe: undefined, computer: undefined, readiness: undefined, configuration: undefined, lifecycle: undefined, actions: ['create'] }))
   await render()
-  await click('Create developer environment')
+  await click('Choose another recipe…')
   const create = node.querySelector('.env-create')!.textContent!
   expect(create).toContain('What you asked Compute to provide.'); expect(create).toContain('Where Compute will provide it.'); expect(create).toContain('The configured execution context.'); expect(create).toContain('Whether reality actually satisfies the request.')
   expect(api.environmentResolve).toHaveBeenCalledWith('developer')
@@ -125,25 +129,23 @@ it('creates an environment from a recipe Compute resolved: Recipe, Computer, Env
   expect(node.querySelector('[role=status]')!.textContent).toBe('Creating')
 })
 
-it('creates a starter recipe through the Compute boundary without pretending it is installed', async () => {
+it('sets up the Developer recipe and environment in one click without showing shell instructions', async () => {
   api.environmentState.mockResolvedValue(view({ state: 'none', reference: undefined, recipe: undefined, computer: undefined, readiness: undefined, configuration: undefined, lifecycle: undefined, actions: ['create'] }))
-  api.environmentRecipes.mockResolvedValueOnce([])
   await render()
-  await click('Create developer environment')
-  expect(text()).toContain('Homebrew package does not seed them automatically')
-  expect(text()).toContain('dev, ci, agent-task, preview, staging, production, and migration')
-  expect(text()).toContain('compute-configured recipe create developer --file examples/recipes/dev.json')
-  expect(text()).not.toContain('compute recipe create developer --file dev.json')
-  await click('Create development recipe')
-  expect(api.environmentCreateRecipe).toHaveBeenCalledWith('developer')
-  expect(node.querySelector<HTMLSelectElement>('.env-create select')?.value).toBe('developer')
+  await click('Create Developer Environment')
+  expect(api.environmentSetupDeveloper).toHaveBeenCalledWith('p1')
+  expect(text()).toContain('Developer recipe created')
+  expect(text()).toContain('Developer recipe validated')
+  expect(text()).toContain('Computer ready')
+  expect(text()).not.toContain('compute recipe create')
+  expect(node.querySelector('[role=status]')!.textContent).toBe('Ready')
 })
 
 it('does not offer to create from a recipe Compute says cannot be satisfied here, and shows why per target', async () => {
   api.environmentState.mockResolvedValue(view({ state: 'none', reference: undefined, actions: ['create'] }))
   api.environmentResolve.mockResolvedValue({ ...satisfiable, verdict: 'unsatisfied', placement: { targets: [{ id: 'this-machine', eligible: false, selected: false, reasons: [{ code: 'session_capability_unsupported', required: '["terminal"]' }] }], failure: 'no provider' } })
   await render()
-  await click('Create developer environment')
+  await click('Choose another recipe…')
   const create = node.querySelector('.env-create')!.textContent!
   expect(create).toContain('cannot be satisfied here'); expect(create).toContain('session_capability_unsupported'); expect(create).toContain('Choose another recipe')
   expect([...node.querySelectorAll('button')].find(button => button.textContent === 'Create environment')!.disabled).toBe(true)

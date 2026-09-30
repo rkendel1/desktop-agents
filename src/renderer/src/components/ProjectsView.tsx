@@ -22,7 +22,7 @@ const seconds = (ms: number): string => `${(ms / 1000).toFixed(ms < 10_000 ? 1 :
  * what changed (Git, and what the last session changed), and what to do next (start, continue, review, check, commit).
  * Everything is read from Foundry's service, FeltDB and Git each time; nothing is kept here.
  */
-function ProjectConversation({ project, snapshot, onCreateWork }: { project: Project; snapshot: AppSnapshot; onCreateWork: (draft: WorkDraft) => void }): ReactElement {
+function ProjectConversation({ project, snapshot, environment, setupBusy, onSetup, onCreateWork }: { project: Project; snapshot: AppSnapshot; environment?: DevelopmentEnvironmentView; setupBusy: boolean; onSetup: () => void; onCreateWork: (draft: WorkDraft) => void }): ReactElement {
   const projected = (snapshot.conversations ?? []).find(item => item.projectId === project.id)
   const [created, setCreated] = useState<Conversation>()
   const [error, setError] = useState('')
@@ -46,6 +46,9 @@ function ProjectConversation({ project, snapshot, onCreateWork }: { project: Pro
   return <section className="coding-section project-conversation" aria-label={t('Project conversation')}>
     <div className="project-conversation-heading"><div><h3>{t('Conversation')}</h3><p className="muted">{t('Discuss, decide, and delegate work in this project. This history stays with the project.')}</p></div>
       <span className="muted">{tr('{count} agents', { count: members.length })}</span></div>
+    {environment?.state === 'none' && <div className="project-environment-callout"><p><strong>{t('Your development environment isn’t configured yet.')}</strong></p>
+      <button className="primary-button" disabled={setupBusy} onClick={onSetup}>{t(setupBusy ? 'Setting up…' : 'Create Developer Environment')}</button></div>}
+    {(environment?.state === 'ready' || environment?.state === 'degraded') && <p className="project-environment-ready"><span className="coding-ok">✓</span> {t('Developer environment is ready.')} {t('What should we build?')}</p>}
     <div className="project-chat-stage"><ChatPane
       key={`${conversation.id}:${topic?.id}`} userName={snapshot.userName} userAvatar={snapshot.userAvatar}
       conversation={conversation} topic={topic} messages={messages} allMessages={snapshot.messages ?? []}
@@ -69,6 +72,7 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
   const [commandDiscoveryError, setCommandDiscoveryError] = useState('')
   const [execution, setExecution] = useState<'local' | 'compute'>('compute')
   const [environment, setEnvironment] = useState<DevelopmentEnvironmentView>()
+  const [setupBusy, setSetupBusy] = useState(false)
   const [evaluations, setEvaluations] = useState<StoredJevEvaluation[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -138,6 +142,12 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
     try { await work() } catch (cause) { setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause)) }
     finally { setBusy(false) }
   }
+  const setupDevelopment = (): void => {
+    setSetupBusy(true); setError('')
+    void window.douchat.environmentSetupDeveloper(project.id).then(result => setEnvironment(result.view), cause => {
+      setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause))
+    }).finally(() => setSetupBusy(false))
+  }
   const recentChecks = sessions.flatMap(session => session.commands.map(result => ({ result, session }))).sort((a, b) => b.result.startedAt - a.result.startedAt).slice(0, 5)
   const lastState = latest ? codingDisplayState(latest) : undefined
   const workRows: WorkRow[] = [
@@ -153,7 +163,7 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
       <ToolingLine project={project} refreshKey={signature} />
     </header>
 
-    <ProjectConversation project={project} snapshot={snapshot} onCreateWork={onCreateWork ?? (() => undefined)} />
+    <ProjectConversation project={project} snapshot={snapshot} environment={environment} setupBusy={setupBusy} onSetup={setupDevelopment} onCreateWork={onCreateWork ?? (() => undefined)} />
 
     <EnvironmentPanel project={project} work={workRows} />
 

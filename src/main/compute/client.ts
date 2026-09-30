@@ -1,4 +1,4 @@
-import { accessSync, constants, readFileSync, realpathSync } from 'node:fs'
+import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { CommandResult, ComputeContractStatus, ComputeInventory, ComputePlatformView } from '../../shared/types'
@@ -308,6 +308,42 @@ export class ComputeClient {
   async createRecipe(name: string, file: string): Promise<void> {
     const result = await this.cli(['recipe', 'create', name, '--file', realpathSync(file), ...this.daemonArgs()], { timeoutMs: 60_000 })
     if (result.exitCode !== 0) throw this.failure(['recipe', 'create', name], result)
+  }
+
+  /**
+   * Resolve a starter shipped by the installed Compute distribution. Compute
+   * 0.1.6 has no starter-discovery command, so this checks only distribution
+   * locations adjacent to the installed binaries. It never consults a source
+   * checkout and never copies the recipe into Foundry state.
+   */
+  async starterRecipe(name: string): Promise<string | undefined> {
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(name)) return undefined
+    const { binary, sibling } = await this.locate()
+    const executables = [binary, sibling('compute')].filter((value): value is string => Boolean(value))
+    const candidates = new Set<string>()
+    for (const executable of executables) {
+      let installed: string
+      try { installed = realpathSync(executable) } catch { continue }
+      for (const prefix of [dirname(installed), join(dirname(installed), '..')]) {
+        for (const relative of [
+          ['libexec', 'examples', 'recipes'], ['share', 'compute', 'examples', 'recipes'],
+          ['share', 'examples', 'recipes'], ['examples', 'recipes']
+        ]) candidates.add(join(prefix, ...relative, `${name}.json`))
+      }
+    }
+    for (const candidate of candidates) {
+      try {
+        const resolved = realpathSync(candidate)
+        if (statSync(resolved).isFile()) return resolved
+      } catch { /* this distribution location does not contain the starter */ }
+    }
+  }
+
+  /** Compute's explicit validation contract. Nonzero means invalid or unsatisfied, whose JSON is still the answer. */
+  async validateRecipe(name: string, version?: number): Promise<ComputeRecipeResolution> {
+    const args = ['recipe', 'validate', name, ...(version !== undefined ? ['--version', String(version)] : []), '--json', ...this.daemonArgs()]
+    const result = await this.cli(args, { timeoutMs: 60_000 })
+    try { return JSON.parse(result.stdout) as ComputeRecipeResolution } catch { throw this.failure(args, result) }
   }
 
   /** Compute's resolution of a recipe: read-only, nothing is acquired. `unsatisfied` and `invalid` are answers, not failures. */

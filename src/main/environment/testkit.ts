@@ -53,6 +53,9 @@ export class FixtureCompute implements ComputeBackend {
     // The script's shebang names this node, so it runs wherever the tests do.
     const source = readFileSync(join(__dirname, 'fixtures', 'compute-contract.cjs'), 'utf8').replace(/^#!.*\n/, `#!${process.execPath}\n`)
     writeFileSync(this.script, source.replace("path.join(__dirname, 'compute-main', name)", `path.join(${JSON.stringify(join(__dirname, 'fixtures'))}, 'compute-main', name)`)); chmodSync(this.script, 0o755)
+    const starters = join(this.home, 'libexec', 'examples', 'recipes')
+    mkdirSync(starters, { recursive: true })
+    writeFileSync(join(starters, 'dev.json'), JSON.stringify({ description: 'A developer-owned computer kept until destroyed.', lifecycle: 'persistent', requirements: {} }))
     this.env = { FIXTURE_STATE: this.state, ...(options.legacy ? { FIXTURE_LEGACY: '1' } : {}), ...(options.auto ? { FIXTURE_AUTO: '1' } : {}), ...options.extra }
     this.client = new ComputeClient({ binary: this.script, daemon: 'http://127.0.0.1:8787', env: this.env })
   }

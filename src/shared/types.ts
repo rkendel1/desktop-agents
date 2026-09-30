@@ -670,6 +670,9 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   environmentRecipes: () => Promise<RecipeSummary[]>
   /** Opens a trusted main-process file picker and asks Compute to register that recipe file. */
   environmentCreateRecipe: (name: string) => Promise<RecipeSummary[] | undefined>
+  /** Idempotently create/reuse Compute's developer recipe and `dev` environment, then attach this Project. */
+  environmentSetupDeveloper: (projectId: string) => Promise<DevelopmentSetupResult>
+  onEnvironmentSetupProgress: (listener: (progress: DevelopmentSetupProgress) => void) => () => void
   environmentResolve: (recipe: string, version?: number) => Promise<RecipeResolutionView>
   environmentCreate: (input: { projectId: string; recipe: string; version?: number }) => Promise<DevelopmentEnvironmentView>
   /** Destroy asks the owner to confirm in the main process. The answer is Compute's confirmation, not the request. */
@@ -864,6 +867,14 @@ export interface EnvironmentReason {
 }
 
 export interface EnvironmentProgressStep { id: 'recipe' | 'computer' | 'configuration' | 'readiness' | 'ready'; label: string; status: 'done' | 'active' | 'pending' | 'failed' }
+
+export interface DevelopmentSetupStep {
+  id: 'compute' | 'recipe' | 'validation' | 'environment' | 'computer'
+  label: string
+  status: 'done' | 'active' | 'pending' | 'failed'
+}
+export interface DevelopmentSetupProgress { projectId: string; steps: DevelopmentSetupStep[] }
+export interface DevelopmentSetupResult extends DevelopmentSetupProgress { view: DevelopmentEnvironmentView }
 
 export interface EnvironmentRecipeProvenance { name: string; version: number; digest: string }
 

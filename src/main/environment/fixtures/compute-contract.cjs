@@ -119,6 +119,7 @@ if (a === 'node' && b === 'info') {
 
 if (a === 'recipe' && b === 'list') { persist(Object.values(state.recipes).map(({ satisfiable, ...recipe }) => recipe)); process.exit(0) }
 if (a === 'recipe' && b === 'create') {
+  if (process.env.FIXTURE_CREATE_RECIPE_FAIL === '1') { save(state); fail('runtime error: recipe creation failed') }
   const name = args[2]
   if (!fileFlag || !fs.existsSync(fileFlag)) fail('runtime error: recipe file not found')
   const spec = JSON.parse(fs.readFileSync(fileFlag, 'utf8')); const existing = state.recipes[name]; const version = (existing?.version ?? 0) + 1
@@ -133,7 +134,17 @@ if (a === 'recipe' && b === 'resolve') {
   tpl.resolved.computer.lifecycle = recipe.spec.lifecycle ?? 'persistent'; tpl.resolved.computer.requirements = { network: 'network', isolation: 'process', ...(recipe.spec.requirements ?? {}) }
   persist(tpl); process.exit(0)
 }
+if (a === 'recipe' && b === 'validate') {
+  const recipe = state.recipes[args[2]]
+  if (!recipe) { save(state); fail(`runtime error: not found: recipe ${args[2]}`) }
+  if (recipe.spec.__invalid) { out({ recipe: { name: recipe.name, version: recipe.version, digest: recipe.digest }, verdict: 'invalid', problems: ['fixture invalid recipe'] }); save(state); process.exit(3) }
+  const tpl = recorded(recipe.satisfiable === false ? 'resolve-unsatisfied.json' : 'resolve-satisfiable.json')
+  tpl.recipe = { name: recipe.name, version: recipe.version, digest: recipe.digest }
+  tpl.resolved.computer.lifecycle = recipe.spec.lifecycle ?? 'persistent'; tpl.resolved.computer.requirements = { network: 'network', isolation: 'process', ...(recipe.spec.requirements ?? {}) }
+  persist(tpl); process.exit(recipe.satisfiable === false ? 2 : 0)
+}
 if (a === 'environment' && b === 'create') {
+  if (process.env.FIXTURE_CREATE_ENV_FAIL === '1') { save(state); fail('runtime error: environment creation failed') }
   const name = args[2]; const [rname, rversion] = (recipeFlag ?? '').split('@')
   if (state.environments[name]) { save(state); fail(`runtime error: conflict: environment ${name} already exists`) }
   const recipe = rname ? state.recipes[rname] : undefined
@@ -147,6 +158,7 @@ if (a === 'environment' && (b === 'inspect' || b === 'status' || b === 'info')) 
 if (a === 'environment' && b === 'computer') { environment(args[2]); const v = view(args[2]); persist({ ...v.computer, environment: args[2], observed: v.computer.observed ?? { processes: {} } }); process.exit(0) }
 if (a === 'environment' && ['start', 'stop', 'restart', 'reconcile', 'destroy'].includes(b)) {
   const name = args[2]; const env = environment(name); const before = view(name)
+  if (b === 'start' && process.env.FIXTURE_START_FAIL === '1') { save(state); fail(`runtime error: environment ${name} could not start`) }
   if (b === 'stop') env.phase = process.env.FIXTURE_SLOW_STOP === '1' ? 'stopping' : 'stopped'
   else if (b === 'start') env.phase = process.env.FIXTURE_SLOW_START === '1' ? 'configuring' : 'ready'   // Compute re-verifies a started environment quickly
   else if (b === 'restart') env.phase = 'ready'

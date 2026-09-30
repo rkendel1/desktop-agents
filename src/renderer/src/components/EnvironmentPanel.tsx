@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
-import type { DevelopmentEnvironmentDetail, DevelopmentEnvironmentView, EnvironmentAction, EnvironmentReason, EnvironmentState, Project, RecipeResolutionView, RecipeSummary } from '../../../shared/types'
+import type { DevelopmentEnvironmentDetail, DevelopmentEnvironmentView, DevelopmentSetupProgress, EnvironmentAction, EnvironmentReason, EnvironmentState, Project, RecipeResolutionView, RecipeSummary } from '../../../shared/types'
 import { t, tr } from '../preferences'
 
 /**
@@ -15,7 +15,7 @@ export const STATE_LABEL: Record<EnvironmentState, string> = {
 /** Compute's own words for bootstrap and readiness, capitalised for display. */
 const CONFIGURATION: Record<string, string> = { succeeded: 'Configured', running: 'Configuring', failed: 'Failed', not_started: 'Not started' }
 const TRANSITIONAL: EnvironmentState[] = ['creating', 'configuring', 'stopping', 'destroying']
-const ACTION_LABEL: Record<EnvironmentAction, string> = { open: 'Open', restart: 'Restart', stop: 'Stop', start: 'Start', retry: 'Retry', destroy: 'Destroy', create: 'Create developer environment' }
+const ACTION_LABEL: Record<EnvironmentAction, string> = { open: 'Open', restart: 'Restart', stop: 'Stop', start: 'Start', retry: 'Retry', destroy: 'Destroy', create: 'Create Developer Environment' }
 const STEP_MARK = { done: '✓', active: '●', pending: '○', failed: '✗' } as const
 const KNOWN_TONE: Partial<Record<EnvironmentState, string>> = { ready: 'succeeded', degraded: 'awaiting-approval', creating: 'running', configuring: 'running', stopping: 'running', destroying: 'running', failed: 'failed', 'not-ready': 'failed', unknown: 'failed', missing: 'failed', 'compute-unavailable': 'failed' }
 
@@ -74,7 +74,6 @@ function CreateEnvironment({ project, onDone }: { project: Project; onDone: (vie
   const [resolution, setResolution] = useState<RecipeResolutionView | { error: string }>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [creatingRecipe, setCreatingRecipe] = useState(false)
   const loadRecipes = useCallback(() => {
     let live = true
     setRecipes(undefined)
@@ -95,15 +94,9 @@ function CreateEnvironment({ project, onDone }: { project: Project; onDone: (vie
   return <div className="env-create" aria-label={t('Create developer environment')}>
     <Explained />
     {!recipes ? <p className="muted">{t('Asking Compute…')}</p> : 'error' in recipes ? <p className="coding-error" role="alert">{recipes.error}</p> : !recipes.length
-      ? <div className="env-empty-recipes"><p className="muted">{t('Compute has no registered recipes. The Homebrew package does not seed them automatically.')}</p>
-        <p className="muted">{t('Compute’s source repository includes starter templates: dev, ci, agent-task, preview, staging, production, and migration.')}</p>
-        <p className="muted">{t('Choose Compute’s dev.json starter (or another recipe file) to register it through Compute:')}</p>
-        <pre className="coding-output">compute-configured recipe create developer --file examples/recipes/dev.json{`\n`}compute-configured recipe list</pre>
-        <div className="coding-actions"><button type="button" className="primary-button" disabled={creatingRecipe} onClick={() => {
-          setCreatingRecipe(true); setError('')
-          window.douchat.environmentCreateRecipe('developer').then(list => { if (list) { setRecipes(list); setName(list.find(recipe => recipe.name === 'developer')?.name ?? list[0]?.name ?? '') } }, cause => setError(cleanMessage(cause))).finally(() => setCreatingRecipe(false))
-        }}>{t(creatingRecipe ? 'Creating recipe…' : 'Create development recipe')}</button>
-        <button type="button" className="secondary-button" onClick={loadRecipes}>{t('Refresh recipes')}</button></div>
+      ? <div className="env-empty-recipes"><p className="muted">{t('No other Compute recipes are registered. Use the one-click Developer setup above, or manage recipes in Compute.')}</p>
+        <div className="coding-actions"><button type="button" className="secondary-button" onClick={loadRecipes}>{t('Refresh recipes')}</button>
+          <button type="button" className="secondary-button" onClick={() => void window.douchat.openComputeUi()}>{t('Manage Compute')}</button></div>
       </div>
       : <label>{t('Recipe')}
         <select value={name} onChange={event => setName(event.target.value)}>{recipes.map(recipe => <option key={recipe.name} value={recipe.name}>{recipe.name} · v{recipe.version}{recipe.description ? ` — ${recipe.description}` : ''}</option>)}</select>
@@ -157,6 +150,7 @@ export function EnvironmentPanel({ project, work = [] }: { project: Project; wor
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
+  const [setup, setSetup] = useState<DevelopmentSetupProgress>()
   const [open, setOpen] = useState(false)
   const alive = useRef(true)
   const load = useCallback(async (): Promise<void> => {
@@ -164,6 +158,14 @@ export function EnvironmentPanel({ project, work = [] }: { project: Project; wor
   }, [project.id])
   const state = view && !('error' in view) ? view.state : undefined
   useEffect(() => { alive.current = true; setView(undefined); setCreating(false); setOpen(false); void load(); return () => { alive.current = false } }, [load])
+  useEffect(() => {
+    if (typeof window.douchat.onEnvironmentSetupProgress !== 'function') return
+    return window.douchat.onEnvironmentSetupProgress(progress => {
+      if (progress.projectId !== project.id || !alive.current) return
+      setSetup(progress)
+      if (progress.steps.find(step => step.id === 'computer')?.status === 'done') void load()
+    })
+  }, [load, project.id])
   // Compute is asked again: quickly while it is changing something, slowly otherwise, and whenever the window returns.
   useEffect(() => {
     const timer = setInterval(() => { void load() }, state && TRANSITIONAL.includes(state) ? 2000 : 15_000)
@@ -174,7 +176,14 @@ export function EnvironmentPanel({ project, work = [] }: { project: Project; wor
 
   const act = async (action: EnvironmentAction): Promise<void> => {
     if (action === 'open') { setOpen(current => !current); return }
-    if (action === 'create') { setCreating(true); return }
+    if (action === 'create') {
+      setBusy(action); setError(''); setCreating(false)
+      try {
+        const result = await window.douchat.environmentSetupDeveloper(project.id)
+        if (alive.current) { setSetup(result); setView(result.view) }
+      } catch (cause) { setError(cleanMessage(cause)); void load() } finally { setBusy('') }
+      return
+    }
     setBusy(action); setError('')
     try { const next = await window.douchat.environmentAct(project.id, action); if (alive.current) setView(next) } catch (cause) { setError(cleanMessage(cause)); void load() } finally { setBusy('') }
   }
@@ -190,11 +199,17 @@ export function EnvironmentPanel({ project, work = [] }: { project: Project; wor
         <dt>{t('Readiness')}</dt><dd>{view.readiness ? t(capitalise(view.readiness)) : '—'}</dd>
       </dl>}
       {view.reason && <Reason reason={view.reason} />}
+      {setup && <div className="env-setup" aria-label={t('Setting up development environment')}>
+        <p><strong>{t('Setting up development environment')}</strong></p>
+        <ul className="env-progress">{setup.steps.map(step => <li key={step.id} className={`env-step env-step-${step.status}`}><span aria-hidden>{STEP_MARK[step.status]}</span> {t(step.label)}</li>)}</ul>
+      </div>}
       {['creating', 'configuring', 'failed', 'not-ready'].includes(view.state) && !!view.progress.length && <ul className="env-progress" aria-label={t('Progress')}>
         {view.progress.map(step => <li key={step.id} className={`env-step env-step-${step.status}`}><span aria-hidden>{STEP_MARK[step.status]}</span> {t(step.label)}</li>)}</ul>}
       {view.state === 'none' && !creating && <p className="muted">{t('Foundry runs an agent’s work on a Compute environment: a Computer, configured for this project and verified ready.')}</p>}
       <div className="coding-actions">
         {view.actions.filter(action => action !== 'create' || !creating).map(action => <button key={action} className={action === 'destroy' ? 'secondary-button danger' : action === 'create' || action === 'open' ? 'primary-button' : 'secondary-button'} disabled={!!busy} onClick={() => void act(action)}>{t(ACTION_LABEL[action])}</button>)}
+        {view.state === 'none' && <button className="secondary-button" disabled={!!busy} onClick={() => setCreating(current => !current)}>{t(creating ? 'Hide recipe choices' : 'Choose another recipe…')}</button>}
+        {view.state === 'none' && <button className="secondary-button" disabled={!!busy} onClick={() => void window.douchat.openComputeUi()}>{t('Manage Compute')}</button>}
         {view.state === 'missing' && view.reference && <span className="muted">{t('Nothing is created until you choose to.')}</span>}
       </div>
       {error && <p className="coding-error" role="alert">{error}</p>}

@@ -1165,6 +1165,13 @@ app.whenReady().then(async () => {
     if (result.canceled || !result.filePaths[0]) return undefined
     return environments.createRecipe(name, result.filePaths[0])
   })
+  ipcMain.handle('douchat:environment-setup-developer', (event, projectId: unknown) => {
+    environmentGuard(event, projectId)
+    if (typeof projectId !== 'string') throw new Error('Unauthorized')
+    return environments.setupDevelopment(projectId, progress => {
+      if (!event.sender.isDestroyed()) event.sender.send('douchat:environment-setup-progress', progress)
+    })
+  })
   ipcMain.handle('douchat:environment-resolve', (event, recipe: unknown, version?: unknown) => {
     environmentGuard(event, recipe, version)
     if (typeof recipe !== 'string' || (version !== undefined && typeof version !== 'number')) throw new Error('Unauthorized')

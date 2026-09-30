@@ -146,6 +146,12 @@ const api: DouchatApi = {
   environmentDetail: (projectId) => ipcRenderer.invoke('douchat:environment-detail', projectId),
   environmentRecipes: () => ipcRenderer.invoke('douchat:environment-recipes'),
   environmentCreateRecipe: (name) => ipcRenderer.invoke('douchat:environment-create-recipe', name),
+  environmentSetupDeveloper: (projectId) => ipcRenderer.invoke('douchat:environment-setup-developer', projectId),
+  onEnvironmentSetupProgress: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]): void => listener(progress)
+    ipcRenderer.on('douchat:environment-setup-progress', handler)
+    return () => ipcRenderer.removeListener('douchat:environment-setup-progress', handler)
+  },
   environmentResolve: (recipe, version) => ipcRenderer.invoke('douchat:environment-resolve', recipe, version),
   environmentCreate: (input) => ipcRenderer.invoke('douchat:environment-create', input),
   environmentAct: (projectId, action) => ipcRenderer.invoke('douchat:environment-act', projectId, action),

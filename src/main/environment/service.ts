@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import type { ComputeContractStatus, DevelopmentEnvironmentDetail, DevelopmentEnvironmentRef, DevelopmentEnvironmentView, EnvironmentAction, EnvironmentReason, EnvironmentState, RecipeResolutionView, RecipeSummary } from '../../shared/types'
+import type { ComputeContractStatus, DevelopmentEnvironmentDetail, DevelopmentEnvironmentRef, DevelopmentEnvironmentView, DevelopmentSetupProgress, DevelopmentSetupResult, DevelopmentSetupStep, EnvironmentAction, EnvironmentReason, EnvironmentState, RecipeResolutionView, RecipeSummary } from '../../shared/types'
 import { ComputeClient, ComputeError, type ComputeEnvironmentRecord } from '../compute/client'
 import type { DesktopRepository } from '../desktopRepository'
 import { present, presentDetail, presentResolution } from './presentation'
@@ -125,6 +125,108 @@ export class EnvironmentService {
       if (isCompute(error, 'not-found')) throw new EnvironmentError('not-found', `Compute has no recipe named "${recipe}"${version !== undefined ? ` at version ${version}` : ''}.`)
       throw new EnvironmentError('compute', message(error))
     }
+  }
+
+  /**
+   * The explicit one-click development path. This orchestrates Compute's own
+   * recipe/validation/environment contracts and persists only the Project →
+   * environment reference. Existing user recipes and environments are reused,
+   * never edited or replaced.
+   */
+  async setupDevelopment(projectId: string, progress: (value: DevelopmentSetupProgress) => void = () => undefined): Promise<DevelopmentSetupResult> {
+    if (!(await this.repository.project(projectId))) throw new EnvironmentError('not-found', 'Project not found')
+    if (this.inFlight.has(projectId)) throw new EnvironmentError('conflict', 'An environment operation is already in progress for this project.')
+    const steps: DevelopmentSetupStep[] = [
+      { id: 'compute', label: 'Checking Compute', status: 'active' },
+      { id: 'recipe', label: 'Finding Developer recipe', status: 'pending' },
+      { id: 'validation', label: 'Validating Developer recipe', status: 'pending' },
+      { id: 'environment', label: 'Creating development environment', status: 'pending' },
+      { id: 'computer', label: 'Waiting for Computer readiness', status: 'pending' }
+    ]
+    let active: DevelopmentSetupStep['id'] = 'compute'
+    const reportStep = (id: DevelopmentSetupStep['id'], status: DevelopmentSetupStep['status'], label?: string): void => {
+      const step = steps.find(item => item.id === id)!
+      step.status = status
+      if (label) step.label = label
+      progress({ projectId, steps: steps.map(item => ({ ...item })) })
+    }
+    const next = (done: DevelopmentSetupStep['id'], id: DevelopmentSetupStep['id'], label?: string): void => {
+      reportStep(done, 'done'); active = id; reportStep(id, 'active', label)
+    }
+    const result = async (view: DevelopmentEnvironmentView): Promise<DevelopmentSetupResult> => {
+      reportStep('computer', view.state === 'ready' || view.state === 'degraded' ? 'done' : ['failed', 'not-ready', 'compute-unavailable', 'missing'].includes(view.state) ? 'failed' : 'active',
+        view.state === 'ready' || view.state === 'degraded' ? 'Computer ready' : 'Waiting for Computer readiness')
+      return { projectId, steps: steps.map(item => ({ ...item })), view }
+    }
+    this.inFlight.add(projectId)
+    progress({ projectId, steps: steps.map(item => ({ ...item })) })
+    try {
+      await this.requireContract()
+
+      // A Project already attached to a real environment keeps it. This path
+      // does not reinterpret or overwrite its recipe.
+      const prior = await this.repository.developmentEnvironment(projectId)
+      if (prior) {
+        const observed = await this.observe(projectId)
+        if (!['missing', 'destroyed'].includes(observed.view.state)) {
+          next('compute', 'recipe', 'Using Project recipe'); reportStep('recipe', 'done')
+          reportStep('validation', 'done', 'Existing Compute environment retained')
+          reportStep('environment', 'done', `Using environment ${prior.environment}`)
+          active = 'computer'; reportStep('computer', 'active')
+          if (observed.view.state === 'stopped') await this.compute.lifecycle(prior.environment, 'start')
+          return result(await this.settle(projectId, 'setup'))
+        }
+      }
+
+      next('compute', 'recipe')
+      let recipe = (await this.compute.recipes()).find(item => item.name === 'developer')
+      if (!recipe) {
+        reportStep('recipe', 'active', 'Creating Developer recipe')
+        const starter = await this.compute.starterRecipe('dev')
+        if (!starter) throw new EnvironmentError('compute', 'Compute is ready, but this installed Compute distribution does not include its Developer starter recipe. Update Compute, then retry.', 'starter_unavailable')
+        await this.compute.createRecipe('developer', starter)
+        recipe = (await this.compute.recipes()).find(item => item.name === 'developer')
+        if (!recipe) throw new EnvironmentError('compute', 'Compute did not report the Developer recipe after creating it.', 'recipe_creation_failed')
+      }
+
+      next('recipe', 'validation')
+      const validation = await this.compute.validateRecipe('developer', recipe.version)
+      if (validation.verdict !== 'satisfiable') {
+        const detail = validation.verdict === 'invalid' ? (validation.problems ?? []).join('; ') || 'Compute reported the recipe invalid.'
+          : validation.placement?.failure?.message ?? 'No Computer can satisfy the Developer recipe.'
+        throw new EnvironmentError('conflict', `Developer recipe exists but failed validation. ${detail}`, validation.verdict === 'invalid' ? 'invalid' : 'requirements_unsatisfied')
+      }
+
+      next('validation', 'environment')
+      let environment: ComputeEnvironmentRecord | undefined
+      try { environment = await this.compute.inspectEnvironment('dev') } catch (error) { if (!isCompute(error, 'not-found')) throw error }
+      if (environment) {
+        if (environment.recipe?.name !== 'developer') throw new EnvironmentError('conflict', 'Compute environment “dev” already exists with different configuration. Foundry will not replace it.', 'environment_conflict')
+        if (environment.computer?.reality.observed === 'destroyed') throw new EnvironmentError('conflict', 'Compute environment “dev” exists as a destroyed record and cannot be replaced by Foundry. Manage it in Compute.', 'environment_destroyed')
+      } else {
+        const requested: DevelopmentEnvironmentRef = { projectId, environment: 'dev', requestedRecipe: { name: 'developer', version: recipe.version }, createdAt: Date.now() }
+        await this.repository.putDevelopmentEnvironment(requested)
+        try { environment = await this.compute.createFromRecipe('dev', { name: 'developer', version: recipe.version }) } catch (error) {
+          const recorded = await this.compute.inspectEnvironment('dev').catch(() => undefined)
+          if (!recorded) { if (prior) await this.repository.putDevelopmentEnvironment(prior); else await this.repository.deleteDevelopmentEnvironment(projectId) }
+          throw error
+        }
+      }
+      await this.repository.putDevelopmentEnvironment({ projectId, environment: 'dev', environmentId: environment.environment_id,
+        requestedRecipe: { name: 'developer', version: recipe.version }, createdAt: prior?.createdAt ?? Date.now() })
+
+      next('environment', 'computer')
+      const observed = await this.observe(projectId)
+      if (observed.view.state === 'stopped') await this.compute.lifecycle('dev', 'start')
+      return result(await this.settle(projectId, 'setup'))
+    } catch (error) {
+      reportStep(active, 'failed')
+      if (error instanceof EnvironmentError) throw error
+      const failedAt = active as DevelopmentSetupStep['id']
+      const prefix = failedAt === 'recipe' ? 'Could not create the Developer recipe.' : failedAt === 'validation' ? 'The Developer recipe could not be validated.'
+        : failedAt === 'environment' ? 'The Developer recipe is valid, but Compute could not create the development environment.' : failedAt === 'computer' ? 'The environment exists, but its Computer did not start.' : 'Compute is unavailable.'
+      throw new EnvironmentError('compute', `${prefix} ${message(error)}`, error instanceof ComputeError ? error.code : undefined)
+    } finally { this.inFlight.delete(projectId) }
   }
 
   // ───────────────────────────── acting ─────────────────────────────
