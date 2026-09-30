@@ -79,7 +79,7 @@ export interface ProviderRecord {
   id: string
   kind: 'openai' | 'anthropic' | 'ollama'
   name: string
-  config: { apiBase: string; models: string[]; modelLabels?: Record<string, string>; reasoningModels?: string[] }
+  config: { apiBase: string; workspaceId?: string; models: string[]; modelLabels?: Record<string, string>; reasoningModels?: string[] }
   credentialRef?: string
   updatedAt: number
 }

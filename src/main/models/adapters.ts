@@ -2,7 +2,7 @@ import type { Context, Model, SimpleStreamOptions } from '@earendil-works/pi-ai'
 import type { AssistantMessageEventStream } from '@earendil-works/pi-ai'
 import { customEndpoint } from '../../shared/customModels'
 import type { ModelCandidate, ModelCapabilities, PricingClass } from '../../shared/modelFabric'
-import { customModelDefinition, type CustomProviderRecord } from '../customModels'
+import { customModelDefinition, customProviderHeaders, type CustomProviderRecord } from '../customModels'
 import { classifyAccess, pricingFromCatalog } from './access'
 import { DEFAULT_TTL_MS } from './fabric'
 import type { ModelInvocation, ModelProvider, ModelResponse } from './provider'
@@ -36,7 +36,7 @@ const modelsUrl = (record: CustomProviderRecord): string => {
   const endpoint = customEndpoint(record.apiBase, record.kind)
   return record.kind === 'ollama' ? `${record.apiBase.trim().replace(/\/+$/, '') || 'http://127.0.0.1:11434'}/api/tags` : endpoint.replace(/\/chat\/completions$/, '/models').replace(/\/v1\/messages$/, '/v1/models')
 }
-const headers = (record: CustomProviderRecord): Record<string, string> => record.kind === 'anthropic' ? { 'x-api-key': record.apiKey, 'anthropic-version': '2023-06-01' } : record.kind === 'ollama' || !record.apiKey ? {} : { Authorization: `Bearer ${record.apiKey}` }
+const headers = (record: CustomProviderRecord): Record<string, string> => customProviderHeaders(record)
 
 interface CatalogEntry {
   id?: unknown; name?: unknown; pricing?: unknown; context_length?: unknown; supported_parameters?: unknown

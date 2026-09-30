@@ -23,7 +23,7 @@ async function click(label: string) { await act(async () => [...container.queryS
 it.each([undefined, 'agent-one'])('edits the selected scope and allows deleting remembered facts (%s)', async agentId => {
   await act(async () => root.render(<UserMemoryPanel agentId={agentId} />))
   expect(get).toHaveBeenCalledWith(agentId)
-  expect(container.querySelector('h1')?.textContent).toBe(agentId ? 'Private memory' : 'About me')
+  expect(container.querySelector('h1')?.textContent).toBe(agentId ? 'User profile & memory' : 'About me')
   await input(container.querySelector('.user-memory-notes textarea')!, 'I enjoy writing')
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Delete memory"]')!.click())
   await click('Save')

@@ -2,7 +2,7 @@ import { AgentArchivePanel } from './AgentArchivePanel'
 import { UserMemoryPanel } from './UserMemoryPanel'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Cpu, IdCard, Puzzle, Radio, Settings2, ShieldCheck, WandSparkles, X } from 'lucide-react'
+import { Brain, Cpu, IdCard, Puzzle, Radio, Settings2, ShieldCheck, WandSparkles, X } from 'lucide-react'
 import type { AgentConfig, LocalAgent, ModelOption, UpdateAgentInput } from '../../../shared/types'
 import { t, resolveInterfaceLanguage, usePreferences } from '../preferences'
 import { EmbeddedAgentSettings } from './AgentDialogSurface'
@@ -31,6 +31,7 @@ export function AgentSettingsDialog({ agent, localAgents, initialTab = 'profile'
   const tabs = [
     { id: 'profile', label: tr('Profile', '资料'), icon: IdCard },
     { id: 'customize', label: tr('Customize', '自定义'), icon: WandSparkles },
+    { id: 'memory', label: tr('Memory', '记忆'), icon: Brain },
     { id: 'models', label: tr('Models', '模型'), icon: Cpu },
     { id: 'skills', label: tr('Skills', '技能'), icon: Puzzle },
     { id: 'permissions', label: tr('Permissions', '权限'), icon: ShieldCheck },
@@ -81,7 +82,7 @@ export function AgentSettingsDialog({ agent, localAgents, initialTab = 'profile'
             </div></>}
             {section === 'customize' && <AgentFilesPanel agent={agent} onSave={input => save('customize', input)} onDirty={() => markDirty('customize')} />}
             {section === 'memory' && <UserMemoryPanel agentId={agent.id} onDirty={() => markDirty('memory')} onSaved={() => setDirty(current => { const next = new Set(current); next.delete('memory'); return next })} onBusyChange={value => { busy.current = value; setSaving(value) }} />}
-            {section === 'models' && <LocalModelDialog agent={agent} onClose={noClose} onModelSettings={() => leave(onModelSettings)} onSave={(model, provider, thinkingLevel) => save('models', { ...(provider?.startsWith('custom:') ? { customModel: { providerId: provider.slice(7), model } } : { model }), thinkingLevel })} />}
+            {section === 'models' && <LocalModelDialog agent={agent} onClose={noClose} onModelSettings={() => leave(onModelSettings)} onSave={(model, provider, thinkingLevel, automaticModelSelection) => save('models', { ...(provider?.startsWith('custom:') ? { customModel: { providerId: provider.slice(7), model } } : { model }), thinkingLevel, automaticModelSelection })} />}
             {section === 'skills' && <AgentSkillsPanel agent={agent} onSave={input => save('skills', input)} onDirty={() => markDirty('skills')} />}
             {section === 'permissions' && <AgentPermissionsDialog agent={agent} onClose={noClose} onSave={permissions => save('permissions', { permissions })} />}
             {section === 'channels' && <IMChannelsDialog agent={agent} onClose={noClose} />}

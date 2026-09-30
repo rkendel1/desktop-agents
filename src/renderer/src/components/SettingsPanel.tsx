@@ -148,7 +148,7 @@ export function SettingsPanel({ user, agents, routines = [], runs = [], workspac
         onSetEnabled={onSetRoutineEnabled}
         onRunNow={onRunRoutineNow}
       /> : tab === 'agents'  ? <>
-        <header className="settings-heading local-proxy-heading"><div><h1>{t('Local agents')}</h1><p>{t('View the local agents available on this computer.')}</p></div>
+        <header className="settings-heading local-proxy-heading"><div><h1>{t('Local agents')}</h1><p>{t('Install and manage command-line agents on this computer. To use one, create an agent and choose Runs with → Local agent. They do not appear under Models → Add provider.')}</p></div>
           <div className="local-agent-heading-actions"><button className="secondary-button" onClick={() => setEditingLocalAgent('new')}><Plus size={15} />{t('Add')}</button>
           <button className="secondary-button" disabled={scanning} onClick={onDetect}>{scanning ? <RefreshCw className="spin" size={15} /> : <ScanSearch size={15} />}{scanning ? t('Detecting…') : t('Detect')}</button></div>
         </header>

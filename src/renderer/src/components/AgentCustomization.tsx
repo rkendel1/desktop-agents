@@ -3,7 +3,6 @@ import { SkillUploadDialog } from './SkillUploadDialog'
 import { useEffect, useState } from 'react'
 import { Save, Trash2, Upload } from 'lucide-react'
 import { validateAgentSkills, type AgentFileName, type AgentFiles, type AgentSkill } from '../../../shared/agentCustomization'
-import type { UserMemoryDocument } from '../../../shared/userMemory'
 import type { AgentConfig, UpdateAgentInput } from '../../../shared/types'
 import { t, resolveInterfaceLanguage, usePreferences } from '../preferences'
 
@@ -28,40 +27,19 @@ export function AgentFilesPanel({ agent, onSave, onDirty }: Props) {
   }, [agent.systemFiles, edited])
   const [active, setActive] = useState<AgentFileName>('SOUL.md')
   const [error, setError] = useState('')
-  const [memory, setMemory] = useState<UserMemoryDocument>()
-  const [memoryLoading, setMemoryLoading] = useState(false)
-  const [memoryError, setMemoryError] = useState('')
-  const memoryTab = active === 'USER.md' || active === 'MEMORY.md'
-  useEffect(() => {
-    if (!memoryTab) return
-    let cancelled = false
-    setMemory(undefined); setMemoryLoading(true); setMemoryError('')
-    window.douchat.getUserMemory(agent.id).then(document => {
-      if (!cancelled) setMemory(document)
-    }).catch(cause => { if (!cancelled) setMemoryError(cause instanceof Error ? cause.message : String(cause)) })
-      .finally(() => { if (!cancelled) setMemoryLoading(false) })
-    return () => { cancelled = true }
-  }, [agent.id, active, memoryTab])
-  const memoryContent = memory ? [active === 'USER.md' ? memory.notes : memory.memoryNotes ?? '',
-    ...memory.facts.filter(fact => active === 'USER.md' ? fact.kind === 'profile' : fact.kind !== 'profile').map(fact => fact.text)
-  ].filter(Boolean).join('\n\n') : ''
-  const tabs = [...editableFiles.filter(file => !['TOOLS.md', 'AGENTS.md', 'HEARTBEAT.md'].includes(file.name)),
-    { name: 'USER.md' as const, en: 'User profile', zh: '用户资料' },
-    { name: 'MEMORY.md' as const, en: 'Memory', zh: '记忆' }]
+  const tabs = editableFiles.filter(file => !['TOOLS.md', 'AGENTS.md', 'HEARTBEAT.md'].includes(file.name))
   return <section className="agent-customize-panel">
     <header className="settings-heading agent-settings-heading"><div><h1>{tr('Customize', '自定义')}</h1></div>
-      {!memoryTab && <button className="primary-button" onClick={async () => { setError(''); try { await onSave({ systemFiles: Object.fromEntries(editableFiles.filter(file => files[file.name] !== baseline[file.name]).map(file => [file.name, files[file.name] ?? ''])), expectedSystemFiles: baseline }); setEdited(false) } catch (e) { setError(String(e instanceof Error ? e.message : e)) } }}>{t('Save')}</button>}
+      <button className="primary-button" onClick={async () => { setError(''); try { await onSave({ systemFiles: Object.fromEntries(editableFiles.filter(file => files[file.name] !== baseline[file.name]).map(file => [file.name, files[file.name] ?? ''])), expectedSystemFiles: baseline }); setEdited(false) } catch (e) { setError(String(e instanceof Error ? e.message : e)) } }}>{t('Save')}</button>
     </header>
     <div className="agent-file-tabs" role="tablist" aria-label={tr('Custom files', '自定义文件')}>
       {tabs.map(({ name, en, zh }) => <button type="button" key={name} role="tab" aria-selected={active === name} aria-controls="agent-file-editor" id={`agent-file-${name}`} onClick={() => setActive(name)}>{tr(en, zh)}</button>)}
     </div>
     <div role="tabpanel" id="agent-file-editor" aria-labelledby={`agent-file-${active}`}>
       <label className="agent-file-label" htmlFor="agent-file-content">{active}</label>
-      {memoryTab ? <>
-        {memoryLoading ? <p role="status">{tr('Loading…', '正在加载…')}</p> : memoryError ? <p className="settings-error" role="alert">{memoryError}</p> : <textarea id="agent-file-content" className="agent-markdown-editor" value={memoryContent} readOnly placeholder={tr('No saved information yet.', '暂无已保存的信息。')} />}
-      </> : <textarea id="agent-file-content" className="agent-markdown-editor" value={files[active] ?? ''} spellCheck={false} maxLength={100000} placeholder={`# ${active}\n\n${tr('Write your content here…', '在此编写内容…')}`} onChange={e => { setFiles({ ...files, [active]: e.target.value }); setEdited(true); onDirty() }} />}
+      <textarea id="agent-file-content" className="agent-markdown-editor" value={files[active] ?? ''} spellCheck={false} maxLength={100000} placeholder={`# ${active}\n\n${tr('Write your content here…', '在此编写内容…')}`} onChange={e => { setFiles({ ...files, [active]: e.target.value }); setEdited(true); onDirty() }} />
     </div>
-    <p className="settings-note">{memoryTab ? tr('Read-only memory for you and this agent. Group memory is separate.', '只读展示你与这个智能体的专属资料和记忆，群记忆单独保存。') : tr('Saved files apply from the next message.', '保存后从下一条消息开始生效。')}</p>
+    <p className="settings-note">{tr('Saved files apply from the next message. Edit USER.md and MEMORY.md in the Memory section.', '保存后从下一条消息开始生效。请在「记忆」中编辑 USER.md 和 MEMORY.md。')}</p>
     {error && <p className="settings-error" role="alert">{error}</p>}
   </section>
 }

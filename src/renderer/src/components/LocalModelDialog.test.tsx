@@ -24,7 +24,23 @@ it('uses model-API selection for a non-CLI agent and saves the chosen provider',
     await act(async () => { model.value = JSON.stringify(['mine', 'org/model']); model.dispatchEvent(new Event('change', { bubbles: true })) })
     expect(host.textContent).toContain('mine/org/model')
     await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
-    expect(save).toHaveBeenLastCalledWith('org/model', 'custom:mine', 'default')
+    expect(save).toHaveBeenLastCalledWith('org/model', 'custom:mine', 'default', false)
+  } finally { await act(async () => root.unmount()) }
+})
+it('offers per-agent automatic selection and keeps the default model as its fallback', async () => {
+  Object.defineProperty(window, 'douchat', { configurable: true, value: {
+    getCustomModels: vi.fn().mockResolvedValue({ providers: [{ id: 'mine', name: 'Mine', models: ['org/model'] }], defaultModel: 'mine/org/model' })
+  } })
+  const host = document.createElement('div'); const root = createRoot(host)
+  const save = vi.fn().mockResolvedValue(undefined)
+  try {
+    await act(async () => root.render(<LocalModelDialog agent={{ ...agent, localAgentId: undefined, provider: 'custom:mine', model: 'org/model' }} onSave={save} onClose={vi.fn()} />))
+    const model = host.querySelector<HTMLSelectElement>('[aria-label="Custom model"]')!
+    expect([...model.options].map(option => option.textContent)).toContain('Choose the best model for the job')
+    await act(async () => { model.value = 'automatic'; model.dispatchEvent(new Event('change', { bubbles: true })) })
+    expect(host.textContent).toContain('evaluate each request')
+    await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(save).toHaveBeenCalledWith('default', 'custom:@default', 'default', true)
   } finally { await act(async () => root.unmount()) }
 })
 it('loads models and saves the selected ID, only closing after success', async () => {
@@ -38,7 +54,7 @@ it('loads models and saves the selected ID, only closing after success', async (
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Model"]')!
     await act(async () => { select.value = 'provider/test'; select.dispatchEvent(new Event('change', { bubbles: true })) })
     await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
-    expect(save).toHaveBeenCalledWith('provider/test', undefined, 'default'); expect(close).toHaveBeenCalledTimes(1)
+    expect(save).toHaveBeenCalledWith('provider/test', undefined, 'default', false); expect(close).toHaveBeenCalledTimes(1)
   } finally { await act(async () => root.unmount()); host.remove() }
 })
 it('keeps the current model when discovery fails and does not close on save failure', async () => {
@@ -49,7 +65,7 @@ it('keeps the current model when discovery fails and does not close on save fail
     await act(async () => root.render(<LocalModelDialog agent={{ ...agent, model: 'provider/existing' }} onSave={save} onClose={close} />))
     expect(host.textContent).toContain('Could not load models')
     await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
-    expect(save).toHaveBeenCalledWith('provider/existing', undefined, 'default'); expect(close).not.toHaveBeenCalled()
+    expect(save).toHaveBeenCalledWith('provider/existing', undefined, 'default', false); expect(close).not.toHaveBeenCalled()
     expect(host.textContent).toContain('Save failed')
   } finally { await act(async () => root.unmount()) }
 })
@@ -70,10 +86,10 @@ it('allows manual model entry and switching back to the local default', async ()
       input.dispatchEvent(new Event('input', { bubbles: true }))
     })
     await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
-    expect(save).toHaveBeenLastCalledWith('org/manual', undefined, 'default')
+    expect(save).toHaveBeenLastCalledWith('org/manual', undefined, 'default', false)
     await act(async () => { select.value = ''; select.dispatchEvent(new Event('change', { bubbles: true })) })
     expect(host.querySelector('.local-model-custom')).toBeNull()
     await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
-    expect(save).toHaveBeenLastCalledWith('default', undefined, 'default')
+    expect(save).toHaveBeenLastCalledWith('default', undefined, 'default', false)
   } finally { await act(async () => root.unmount()) }
 })

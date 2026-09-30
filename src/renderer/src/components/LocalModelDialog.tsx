@@ -10,7 +10,7 @@ import { EmbeddedAgentSettings, AgentDialogSurface as NativeDialog } from './Age
 import { localAgentDisplayName } from './common'
 
 export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
-  agent: AgentConfig; onModelSettings?: () => void; onClose: () => void; onSave: (model: string, provider: string | undefined, thinkingLevel: ThinkingLevel | 'default') => Promise<void>
+  agent: AgentConfig; onModelSettings?: () => void; onClose: () => void; onSave: (model: string, provider: string | undefined, thinkingLevel: ThinkingLevel | 'default', automaticModelSelection: boolean) => Promise<void>
 }): ReactElement {
   const embedded = useContext(EmbeddedAgentSettings)
   const [model, setModel] = useState(agent.model && agent.model !== 'default' ? agent.model : '')
@@ -23,7 +23,7 @@ export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
   const [revision, setRevision] = useState(0)
   const custom = !agent.localAgentId
   const [customModels, setCustomModels] = useState<CustomModelConfig>()
-  const [customProviderId, setCustomProviderId] = useState(agent.followDefaultModel ? '@default' : agent.provider?.startsWith('custom:') ? agent.provider.slice('custom:'.length) : '@default')
+  const [customProviderId, setCustomProviderId] = useState(agent.automaticModelSelection ? '@automatic' : agent.followDefaultModel ? '@default' : agent.provider?.startsWith('custom:') ? agent.provider.slice('custom:'.length) : '@default')
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => {
@@ -46,7 +46,7 @@ export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
   }, [agent.id, revision, custom])
   const supported = configurableLocalAgents.includes(agent.localAgentId || '')
   const selectedProvider = customModels?.providers.find(provider => provider.id === customProviderId)
-  const validSelection = customProviderId === '@default' ? Boolean(customModels?.defaultModel) : selectedProvider?.models.includes(model)
+  const validSelection = customProviderId === '@automatic' || customProviderId === '@default' ? Boolean(customModels?.defaultModel) : selectedProvider?.models.includes(model)
   const localModels = list?.models ?? []
   const reasoningProvider = customProviderId === '@default' ? customModels?.providers.find(provider => customModels.defaultModel.startsWith(provider.id + '/')) : selectedProvider
   const reasoningModel = customProviderId === '@default' ? customModels?.defaultModel.slice((reasoningProvider?.id.length ?? 0) + 1) : model
@@ -62,7 +62,9 @@ export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
         const selected = custom ? model : localModelId(model) ?? 'default'
         setSaving(true); setError('')
         const level = thinkingSupported ? thinking : agent.thinkingLevel ?? 'default'
-        await (custom ? onSave(selected, `custom:${customProviderId}`, level) : onSave(selected, undefined, level))
+        await (custom
+          ? onSave(customProviderId === '@automatic' ? 'default' : selected, `custom:${customProviderId === '@automatic' ? '@default' : customProviderId}`, level, customProviderId === '@automatic')
+          : onSave(selected, undefined, level, false))
         if (alive.current) onClose()
       } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : t('Could not save changes')) }
       finally { if (alive.current) setSaving(false) }
@@ -72,8 +74,9 @@ export function LocalModelDialog({ agent, onModelSettings, onClose, onSave }: {
       <div className="permission-body local-model-body">
       <p className="permission-agent-name">{agent.name}</p>
       {custom ? <>
-        <CustomModelSelection config={customModels ?? { providers: [], defaultModel: '' }} providerId={customProviderId} model={model} disabled={saving || loading} onChange={(providerId, value) => { setCustomProviderId(providerId); setModel(value) }} />
+        <CustomModelSelection allowAutomatic config={customModels ?? { providers: [], defaultModel: '' }} providerId={customProviderId} model={model} disabled={saving || loading} onChange={(providerId, value) => { setCustomProviderId(providerId); setModel(value) }} />
         {loading && <p role="status">{t("Loading model settings…")}</p>}
+        {customProviderId === '@automatic' && <p className="settings-note">{t('Foundry will evaluate each request and choose the best eligible configured model under your model-routing policy.')}</p>}
         <p className="settings-note">{t("Use your own API key. Your model provider handles billing.")} <button type="button" className="local-settings-link" disabled={saving} onClick={onModelSettings}>{t("Configure model")}</button></p>
       </> : <>
         <div className="custom-model-selection">

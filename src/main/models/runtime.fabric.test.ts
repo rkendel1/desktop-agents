@@ -32,7 +32,7 @@ const catalog = { data: [
   { id: 'gamma-paid', pricing: { prompt: '0.000003', completion: '0.000015' }, context_length: 200000, supported_parameters: ['tools'], architecture: { input_modalities: ['text'], output_modalities: ['text'] } }
 ] }
 
-async function world(limit: (model: string) => boolean) {
+async function world(limit: (model: string) => boolean, automaticModelSelection = false) {
   const hits: string[] = []
   const server = createServer((request, response) => {
     let body = ''; request.on('data', chunk => { body += chunk })
@@ -53,7 +53,7 @@ async function world(limit: (model: string) => boolean) {
   await runtime.configureCustomModels([record], 'mine/gamma-paid')
   const fabric = new ModelFabric(new MemoryStore(), () => customProviderAdapters([record], { stream: runtime.streamModel as never }))
   runtime.attachModelFabric(fabric)
-  const agent = await store.createAgent({ name: 'Coder', role: 'Assistant', instructions: '', color: '#fff', ...runtime.customAgentModel('mine', 'gamma-paid') })
+  const agent = await store.createAgent({ name: 'Coder', role: 'Assistant', instructions: '', color: '#fff', automaticModelSelection, ...runtime.customAgentModel('mine', 'gamma-paid') })
   const conversation = (await store.conversations()).find(item => item.type === 'direct' && item.agentIds.includes(agent.id))!
   const key = `direct:${conversation.id}:${await store.activeTopicId(conversation.id)}`
   const internals = runtime as unknown as { session: (config: typeof agent, key: string, context: 'direct') => Promise<{ streamFunction: (model: unknown, context: Context) => AsyncIterable<{ type: string }> & { result(): Promise<{ stopReason: string; content: { type: string; text?: string }[]; errorMessage?: string }> }; state: { model: unknown } }>; activeRun: Map<string, string> }
@@ -79,6 +79,14 @@ describe('the runtime with the model fabric attached', () => {
     expect(w.hits).toEqual(['alpha-free', 'beta-free']); expect(w.hits).not.toContain('gamma-paid')
     await vi.waitFor(() => expect(events).toHaveBeenCalled())
     expect(events).toHaveBeenCalledWith({ runId: 'run-1', type: 'status', label: 'Model switched', detail: expect.stringContaining('alpha-free · Mine reached its current limit. Foundry continued with beta-free · Mine. No action required. Cost policy: Free only') })
+  })
+
+  it('allows one agent to choose the best model while global automatic selection is off', async () => {
+    const w = await world(() => false, true)
+    await w.fabric.discover()
+    await w.ask()
+    expect(w.hits.at(-1)).not.toBe('gamma-paid')
+    expect((await w.fabric.policy()).automatic).toBe(false)
   })
 
   it('when every free model is limited the agent’s call fails with the clear message, says so in Activity, and still does not spend', async () => {

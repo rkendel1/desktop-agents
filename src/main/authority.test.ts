@@ -184,10 +184,10 @@ describe('Model fabric authority', () => {
     expect(file('access.ts')).not.toMatch(/apiKey|secret|password|bearer/i)
   })
 
-  it('is optional and compatible: automatic routing is off by default and the direct path is the fallback of the runtime hook', () => {
+  it('is optional and compatible: automatic routing is off by default unless an agent explicitly selects it, and the direct path remains available', () => {
     expect(readFileSync(join(root, 'shared/modelFabric.ts'), 'utf8')).toContain("automatic: false")
     const runtime = readFileSync(join(root, 'main/runtime.ts'), 'utf8')
-    expect(runtime).toMatch(/if \(!\(await fabric\.policy\(\)\)\.automatic\) source = direct\(\)/)
+    expect(runtime).toMatch(/if \(!config\.automaticModelSelection && !\(await fabric\.policy\(\)\)\.automatic\) source = direct\(\)/)
     expect(runtime).toMatch(/if \(!fabric \|\| config\.localAgentId \|\| !config\.provider\.startsWith\(CUSTOM_PROVIDER_PREFIX\)\) return direct\(\)/)
   })
 })

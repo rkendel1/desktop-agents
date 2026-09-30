@@ -105,6 +105,12 @@ describe('settings panel', () => {
     ))
   }
 
+  it('explains where installed command-line agents are selected', async () => {
+    await renderAgents([])
+    expect(container.textContent).toContain('create an agent and choose Runs with → Local agent')
+    expect(container.textContent).toContain('They do not appear under Models → Add provider')
+  })
+
   it('defers dialog focus until after mount and restores the opener on dismissal', async () => {
     vi.useFakeTimers()
     const opener = document.createElement('button')

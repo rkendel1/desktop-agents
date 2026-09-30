@@ -69,6 +69,6 @@ it.skipIf(process.platform === 'win32')('prints the approved command literally a
   const result = spawnSync('/bin/bash', ['-c', maintenanceShellBody(command)], { input: '\n', encoding: 'utf8' })
   expect(result.stdout).toContain(command)
   expect(result.stdout).toContain('literal $(echo NOT_EXECUTED)')
-  expect(result.stdout).toContain('执行未成功（退出码 1）')
+  expect(result.stdout).toContain('Installation failed (exit code 1)')
   expect(result.status).toBe(1)
 })

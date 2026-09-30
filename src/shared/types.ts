@@ -49,6 +49,8 @@ export interface AgentConfig {
   systemFiles?: import('./agentCustomization').AgentFiles
   skills?: import('./agentCustomization').AgentSkill[]
   followDefaultModel?: boolean
+  /** Route each request to the best eligible configured model for its requirements. */
+  automaticModelSelection?: boolean
   permissions?: AgentPermissions
   localAgentId?: string
   /** Snapshot of a custom local runtime's display name for durable contact labels. */
@@ -445,6 +447,7 @@ export interface AppSnapshot {
 export interface CreateAgentInput {
   systemFiles?: import('./agentCustomization').AgentFiles
   thinkingLevel?: ThinkingLevel | 'default'
+  automaticModelSelection?: boolean
   customModel?: { providerId: string; model: string }
   localAgentId?: string
   localAgentName?: string
@@ -471,6 +474,7 @@ export interface UpdateAgentInput {
   systemFiles?: import('./agentCustomization').AgentFiles
   skills?: import('./agentCustomization').AgentSkill[]
   followDefaultModel?: boolean
+  automaticModelSelection?: boolean
   customModel?: { providerId: string; model: string }
   permissions?: AgentPermissions
   localAgentId?: string

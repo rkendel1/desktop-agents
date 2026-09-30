@@ -33,7 +33,7 @@ async function input(element: HTMLInputElement | HTMLTextAreaElement, value: str
 }
 it('retains file drafts between tabs, saves both files, and keeps the editor open', async () => {
   await click('Customize')
-  expect([...document.querySelectorAll('.agent-file-tabs [role=tab]')].map(tab => tab.textContent)).toEqual(['Soul', 'Identity', 'Bootstrap', 'User profile', 'Memory'])
+  expect([...document.querySelectorAll('.agent-file-tabs [role=tab]')].map(tab => tab.textContent)).toEqual(['Soul', 'Identity', 'Bootstrap'])
   await input(document.querySelector('#agent-file-content')!, 'Speak concisely')
   await click('Identity'); await input(document.querySelector('#agent-file-content')!, 'I am a writing assistant')
   await click('Models'); await click('Customize'); await click('Soul')
@@ -107,24 +107,23 @@ it('retains channel credentials while switching sections', async () => {
   expect((document.querySelector('.im-setup input') as HTMLInputElement).value).toBe('draft-token')
 })
 
-it('shows only the current agent private profile and memory in read-only tabs', async () => {
+it('edits the current agent user profile, memory summary, and remembered facts', async () => {
   const getUserMemory = vi.fn().mockResolvedValue({ userId: 'owner', agentId: 'alpha', notes: 'My profile', memoryNotes: 'Our agreement', facts: [
     { key: 'preference', kind: 'profile', text: 'Enjoy reading' }, { key: 'progress', kind: 'memory', text: 'Finished chapter one' }
-  ] })
-  const getGroupMemory = vi.fn()
-  Object.assign(window.douchat, { getUserMemory, getGroupMemory })
-  await click('Customize')
-  await input(document.querySelector('#agent-file-content')!, 'Unsaved soul')
-  await click('User profile')
-  expect(getUserMemory).toHaveBeenLastCalledWith('alpha')
-  let editor = document.querySelector<HTMLTextAreaElement>('#agent-file-content')!
-  expect(editor.readOnly).toBe(true)
-  expect(editor.value).toBe('My profile\n\nEnjoy reading')
+  ], autoRemember: true, revision: 1, updatedAt: 1 })
+  const saveUserMemory = vi.fn(async document => ({ ...document, revision: 2 }))
+  Object.assign(window.douchat, { getUserMemory, saveUserMemory })
   await click('Memory')
-  editor = document.querySelector<HTMLTextAreaElement>('#agent-file-content')!
-  expect(editor.value).toBe('Our agreement\n\nFinished chapter one')
-  expect(editor.readOnly).toBe(true)
-  expect(getGroupMemory).not.toHaveBeenCalled()
-  await click('Soul')
-  expect(document.querySelector<HTMLTextAreaElement>('#agent-file-content')!.value).toBe('Unsaved soul')
+  expect(getUserMemory).toHaveBeenLastCalledWith('alpha')
+  expect(document.querySelector('.agent-settings-panel:not([hidden]) h1')?.textContent).toBe('User profile & memory')
+  const summaries = document.querySelectorAll<HTMLTextAreaElement>('.user-memory-notes textarea')
+  await input(summaries[0], 'Updated profile')
+  await input(summaries[1], 'Updated agreement')
+  const facts = document.querySelectorAll<HTMLTextAreaElement>('[aria-label="Remembered information"]')
+  await input(facts[1], 'Finished chapter two')
+  await click('Save')
+  expect(saveUserMemory).toHaveBeenCalledWith(expect.objectContaining({
+    notes: 'Updated profile', memoryNotes: 'Updated agreement',
+    facts: [expect.objectContaining({ text: 'Enjoy reading' }), expect.objectContaining({ text: 'Finished chapter two' })]
+  }), 'alpha')
 })

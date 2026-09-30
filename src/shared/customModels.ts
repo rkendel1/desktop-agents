@@ -1,6 +1,6 @@
 /** Provider editor and endpoint conventions adapted from Termany ModelSettings. */
 export type CustomModelKind = 'openai' | 'anthropic' | 'ollama'
-export interface CustomProviderInput { id: string; name: string; kind: CustomModelKind; apiBase: string; apiKey?: string; models: string[]; modelLabels?: Record<string, string>
+export interface CustomProviderInput { id: string; name: string; kind: CustomModelKind; apiBase: string; apiKey?: string; workspaceId?: string; models: string[]; modelLabels?: Record<string, string>
   /** Models that accept a thinking/reasoning parameter. Others always run with thinking off. */
   reasoningModels?: string[]
   /** What the person knows about a model’s price when the provider’s catalog does not say (an explicit entry): `free`, `beta-free` or `trial`. Never a key or a secret. */

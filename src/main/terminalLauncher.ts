@@ -23,6 +23,7 @@ interface TerminalLauncherDependencies {
   spawnDetached?: (file: string, args: string[]) => Promise<void>
   wait?: (milliseconds: number) => Promise<void>
   termanyAutomationAllowed?: boolean
+  description?: string
 }
 
 function appleScriptString(value: string): string {
@@ -184,20 +185,22 @@ export async function openLocalAgentTerminal(
 }
 
 /** Show the exact approved command as data; never evaluate it while printing. */
-export function maintenanceShellBody(command: string): string {
+export function maintenanceShellBody(command: string, description?: string): string {
   return [
     ...(managedSearchPaths().length ? [`export PATH=${shellQuote(managedSearchPaths().join(':'))}:\"$PATH\"`] : []),
     "printf '\x1b[2J\x1b[H'",
-    "printf '%s\n' '本地智能体安装与更新' '即将执行（与确认窗口一致）：'",
+    "printf '%s\n' 'Foundry agent installation or update' 'This installs a command-line agent integration. It does not download an AI model.'",
+    ...(description ? [`printf '\n%s\n' ${shellQuote(description)}`] : []),
+    "printf '%s\n' 'Approved command:'",
     `printf '\n  %s\n\n' ${shellQuote(command)}`,
     command,
     'result=$?',
     'if [ "$result" -eq 0 ]; then',
-    "  printf '\n%s\n' '命令执行成功。返回 Foundry 后会重新检测版本。'",
+    "  printf '\n%s\n' 'Installation completed successfully. Return to Foundry; it will detect the installed version.'",
     'else',
-    "  printf '\n执行未成功（退出码 %s），请查看上方工具输出。\n' \"$result\"",
+    "  printf '\nInstallation failed (exit code %s). Review the output above.\n' \"$result\"",
     'fi',
-    "printf '%s' '按回车关闭此窗口…'",
+    "printf '%s' 'Press Enter to close this window…'",
     'read -r _',
     'exit "$result"'
   ].join('\n')
@@ -213,7 +216,7 @@ export async function openMaintenanceTerminal(command: string, dependencies: Ter
     const directory = await mkdtemp(join(tmpdir(), 'douchat-maintenance-'))
     const script = join(directory, 'Foundry-Agent-Maintenance.command')
     try {
-      await writeFile(script, `#!/bin/bash\ntrap ${shellQuote(`/bin/rm -rf -- ${shellQuote(directory)}`)} EXIT\n${maintenanceShellBody(command)}\n`, { mode: 0o700 })
+      await writeFile(script, `#!/bin/bash\ntrap ${shellQuote(`/bin/rm -rf -- ${shellQuote(directory)}`)} EXIT\n${maintenanceShellBody(command, dependencies.description)}\n`, { mode: 0o700 })
       await execute('/usr/bin/open', ['-a', 'Terminal', script])
     } catch {
       await rm(directory, { recursive: true, force: true }).catch(() => {})
@@ -222,13 +225,13 @@ export async function openMaintenanceTerminal(command: string, dependencies: Ter
     return
   }
   if (platform === 'win32') {
-    await launch('powershell.exe', ['-NoProfile', '-NoExit', '-EncodedCommand', Buffer.from(`$env:Path = ${powershellQuote(managedSearchPaths().join(';') + ';')} + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path\nClear-Host\nWrite-Host '本地智能体安装与更新'\nWrite-Host '即将执行（与确认窗口一致）：'\nWrite-Host ${powershellQuote(command)}\n$global:LASTEXITCODE = 0\n${command}\n$douchatSucceeded = $?\nif ($douchatSucceeded -and $LASTEXITCODE -eq 0) { Write-Host '命令执行成功。返回 Foundry 后会重新检测版本。' } else { Write-Host '执行未成功，请查看上方工具输出。' }`, 'utf16le').toString('base64')])
+    await launch('powershell.exe', ['-NoProfile', '-NoExit', '-EncodedCommand', Buffer.from(`$env:Path = ${powershellQuote(managedSearchPaths().join(';') + ';')} + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + $env:Path\nClear-Host\nWrite-Host 'Foundry agent installation or update'\nWrite-Host 'This installs a command-line agent integration. It does not download an AI model.'\n${dependencies.description ? `Write-Host ${powershellQuote(dependencies.description)}\n` : ''}Write-Host 'Approved command:'\nWrite-Host ${powershellQuote(command)}\n$global:LASTEXITCODE = 0\n${command}\n$douchatSucceeded = $?\nif ($douchatSucceeded -and $LASTEXITCODE -eq 0) { Write-Host 'Installation completed successfully. Return to Foundry; it will detect the installed version.' } else { Write-Host 'Installation failed. Review the output above.' }`, 'utf16le').toString('base64')])
     return
   }
   for (const name of ['x-terminal-emulator', 'gnome-terminal', 'konsole', 'xterm']) {
     const executable = await (dependencies.resolveCommand ?? resolveExecutable)(name)
     if (!executable) continue
-    await launch(executable, [name === 'gnome-terminal' ? '--' : '-e', 'bash', '-lc', maintenanceShellBody(command)])
+    await launch(executable, [name === 'gnome-terminal' ? '--' : '-e', 'bash', '-lc', maintenanceShellBody(command, dependencies.description)])
     return
   }
   throw new Error('No terminal application was found.')

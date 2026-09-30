@@ -80,6 +80,33 @@ it('tests with a saved key, blocks changed destinations, and does not echo upstr
   request.mockImplementation(async () => new Response(provider.apiKey, { status: 401 }))
   expect(JSON.stringify(await store.test({ provider, model: 'org/model' }))).not.toContain(provider.apiKey)
 })
+it('sends an Anthropic Messages test request and returns its structured HTTP error', async () => {
+  const { store } = await setup()
+  const anthropic = { ...provider, kind: 'anthropic' as const, apiBase: 'https://api.anthropic.com', workspaceId: 'wrkspc_test', models: ['invalid model'] }
+  let sent: Request | undefined
+  vi.stubGlobal('fetch', async (input: URL | RequestInfo, init?: RequestInit) => {
+    sent = new Request(input, init)
+    return Response.json({ type: 'error', error: { type: 'not_found_error', message: 'model: invalid model' } }, { status: 400 })
+  })
+  await expect(store.test({ provider: anthropic, model: 'invalid model' })).resolves.toEqual({ ok: false, error: 'Connection failed (HTTP 400): model: invalid model' })
+  expect(sent!.url).toBe('https://api.anthropic.com/v1/messages')
+  expect(sent!.headers.get('x-api-key')).toBe(provider.apiKey)
+  expect(sent!.headers.get('anthropic-version')).toBe('2023-06-01')
+  expect(sent!.headers.get('anthropic-workspace-id')).toBe('wrkspc_test')
+  await expect(sent!.json()).resolves.toEqual({ model: 'invalid model', max_tokens: 16, messages: [{ role: 'user', content: 'Hi' }] })
+})
+it('uses max_completion_tokens for a native OpenAI connection test', async () => {
+  const { store } = await setup()
+  const openai = { ...provider, apiBase: 'https://api.openai.com/v1', models: ['gpt-test'] }
+  let sent: Request | undefined
+  vi.stubGlobal('fetch', async (input: URL | RequestInfo, init?: RequestInit) => {
+    sent = new Request(input, init)
+    return Response.json({ choices: [{ message: { content: 'Hi' } }] })
+  })
+  await expect(store.test({ provider: openai, model: 'gpt-test' })).resolves.toMatchObject({ ok: true })
+  await expect(sent!.json()).resolves.toEqual({ model: 'gpt-test', max_completion_tokens: 16, messages: [{ role: 'user', content: 'Hi' }] })
+  expect(customModelProvider({ ...openai, apiKey: provider.apiKey }).getModels()[0].compat).toMatchObject({ maxTokensField: 'max_completion_tokens' })
+})
 it.each(['openai', 'anthropic', 'ollama'] as const)('registers %s models with the configured key and endpoint', async kind => {
   const models = createModels()
   models.setProvider(customModelProvider({ ...provider, kind }))
@@ -91,7 +118,8 @@ it.each(['openai', 'anthropic', 'ollama'] as const)('registers %s models with th
 
 it.each(['openai', 'anthropic'] as const)('streams a real SDK turn through the custom %s adapter', async kind => {
   const models = createModels()
-  models.setProvider(customModelProvider({ ...provider, kind }))
+  const configured = { ...provider, kind, ...(kind === 'openai' ? { apiBase: 'https://api.openai.com/v1' } : { workspaceId: 'wrkspc_test' }) }
+  models.setProvider(customModelProvider(configured))
   const event = (name: string, data: unknown) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`
   const body = kind === 'openai'
     ? `data: ${JSON.stringify({ id: 'reply', choices: [{ index: 0, delta: { role: 'assistant', content: 'Hello' }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ id: 'reply', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`
@@ -109,11 +137,13 @@ it.each(['openai', 'anthropic'] as const)('streams a real SDK turn through the c
   const reply = await models.completeSimple(models.getModel('custom:example', 'org/model')!, { messages: [{ role: 'user', content: [{ type: 'text', text: 'What is in this image?' }, { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' }], timestamp: Date.now() }] }, { fetch: transport })
   expect(reply.stopReason).not.toBe('error')
   expect(reply.content).toContainEqual(expect.objectContaining({ type: 'text', text: 'Hello' }))
-  const payload = await request!.json() as { messages: Array<{ role: string; content: unknown[] }> }
+  const payload = await request!.json() as { messages: Array<{ role: string; content: unknown[] }>; max_tokens?: number; max_completion_tokens?: number }
   const userContent = payload.messages.find(message => message.role === 'user')!.content
   expect(userContent).toContainEqual(kind === 'openai'
     ? expect.objectContaining({ type: 'image_url', image_url: expect.objectContaining({ url: 'data:image/png;base64,aW1hZ2U=' }) })
     : expect.objectContaining({ type: 'image', source: expect.objectContaining({ type: 'base64', media_type: 'image/png', data: 'aW1hZ2U=' }) }))
-  expect(request!.url).toBe(customEndpoint(provider.apiBase, kind))
+  expect(request!.url).toBe(customEndpoint(configured.apiBase, kind))
   expect(request!.headers.get(kind === 'anthropic' ? 'x-api-key' : 'authorization')).toBe(kind === 'anthropic' ? provider.apiKey : `Bearer ${provider.apiKey}`)
+  if (kind === 'anthropic') expect(request!.headers.get('anthropic-workspace-id')).toBe('wrkspc_test')
+  else { expect(payload.max_completion_tokens).toBeTruthy(); expect(payload.max_tokens).toBeUndefined() }
 })

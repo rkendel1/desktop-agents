@@ -595,11 +595,14 @@ app.whenReady().then(async () => {
       await dialog.showMessageBox({ type: 'info', message: ui('Install or update this tool the way it was originally installed.', '请按该工具原有的安装方式安装或更新。'), detail: ui('Foundry does not run install commands for custom tools or tools from unconfirmed sources.', '自定义工具或未确认来源的工具不会自动运行安装命令。') })
       return false
     }
-    const result = await dialog.showMessageBox({ type: 'question', message: `${agent.installed ? ui('Update', '更新') : ui('Install', '安装')} ${agent.name}`, detail: `${plan.needsDownload ? ui('First use: Foundry will download and verify a runtime first. This may take a few minutes.', '首次使用，需要先下载并校验运行环境，可能需要几分钟。') + '\n\n' : ''}${ui('The following command will run in your system terminal. Finish any prompts there; Foundry checks again when you return.', '将在系统终端执行以下命令。请在终端完成提示，返回后会自动检测。')}\n\n${plan.command}`, buttons: [ui('Cancel', '取消'), ui('Run in Terminal', '在终端执行')], defaultId: 1, cancelId: 0 })
+    const installDescription = plan.npmPackage
+      ? `${agent.name} command-line agent\nPackage: ${plan.npmPackage}@latest\nDestination: ${plan.npmPrefix}\nThis is an agent CLI, not a local AI model. npm may report dependency install scripts that require separate approval.`
+      : `${agent.name} command-line agent\nThis is an agent CLI, not a local AI model.`
+    const result = await dialog.showMessageBox({ type: 'question', message: `${agent.installed ? ui('Update', '更新') : ui('Install', '安装')} ${agent.name}`, detail: `${installDescription}\n\n${plan.needsDownload ? ui('First use: Foundry will download and verify a runtime first. This may take a few minutes.', '首次使用，需要先下载并校验运行环境，可能需要几分钟。') + '\n\n' : ''}${ui('The following command will run in your system terminal. Finish any prompts there; Foundry checks again when you return.', '将在系统终端执行以下命令。请在终端完成提示，返回后会自动检测。')}\n\n${plan.command}`, buttons: [ui('Cancel', '取消'), ui('Run in Terminal', '在终端执行')], defaultId: 1, cancelId: 0 })
     if (result.response !== 1) return false
     if (plan.needsDownload) await ensureManagedNode()
     resetShellPath()
-    await openMaintenanceTerminal(plan.command)
+    await openMaintenanceTerminal(plan.command, { description: installDescription })
     return true
   })
   ipcMain.handle('douchat:list-local-agent-models', async (_event, agentId: string) => {
@@ -801,10 +804,12 @@ app.whenReady().then(async () => {
     const { customModel, ...update } = input
     // Whitelist before storing; 'default' clears the override.
     if ('thinkingLevel' in update) (update as UpdateAgentInput).thinkingLevel = thinkingLevel(update.thinkingLevel) ?? 'default'
+    if (update.automaticModelSelection !== undefined && typeof update.automaticModelSelection !== 'boolean') throw new Error('Invalid automatic model selection setting.')
     if (customModel && (existing.localAgentId || input.localAgentId)) throw new Error("Select one execution mode.")
     const selectedBinding = customModel ? runtime.customAgentModel(customModel.providerId, customModel.model) : undefined
     input = { ...update, ...selectedBinding, followDefaultModel: customModel?.providerId === '@default' ? true : selectedBinding || input.localAgentId ? false : existing.followDefaultModel }
     const finalProvider = input.localAgentId || existing.localAgentId ? 'local' : input.provider ?? existing.provider
+    if (input.automaticModelSelection && !finalProvider.startsWith(CUSTOM_PROVIDER_PREFIX)) throw new Error('Automatic model selection requires a configured model provider.')
     if (finalProvider !== 'local' && !finalProvider.startsWith(CUSTOM_PROVIDER_PREFIX) && (existing.thinkingLevel || 'thinkingLevel' in input)) input.thinkingLevel = 'default'
     if (input.model !== undefined && (input.localAgentId || existing.localAgentId)) {
       const model = localModelId(input.model)
@@ -817,6 +822,7 @@ app.whenReady().then(async () => {
       ...safeInput,
       ...(input.localAgentId !== undefined ? { localAgentName: localAgent?.custom ? localAgent.name : undefined } : {})
     })
+    if (input.automaticModelSelection && !(await fabric.registry()).discoveredAt) await fabric.discover().catch(() => undefined)
     // Identity and model edits take effect on the next turn, not mid-session.
     runtime.disposeAgent(agentId)
   })

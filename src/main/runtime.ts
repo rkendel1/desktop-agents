@@ -408,7 +408,7 @@ export class DouchatRuntime {
   /** Foundry’s existing model path, for the model fabric’s adapters: the same registry every agent turn streams through. */
   readonly streamModel = (model: unknown, context: import('@earendil-works/pi-ai').Context, options?: import('@earendil-works/pi-ai').SimpleStreamOptions): import('@earendil-works/pi-ai').AssistantMessageEventStream => this.models.streamSimple(model as never, context, options)
   private fabric?: ModelFabric
-  /** With the fabric attached and its automatic routing on, a custom-provider agent’s turns go to the best eligible model under the cost policy. Off (the default), nothing changes. */
+  /** With global or per-agent automatic routing on, custom-provider turns go to the best eligible model under the cost policy. Otherwise nothing changes. */
   attachModelFabric(fabric: ModelFabric): void { this.fabric = fabric }
 
   /**
@@ -423,7 +423,7 @@ export class DouchatRuntime {
     void (async () => {
       let source: import('@earendil-works/pi-ai').AssistantMessageEventStream
       try {
-        if (!(await fabric.policy()).automatic) source = direct()
+        if (!config.automaticModelSelection && !(await fabric.policy()).automatic) source = direct()
         else source = routedStream({ fabric, request: fabric.request('general', requirementsOf(streamContext)), context: streamContext, ...(options ? { options } : {}),
           open: (candidate, context, opts) => {
             const record = this.decisionProviders.find(item => item.id === candidate.provider)

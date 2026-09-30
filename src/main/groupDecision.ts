@@ -3,7 +3,7 @@ import { groupTaskEvidence } from '../shared/bot/groupTasks'
 import { customEndpoint } from '../shared/customModels'
 import { decisionJson, decisionProtocol, type DecisionSettings } from '../shared/groupDecision'
 import { GROUP_CONTINUITY_INSTRUCTION, groupConversationContinuity, groupDecisionPrompt, validateGroupDecision, type BotGroup, type GroupDecision, type GroupDecisionContext } from '../shared/bot/group'
-import type { CustomProviderRecord } from './customModels'
+import { completionTokenLimit, customProviderHeaders, type CustomProviderRecord } from './customModels'
 import { randomUUID } from 'node:crypto'
 
 export interface DecisionProvider extends CustomProviderRecord {
@@ -152,7 +152,7 @@ export class GroupDecisionService {
     const reasoning = new URL(provider.apiBase).hostname === 'openrouter.ai' ? await this.openRouterReasoning(model, signal) : undefined
     const structured = schema && reasoning && this.structuredModels.has(model) && provider.kind === 'openai'
     const body = {
-      model, max_tokens: 8192,
+      model, ...completionTokenLimit(provider, 8192),
       ...(reasoning ? { reasoning } : {}),
       ...(structured ? { response_format: { type: 'json_schema', json_schema: { name: 'group_decision', strict: true, schema } }, provider: { require_parameters: true } } : {}),
       messages: [{ role: 'user', content: prompt }]
@@ -291,10 +291,7 @@ export class GroupDecisionService {
   private async post(url: string, provider: DecisionProvider, body: unknown, signal: AbortSignal, timeout: number): Promise<any> {
     const response = await this.request(provider.cloud?.endpoint ?? url, {
       method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]),
-      headers: provider.cloud ? { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}`, 'Idempotency-Key': randomUUID() } : provider.kind === 'anthropic'
-        ? { 'Content-Type': 'application/json', 'x-api-key': provider.apiKey, 'anthropic-version': '2023-06-01' }
-        : provider.kind === 'ollama' ? { 'Content-Type': 'application/json' }
-        : { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
+      headers: provider.cloud ? { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}`, 'Idempotency-Key': randomUUID() } : customProviderHeaders(provider, true),
       body: JSON.stringify(body)
     })
     if (provider.cloud) {

@@ -18,6 +18,7 @@ it('offers a detected Ollama service with its installed models and no API key', 
   const root = createRoot(container)
   try {
     await act(async () => root.render(<CustomModelSettings />))
+    expect(container.textContent).toContain('Installed command-line agents are selected under Create agent → Local agent')
     const detected = [...container.querySelectorAll('button')].find(button => button.textContent === 'Use detected Ollama')!
     await act(async () => detected.click())
     expect([...container.querySelectorAll<HTMLInputElement>('input[aria-label^="Model ID"]')].map(input => input.value)).toEqual(ollama.models)
@@ -85,6 +86,7 @@ it('places TokenDance after OpenRouter, defaults to OAuth, saves the authorized 
   try {
     await act(async () => root.render(<CustomModelSettings />))
     await act(async () => button('Add provider').click())
+    expect(container.textContent).toContain('These are local agents, not model providers')
     const preset = container.querySelector<HTMLSelectElement>('.custom-model-fields select')!
     expect([...preset.options].map(o => o.value)).toEqual(['anthropic', 'openai', 'openrouter', 'tokendance', 'deepseek', 'ollama', 'custom'])
     for (const id of ['anthropic', 'openai', 'openrouter', 'deepseek']) {

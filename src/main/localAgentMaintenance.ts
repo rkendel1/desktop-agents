@@ -80,5 +80,5 @@ export async function prepareNpmMaintenance(plan: MaintenancePlan): Promise<Main
   const bin = windows ? win32.dirname(environment.node) : dirname(environment.node)
   const pathSetup = windows ? `$env:Path = ${quote(bin + ';')} + $env:Path` : `export PATH=${quote(bin)}:"$PATH"`
   const command = `${pathSetup}\n${windows ? '& ' : ''}${quote(environment.node)} ${quote(environment.npm)} install --global --prefix ${quote(prefix)} ${plan.npmPackage}@latest`
-  return { ...plan, command, needsDownload: environment.needsDownload }
+  return { ...plan, command, npmPrefix: prefix, needsDownload: environment.needsDownload }
 }
