@@ -21,6 +21,13 @@ export interface OpenAICredential {
 
 interface TokenResponse { access_token?: unknown; refresh_token?: unknown; id_token?: unknown; expires_in?: unknown; scope?: unknown }
 
+export class OpenAIAuthError extends Error {
+  constructor(public readonly code: string, message: string, public readonly status?: number) {
+    super(message)
+    this.name = 'OpenAIAuthError'
+  }
+}
+
 const base64url = (value: Uint8Array): string => Buffer.from(value).toString('base64url')
 const random = (bytes = 32): string => base64url(randomBytes(bytes))
 
@@ -81,28 +88,46 @@ function parseTokenResponse(value: TokenResponse): { accessToken: string; refres
   return { accessToken: value.access_token, refreshToken: value.refresh_token, idToken: value.id_token, expiresIn, scopes }
 }
 
-export async function authorizeOpenAI(openExternal: (url: string) => Promise<unknown>, signal: AbortSignal, options: { previous?: OpenAICredential; hostId?: string; request?: typeof fetch; listen?: (signal: AbortSignal) => Promise<CallbackListener> } = {}): Promise<OpenAICredential> {
+async function tokenFailure(response: Response): Promise<OpenAIAuthError> {
+  let code = 'token_exchange_failed'
+  try {
+    const value = await response.json() as { error?: unknown; code?: unknown }
+    const candidate = typeof value.error === 'string' ? value.error : typeof value.code === 'string' ? value.code : ''
+    if (/^[a-zA-Z0-9_.:-]{1,100}$/.test(candidate)) code = candidate
+  } catch { /* OAuth servers may return an empty or non-JSON error body. */ }
+  if (code === 'invalid_grant') return new OpenAIAuthError(code, 'ChatGPT did not accept the one-time authorization code. Select Continue with ChatGPT again to finish connecting.', response.status)
+  if (code === 'invalid_client') return new OpenAIAuthError(code, 'ChatGPT rejected the saved app registration. Select Continue with ChatGPT again to create a fresh connection.', response.status)
+  if (code === 'access_denied') return new OpenAIAuthError(code, 'ChatGPT plan access was not granted. Select Continue with ChatGPT and approve plan usage.', response.status)
+  return new OpenAIAuthError(code, `OpenAI token exchange failed (HTTP ${response.status}, ${code}).`, response.status)
+}
+
+export async function authorizeOpenAI(openExternal: (url: string) => Promise<unknown>, signal: AbortSignal, options: { previous?: OpenAICredential; registeredClientId?: string; hostId?: string; request?: typeof fetch; listen?: (signal: AbortSignal) => Promise<CallbackListener>; onRegistration?: (clientId: string) => Promise<void> | void } = {}): Promise<OpenAICredential> {
   const request = options.request ?? fetch
   const state = random(), nonce = random(), verifier = random(48)
   const { server, redirectUri, callback } = await (options.listen ?? listen)(signal)
   try {
     const previous = options.previous
-    const clientId = previous?.clientId ?? 'dynamic_agent_client'
+    const clientId = previous?.clientId ?? options.registeredClientId ?? 'dynamic_agent_client'
     const url = new URL(AUTHORIZE)
     const params: Record<string, string> = { client_id: clientId, ext_agent_host_id: previous?.hostId ?? options.hostId ?? `urn:uuid:${randomUUID()}`, response_type: 'code', redirect_uri: redirectUri, scope: SCOPES, resource: RESOURCE, state, nonce, code_challenge_method: 'S256', code_challenge: base64url(createHash('sha256').update(verifier).digest()) }
-    if (!previous) params.agent_name_hint = 'Foundry'
-    else { params.id_token_hint = previous.idToken; if (previous.email) params.login_hint = previous.email }
+    if (previous) { params.id_token_hint = previous.idToken; if (previous.email) params.login_hint = previous.email }
+    else if (clientId === 'dynamic_agent_client') params.agent_name_hint = 'Foundry'
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
     await openExternal(url.toString())
     const result = await callback
     if (result.searchParams.get('state') !== state) throw new Error('OpenAI sign-in state validation failed.')
     if (result.searchParams.get('error')) throw new Error(result.searchParams.get('error_description') || 'OpenAI sign-in was denied.')
     const code = result.searchParams.get('code')
-    const issued = result.searchParams.get('client_id') ?? clientId
-    if (!code || issued === 'dynamic_agent_client' || (previous && issued !== previous.clientId)) throw new Error('OpenAI registration did not complete.')
+    const returnedClientId = result.searchParams.get('client_id')
+    const issued = returnedClientId ?? clientId
+    if (!code || !/^[a-zA-Z0-9_-]{1,200}$/.test(issued) || issued === 'dynamic_agent_client' || (clientId !== 'dynamic_agent_client' && returnedClientId !== null && issued !== clientId)) throw new Error('OpenAI registration did not complete.')
+    // Registration succeeds before the one-time code exchange. Persist the
+    // issued ID first so an expired/rejected code can retry without creating
+    // another ChatGPT app registration.
+    await options.onRegistration?.(issued)
     const body = new URLSearchParams({ grant_type: 'authorization_code', client_id: issued, code, code_verifier: verifier, redirect_uri: redirectUri, resource: RESOURCE })
-    const response = await request(TOKEN, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body, signal })
-    if (!response.ok) throw new Error(`OpenAI token exchange failed (HTTP ${response.status}).`)
+    const response = await request(TOKEN, { method: 'POST', redirect: 'error', headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' }, body, signal })
+    if (!response.ok) throw await tokenFailure(response)
     const token = parseTokenResponse(await response.json() as TokenResponse)
     const identity = await validateIdToken(token.idToken, issued, nonce, request)
     if (previous && identity.sub !== previous.subject) throw new Error('OpenAI returned a different account than the selected connection.')

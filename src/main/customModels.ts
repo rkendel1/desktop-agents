@@ -6,7 +6,7 @@ import * as anthropic from '@earendil-works/pi-ai/api/anthropic-messages'
 import type { DesktopRepository, ProviderRecord } from './desktopRepository'
 import type { CredentialVault } from './credentialVault'
 import { CUSTOM_PROVIDER_PREFIX, customEndpoint, providerRequiresApiKey, type CustomProviderInput, type CustomModelConfig, type CustomModelTest } from '../shared/customModels'
-import { authorizeOpenAI, discoverOpenAIModels, refreshOpenAI, type OpenAICredential } from './openaiAuth'
+import { authorizeOpenAI, discoverOpenAIModels, OpenAIAuthError, refreshOpenAI, type OpenAICredential } from './openaiAuth'
 export interface CustomProviderRecord extends CustomProviderInput { apiKey: string; resolveApiKey?: () => Promise<string> }
 export function usesNativeOpenAITokens(p: Pick<CustomProviderInput, 'kind' | 'apiBase'>): boolean {
   if (p.kind !== 'openai') return false
@@ -99,13 +99,29 @@ export class CustomModelStore {
   async connectOpenAI(openExternal: (url: string) => Promise<unknown>, signal: AbortSignal): Promise<CustomModelConfig> {
     const previous = this.oauthCredential()
     const hostReference = this.reference('openai-host')
+    const registrationReference = this.reference('openai-registration')
     const hostId = previous?.hostId ?? this.vault.get(hostReference) ?? `urn:uuid:${randomUUID()}`
     if (!this.vault.has(hostReference)) this.vault.set(hostReference, hostId)
-    const credential = await authorizeOpenAI(openExternal, signal, { previous, hostId })
+    let credential: OpenAICredential
+    try {
+      credential = await authorizeOpenAI(openExternal, signal, {
+        previous,
+        registeredClientId: previous ? undefined : this.vault.get(registrationReference),
+        hostId,
+        onRegistration: clientId => this.vault.set(registrationReference, clientId)
+      })
+    } catch (error) {
+      // An invalid registration cannot be reused; the next attempt must start
+      // dynamic registration again. Keep valid registrations after transient
+      // or one-time-code failures as required by the OpenAI OAuth contract.
+      if (error instanceof OpenAIAuthError && error.code === 'invalid_client') this.vault.delete(registrationReference)
+      throw error
+    }
     const catalog = await discoverOpenAIModels(credential.accessToken)
     const old = await this.repository.providers()
     const config: Omit<CustomProviderInput, 'id' | 'name' | 'kind'> = { apiBase: 'https://api.openai.com/v1', authentication: 'chatgpt-oauth', account: credential.email ?? credential.subject, models: catalog.models, modelLabels: catalog.labels, reasoningModels: Object.keys(catalog.thinkingLevels), thinkingLevels: catalog.thinkingLevels }
     this.vault.set(this.reference('openai'), JSON.stringify(credential))
+    this.vault.delete(registrationReference)
     const record: ProviderRecord = { id: 'openai', name: 'OpenAI', kind: 'openai', config, credentialRef: this.reference('openai'), updatedAt: Date.now() }
     const providers = [...old.filter(item => item.id !== 'openai'), record]
     const current = (await this.repository.setting<string>('defaultModel')) ?? ''
@@ -119,6 +135,7 @@ export class CustomModelStore {
     const current = (await this.repository.setting<string>('defaultModel')) ?? ''
     await this.repository.replaceProviders(providers, choices.includes(current) ? current : choices[0] ?? '')
     this.vault.delete(this.reference('openai'))
+    this.vault.delete(this.reference('openai-registration'))
     return this.list()
   }
   async assertThinkingLevel(providerId: string, model: string, level: string | undefined): Promise<void> {

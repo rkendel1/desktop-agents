@@ -49,6 +49,46 @@ describe('official OpenAI connection', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('checkpoints a new registration before a failed one-time code exchange', async () => {
+    const events: string[] = []
+    const request = vi.fn(async () => {
+      events.push('exchange')
+      return Response.json({ error: 'invalid_grant' }, { status: 400 })
+    }) as unknown as typeof fetch
+    let finish!: (url: URL) => void
+    const listen = async () => ({ server: { close: vi.fn() }, redirectUri: 'http://127.0.0.1:1455/auth/callback', callback: new Promise<URL>(resolve => { finish = resolve }) })
+    await expect(authorizeOpenAI(async value => {
+      const auth = new URL(value), callback = new URL(auth.searchParams.get('redirect_uri')!)
+      callback.searchParams.set('code', 'one-use-code'); callback.searchParams.set('state', auth.searchParams.get('state')!); callback.searchParams.set('client_id', 'oaiapp_foundry')
+      finish(callback)
+    }, new AbortController().signal, {
+      request,
+      listen,
+      onRegistration: clientId => { events.push(`registered:${clientId}`) }
+    })).rejects.toThrow('Select Continue with ChatGPT again')
+    expect(events).toEqual(['registered:oaiapp_foundry', 'exchange'])
+  })
+
+  it('reuses a checkpointed registration when the callback omits its client ID', async () => {
+    let opened = ''
+    let exchange = ''
+    const request = vi.fn(async (_input, init) => {
+      exchange = String(init?.body)
+      return Response.json({ error: 'invalid_grant' }, { status: 400 })
+    }) as unknown as typeof fetch
+    let finish!: (url: URL) => void
+    const listen = async () => ({ server: { close: vi.fn() }, redirectUri: 'http://127.0.0.1:1455/auth/callback', callback: new Promise<URL>(resolve => { finish = resolve }) })
+    await expect(authorizeOpenAI(async value => {
+      opened = value
+      const auth = new URL(value), callback = new URL(auth.searchParams.get('redirect_uri')!)
+      callback.searchParams.set('code', 'fresh-code'); callback.searchParams.set('state', auth.searchParams.get('state')!)
+      finish(callback)
+    }, new AbortController().signal, { registeredClientId: 'oaiapp_foundry', request, listen })).rejects.toThrow('one-time authorization code')
+    expect(new URL(opened).searchParams.get('client_id')).toBe('oaiapp_foundry')
+    expect(new URL(opened).searchParams.has('agent_name_hint')).toBe(false)
+    expect(exchange).toContain('client_id=oaiapp_foundry')
+  })
+
   it('discovers only listed models and preserves only provider-reported reasoning levels', async () => {
     const request = vi.fn(async (_input, init) => {
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer access-secret')
