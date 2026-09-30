@@ -1,8 +1,9 @@
 /** Per-agent reasoning depth. `undefined` means "use the default":
- * Foundry's own agents think at `low`; local CLIs keep their own configuration. */
+ * Foundry's own cloud agents use the fastest reasoning level; local CLIs keep
+ * their own configuration. People can still choose a deeper level per agent. */
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 export type ThinkingLevel = typeof THINKING_LEVELS[number]
-export const DEFAULT_CLOUD_THINKING_LEVEL: ThinkingLevel = 'low'
+export const DEFAULT_CLOUD_THINKING_LEVEL: ThinkingLevel = 'minimal'
 
 export function thinkingLevel(value?: string | null): ThinkingLevel | undefined {
   if (value === undefined || value === null || value === '' || value === 'default') return undefined

@@ -5427,6 +5427,21 @@ html[data-platform='win32'] .messenger .app-rail {
   white-space: nowrap;
   animation: typing-activity-text-in 140ms ease-out;
 }
+.messenger .typing-activity.is-streaming-draft .activity-status-line { align-items: flex-end; }
+.messenger .typing-activity.is-streaming-draft .typing-activity-text {
+  max-height: 12em;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: clip;
+  white-space: pre-wrap;
+}
+.messenger .turn-work-modal { width: min(680px, calc(100vw - 40px)); }
+.messenger .turn-work-modal .modal-heading { margin-bottom: 20px; }
+.messenger .turn-work-modal .modal-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+.messenger .turn-work-modal .two-fields { display: grid; }
+.messenger .turn-work-modal textarea { min-height: 220px; font-family: inherit; }
+.messenger .turn-work-modal .modal-footer { justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.messenger .turn-work-empty { display: grid; justify-items: start; gap: 14px; color: var(--muted); }
 @keyframes typing-activity-text-in {
   from { opacity: .35; }
   to { opacity: 1; }

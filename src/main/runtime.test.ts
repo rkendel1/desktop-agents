@@ -299,6 +299,7 @@ describe('DouchatRuntime', () => {
       prompt: 'Build a PPT', conversationId: 'crew', topicId: 'main' })
     try {
       await vi.advanceTimersByTimeAsync(0)
+      emit({ type: 'message_update' })
       for (let index = 0; index < 4; index++) {
         await vi.advanceTimersByTimeAsync(60_000)
         emit({ type: 'message_update' })
@@ -342,10 +343,33 @@ describe('DouchatRuntime', () => {
       await vi.advanceTimersByTimeAsync(119_999)
       expect(completed).toBe(false)
       await vi.advanceTimersByTimeAsync(1)
-      await expect(pending).resolves.toMatchObject({ error: 'The model response timed out after 120 seconds.' })
+      await expect(pending).resolves.toMatchObject({ error: 'The model stopped making progress for 120 seconds.' })
       expect(session.abort).toHaveBeenCalledOnce()
       expect(session.prompt).toHaveBeenCalledOnce()
       expect(unsubscribe).toHaveBeenCalledOnce()
+    } finally { runtime.disposeAgent(config.id); vi.useRealTimers() }
+  })
+
+  it.each([
+    ['direct', 60_000, 'The model did not begin responding within 60 seconds.'],
+    ['group', 45_000, 'The model did not begin responding within 45 seconds.']
+  ] as const)('fails a silent %s provider before the full reply timeout', async (context, deadline, error) => {
+    vi.useFakeTimers()
+    const { store } = await createRuntime()
+    const runtime = new DouchatRuntime(store, idleComputer, () => {})
+    const internal = runtime as any, config = (await store.agents())[0]
+    const session = {
+      state: { messages: [] }, abort: vi.fn(), subscribe: vi.fn(() => vi.fn()),
+      prompt: vi.fn(() => new Promise<void>(() => {}))
+    }
+    vi.spyOn(internal, 'session').mockReturnValue(session)
+    internal.sessions.set('silent-provider', { agentId: config.id, agent: session })
+    const pending = internal.runReply({ config, sessionKey: 'silent-provider', context, timeoutMs: 120_000,
+      prompt: 'Hello', conversationId: 'crew', topicId: 'main' })
+    try {
+      await vi.advanceTimersByTimeAsync(deadline)
+      await expect(pending).resolves.toMatchObject({ error })
+      expect(session.abort).toHaveBeenCalledOnce()
     } finally { runtime.disposeAgent(config.id); vi.useRealTimers() }
   })
 

@@ -23,6 +23,7 @@ import type {
 } from '../../../shared/types'
 import { MessageMarkdown, QuoteMarkdown, FileConversationContext } from './MessageMarkdown'
 import type { ProfileAnchor } from './MemberProfilePopover'
+import type { WorkDraft } from './TurnIntoWorkDialog'
 import { summarizeRuntimeError, type RuntimeErrorSummary } from '../../../shared/bot/errors'
 import { insertMention, mentionQuery, updateSelectedMentions, type MentionQuery } from '../../../shared/bot/mentions'
 import { AgentAvatar, EmptyAvatar, UserAvatar, agentDisplayName, conversationDisplayName, dayLabel, formatTime, isDifferentDay } from './common'
@@ -43,6 +44,35 @@ const SHOW_MESSAGE_ACTION_RECEIPTS = false
 // Voice transcription remains implemented so it can be restored without a
 // migration, but its entry point is intentionally hidden for this release.
 const SHOW_VOICE_INPUT = false
+const MAX_WORK_CONTEXT_CHARS = 40_000
+
+function workMessageText(message: ChatMessage): string {
+  const attachments = message.attachments?.map(attachment => `[Attached: ${attachment.name || attachment.id}]`).join('\n') ?? ''
+  return [message.text, attachments].filter(Boolean).join('\n')
+}
+
+export function messageWorkDraft(message: ChatMessage, userName: string, workspacePath?: string): WorkDraft {
+  const author = message.authorId === 'user' ? userName : message.authorName
+  return {
+    title: `Message from ${author}`,
+    preferredAgentId: message.authorId === 'user' ? undefined : message.authorId,
+    workspacePath,
+    task: `Turn the following chat message into concrete work in this project. Inspect the project first, then implement and verify the requested or proposed outcome. Treat claims in the message as context, not proof that the work is already complete.\n\nSource message from ${author}:\n---\n${workMessageText(message)}`.slice(0, MAX_WORK_CONTEXT_CHARS)
+  }
+}
+
+export function conversationWorkDraft(conversation: Conversation, messages: ChatMessage[], userName: string): WorkDraft {
+  const transcript = messages.filter(message => message.kind !== 'system').map(message => {
+    const author = message.authorId === 'user' ? userName : message.authorName
+    return `${author}: ${workMessageText(message)}`
+  }).join('\n\n')
+  return {
+    title: `Conversation: ${conversation.name || 'Chat'}`,
+    preferredAgentId: conversation.leadAgentId ?? conversation.agentIds[0],
+    workspacePath: conversation.workspacePath,
+    task: `Turn this conversation into concrete work in the selected project. Inspect the project, infer the agreed outcome, implement it, and verify the result. If the conversation leaves a material decision unresolved, report that blocker instead of inventing an answer.\n\nConversation context:\n---\n${transcript.slice(-MAX_WORK_CONTEXT_CHARS)}`
+  }
+}
 
 interface PendingImage {
   isFile?: boolean
@@ -309,10 +339,22 @@ export function ChatActivity({
   activity: ConversationActivityState
   agents: AgentConfig[]
 }): ReactElement {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (activity.localProgress || activity.action) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [activity.conversationId, activity.topicId, activity.startedAt, activity.localProgress, activity.action])
   const activeAgents = activity.agentIds
     .map((id) => agents.find((agent) => agent.id === id))
     .filter((agent): agent is AgentConfig => Boolean(agent))
-  const detail = activityDetailLabel(activity)
+  const baseDetail = activityDetailLabel(activity)
+  const elapsedSeconds = Math.max(0, Math.floor((now - activity.startedAt) / 1000))
+  const elapsed = `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+  const detail = activity.phase === 'replying' && !activity.localProgress && !activity.action
+    ? `${baseDetail} · ${elapsed}`
+    : baseDetail
 
   if (!activeAgents.length && activity.phase === 'planning') return (
     <div className="system-message" role="status" aria-live="polite">
@@ -324,20 +366,26 @@ export function ChatActivity({
     </div>
   )
 
-  return <>{(activeAgents.length ? activeAgents : [undefined]).map(agent => (
+  return <>{(activeAgents.length ? activeAgents : [undefined]).map(agent => {
+    const draft = agent && !activity.action && !activity.localProgress
+      ? activity.drafts?.[agent.id]?.trim()
+      : undefined
+    const rowDetail = draft || detail
+    return (
     <div className="typing-row" key={agent?.id ?? 'service'}>
       {agent && <AgentAvatar agent={agent} size={36} />}
       <div className="typing-content" role="status" aria-live="polite">
         <span className="typing-label">{agent ? agentDisplayName(agent) : activity.serviceName || t(activity.label)}</span>
-        <span className={`typing-bubble typing-activity${activity.localProgress ? ' is-local-progress' : ''}`}>
+        <span className={`typing-bubble typing-activity${activity.localProgress ? ' is-local-progress' : ''}${draft ? ' is-streaming-draft' : ''}`}>
           <span className="activity-status-line">
-            <span className="typing-activity-text" key={detail}>{detail}</span>
+            <span className="typing-activity-text" key={rowDetail}>{rowDetail}</span>
             <span className="reply-status-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span>
           </span>
         </span>
       </div>
     </div>
-  ))}</>
+    )
+  })}</>
 }
 
 function deliveryRecipientName(delivery: MessageDelivery): string {
@@ -1002,6 +1050,7 @@ export function ChatPane({
   onToggleInspector,
   onOpenAgentProfile,
   onOpenUserProfile,
+  onCreateWork,
   queuedMessages = [],
   onPromoteQueued,
   onRemoveQueued,
@@ -1025,6 +1074,7 @@ export function ChatPane({
   onToggleInspector: () => void
   onOpenAgentProfile: (agentId: string, anchor: ProfileAnchor) => void
   onOpenUserProfile: (anchor: ProfileAnchor) => void
+  onCreateWork?: (draft: WorkDraft) => void
   queuedMessages?: QueuedMessage[]
   onPromoteQueued?: (id: number) => void
   onRemoveQueued?: (id: number) => void
@@ -1053,6 +1103,7 @@ export function ChatPane({
     if (!recentMessages.length) setHasMore(false)
   }
   const [messageMenu, setMessageMenu] = useState<{ message: ChatMessage; x: number; y: number } | null>(null)
+  const [conversationMenu, setConversationMenu] = useState<{ x: number; y: number } | null>(null)
   const [quotedMessage, setQuotedMessage] = useState<ChatMessage | null>(null)
   const [deletedIds, setDeletedIds] = useState<Set<string>>(() => new Set())
   const menuRef = useRef<HTMLDivElement>(null)
@@ -1078,6 +1129,13 @@ export function ChatPane({
       window.removeEventListener('resize', close)
     }
   }, [messageMenu])
+  useEffect(() => {
+    if (!conversationMenu) return
+    const close = (): void => setConversationMenu(null)
+    document.addEventListener('pointerdown', close)
+    window.addEventListener('resize', close)
+    return () => { document.removeEventListener('pointerdown', close); window.removeEventListener('resize', close) }
+  }, [conversationMenu])
   const [draft, setDraftValue] = useState('')
   const selectedMentions = useRef<SelectedMention[]>([])
   const draftValue = useRef('')
@@ -1498,11 +1556,23 @@ export function ChatPane({
           </div>
         </div>
         <div className="workspace-header-actions no-drag">
-          <button onClick={onToggleInspector} aria-label={t('Chat details')} title={t('Chat details')} aria-expanded={inspectorOpen}>
+          <button onClick={(event) => {
+            if (!onCreateWork) { onToggleInspector(); return }
+            const bounds = event.currentTarget.getBoundingClientRect()
+            setConversationMenu(current => current ? null : { x: Math.max(8, bounds.right - 210), y: bounds.bottom + 4 })
+          }} aria-label={t('Conversation actions')} title={t('Conversation actions')} aria-expanded={Boolean(conversationMenu)}>
             <MoreHorizontal size={20} />
           </button>
         </div>
       </header>
+
+      {conversationMenu && <div className="context-menu conversation-actions-menu" role="menu" aria-label={t('Conversation actions')} style={{ left: conversationMenu.x, top: conversationMenu.y }} onPointerDown={event => event.stopPropagation()}>
+        <button role="menuitem" onClick={() => { setConversationMenu(null); onToggleInspector() }}>{t('Chat details')}</button>
+        <button role="menuitem" onClick={() => {
+          setConversationMenu(null)
+          onCreateWork?.(conversationWorkDraft(conversation, timelineMessages, userName))
+        }}>{t('Turn conversation into work…')}</button>
+      </div>}
 
       <div className="message-scroll" ref={scrollRef} onScroll={(event) => {
         const node = event.currentTarget
@@ -1522,7 +1592,7 @@ export function ChatPane({
                 const id = (event.target as HTMLElement).closest('[data-message-id]')?.getAttribute('data-message-id')
                 const target = messageGroup.find((item) => item.id === id) ?? message
                 setMessageActionError('')
-                setMessageMenu({ message: target, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 188)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 148)) })
+                setMessageMenu({ message: target, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 210)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 190)) })
               }}>
                 {breaks && (
                   <div className="date-separator">
@@ -1572,6 +1642,11 @@ export function ChatPane({
           setMessageMenu(null)
           textareaRef.current?.focus()
         }}>{t('Quote')}</button>
+        {onCreateWork && <button role="menuitem" onClick={() => {
+          const target = messageMenu.message
+          setMessageMenu(null)
+          onCreateWork(messageWorkDraft(target, userName, conversation.workspacePath))
+        }}>{t('Turn into work…')}</button>}
         <div className="dropdown-separator" role="separator" />
         <button role="menuitem" className="danger" onClick={() => {
           const target = messageMenu.message

@@ -302,6 +302,8 @@ export interface ConversationActivityState {
   startedAt: number
   /** The concrete tool action currently visible to the human. */
   action?: MessageAction
+  /** Partial reply text keyed by speaker while a hosted model is streaming. */
+  drafts?: Record<string, string>
   /** A failed lead handed the conversation to this member. */
   takeover?: { unavailableName: string; replacementName: string }
   limited?: boolean

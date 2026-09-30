@@ -117,6 +117,9 @@ const MAX_TRANSIENT_REPLY_RETRIES = 3
 const TRANSIENT_REPLY_RETRY_DELAY_MS = 400
 const CONTROLLER_REPLY_TIMEOUT_MS = 30_000
 const CHAT_REPLY_TIMEOUT_MS = 120_000
+const DIRECT_FIRST_PROGRESS_TIMEOUT_MS = 60_000
+const GROUP_FIRST_PROGRESS_TIMEOUT_MS = 45_000
+const DRAFT_ACTIVITY_INTERVAL_MS = 250
 const INPUT_IMAGE_TYPES = new Set<MessageAttachment['mimeType']>([
   'image/png', 'image/jpeg', 'image/webp', 'image/gif'
 ])
@@ -667,7 +670,10 @@ export class DouchatRuntime {
       failed: extra.failed,
       localProgress: extra.localProgress,
       planningStage: extra.planningStage,
-      serviceName: extra.serviceName
+      serviceName: extra.serviceName,
+      drafts: current?.phase === phase && current.topicId === topicId
+        ? { ...current.drafts, ...extra.drafts }
+        : extra.drafts
     })
     this.ephemeralChanged()
   }
@@ -791,7 +797,11 @@ export class DouchatRuntime {
       const runId = this.activeRun.get(sessionKey)
       if (!runId) return
       if (event.type === 'message_update' || event.type === 'tool_execution_start' || event.type === 'tool_execution_end') this.replyProgress.get(sessionKey)?.()
-      if (event.type === 'message_update' && event.message.role === 'assistant') this.record(sessionKey, () => this.recordReplyDraft(runId, sessionKey, this.readText((event.message as { content: unknown }).content)))
+      if (event.type === 'message_update' && event.message.role === 'assistant') {
+        const text = this.readText((event.message as { content: unknown }).content)
+        this.showReplyDraft(sessionKey, config, text)
+        this.record(sessionKey, () => this.recordReplyDraft(runId, sessionKey, text))
+      }
       if (event.type === 'tool_execution_start') {
         const key = `${runId}:${config.id}`
         const actions = this.toolActions.get(key) ?? new Map<string, MessageAction>()
@@ -850,6 +860,7 @@ export class DouchatRuntime {
   }
 
   private readonly draftWrites = new Map<string, number>()
+  private readonly draftActivityWrites = new Map<string, number>()
   private readonly recording = new Map<string, Promise<void>>()
 
   /** Run events arrive in order and are stored in that order; a failure to store one must not stop the turn. */
@@ -873,6 +884,27 @@ export class DouchatRuntime {
     if (now - (this.draftWrites.get(sessionKey) ?? 0) < 3000) return
     this.draftWrites.set(sessionKey, now)
     await this.store.addRunEvent({ runId, type: 'status', kind: 'message_delta', label: 'Reply in progress', detail: text.slice(0, 20_000), status: 'running' })
+  }
+
+  /** Show hosted model output as it arrives without flooding renderer snapshots. */
+  private showReplyDraft(sessionKey: string, config: AgentConfig, text: string): void {
+    if (!text.trim()) return
+    const now = Date.now()
+    if (now - (this.draftActivityWrites.get(sessionKey) ?? 0) < DRAFT_ACTIVITY_INTERVAL_MS) return
+    const conversationId = this.activeConversation.get(sessionKey)
+    const topicId = this.activeTopic.get(sessionKey)
+    if (!conversationId || !topicId) return
+    this.draftActivityWrites.set(sessionKey, now)
+    const current = this.activity.get(conversationId)
+    this.setActivity(
+      conversationId,
+      topicId,
+      'replying',
+      current?.agentIds ?? [config.id],
+      config.name,
+      { drafts: { [config.id]: text.slice(0, 20_000) } },
+      config.id
+    )
   }
 
   /** Direct chats keep the inline delegation tool; group members route through
@@ -1956,21 +1988,25 @@ export class DouchatRuntime {
       const abort = (): void => session.abort()
       let retryCount = 0
       const responseTimeout = timeoutMs ?? (context === 'controller' ? CONTROLLER_REPLY_TIMEOUT_MS : CHAT_REPLY_TIMEOUT_MS)
+      const firstProgressTimeout = context === 'group'
+        ? Math.min(responseTimeout, GROUP_FIRST_PROGRESS_TIMEOUT_MS)
+        : Math.min(responseTimeout, DIRECT_FIRST_PROGRESS_TIMEOUT_MS)
       // Worker timeouts measure model inactivity, not the whole tool loop.
       // Controllers remain bounded even if they keep streaming a partial plan.
       let deadlineAt = context === 'controller' ? Date.now() + responseTimeout : undefined
       const waitForResponse = async (operation: () => Promise<void>): Promise<void> => {
         let timer: ReturnType<typeof setTimeout> | undefined
         let cancel: (() => void) | undefined
-        let remaining = deadlineAt === undefined ? responseTimeout : Math.max(0, deadlineAt - Date.now())
+        let madeProgress = false
+        let remaining = deadlineAt === undefined ? firstProgressTimeout : Math.max(0, deadlineAt - Date.now())
         let checkedAt = Date.now()
         const runningTools = new Set<string>()
         const unsubscribe = session.subscribe?.(event => {
           if (deadlineAt !== undefined) return
           if (event.type === 'tool_execution_start') runningTools.add(event.toolCallId)
           if (event.type === 'tool_execution_end') runningTools.delete(event.toolCallId)
-          if (event.type === 'message_update' || event.type === 'message_start' || event.type === 'message_end'
-            || event.type === 'tool_execution_start' || event.type === 'tool_execution_end') {
+          if (event.type === 'message_update' || event.type === 'tool_execution_start' || event.type === 'tool_execution_end') {
+            madeProgress = true
             remaining = responseTimeout
             checkedAt = Date.now()
           }
@@ -1996,10 +2032,14 @@ export class DouchatRuntime {
                 checkedAt = now
                 if (remaining <= 0) {
                   this.disposeSession(sessionKey)
-                  reject(new Error(`The model response timed out after ${Math.round(responseTimeout / 1000)} seconds.`))
+                  reject(new Error(deadlineAt !== undefined
+                    ? `The model response timed out after ${Math.round(responseTimeout / 1000)} seconds.`
+                    : madeProgress
+                      ? `The model stopped making progress for ${Math.round(responseTimeout / 1000)} seconds.`
+                      : `The model did not begin responding within ${Math.round(firstProgressTimeout / 1000)} seconds.`))
                 } else timer = setTimeout(check, Math.min(1000, remaining))
               }
-              timer = setTimeout(check, Math.min(1000, responseTimeout))
+              timer = setTimeout(check, Math.min(1000, remaining))
             })
           ])
         } finally {
@@ -2104,6 +2144,7 @@ export class DouchatRuntime {
       this.memoryTurns.delete(sessionKey)
       this.generatedFiles.delete(sessionKey)
       this.replyProgress.delete(sessionKey)
+      this.draftActivityWrites.delete(sessionKey)
       if (this.replyCancels.get(sessionKey)?.abort === replyAbort) this.replyCancels.delete(sessionKey)
       const remaining = (this.busyAgents.get(config.id) ?? 1) - 1
       if (remaining) this.busyAgents.set(config.id, remaining)

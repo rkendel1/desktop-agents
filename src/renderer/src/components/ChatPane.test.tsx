@@ -341,6 +341,19 @@ describe('private delivery disclosure', () => {
     expect(container.querySelector('.message-bubble')).toBeNull()
   })
 
+  it('turns either one response or the visible conversation into an editable work draft', async () => {
+    const createWork = vi.fn()
+    const message = { ...incomingReply, conversationId: directConversation.id, source: undefined, text: 'Implement the approved design.' }
+    await act(async () => root.render(<ChatPane userName="You" userAvatar="" conversation={{ ...directConversation, workspacePath: '/repo' }} messages={[message]} allMessages={[message]} agents={agents} members={agents} offline={false} onConnect={() => {}} inspectorOpen={false} onToggleInspector={() => {}} onOpenAgentProfile={() => {}} onOpenUserProfile={() => {}} onCreateWork={createWork} onSend={async () => {}} onStop={() => {}} />))
+    await act(async () => container.querySelector('.message-bubble')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 100, clientY: 100 })))
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent === 'Turn into work…')!.click())
+    expect(createWork).toHaveBeenLastCalledWith(expect.objectContaining({ preferredAgentId: message.authorId, workspacePath: '/repo', task: expect.stringContaining(message.text) }))
+
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Conversation actions"]')!.click())
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent === 'Turn conversation into work…')!.click())
+    expect(createWork).toHaveBeenLastCalledWith(expect.objectContaining({ workspacePath: '/repo', task: expect.stringContaining(`拽姐: ${message.text}`) }))
+  })
+
   it('shows group delivery receipts without a disclosure control', async () => {
     await act(async () => root.render(<MessageDeliveries deliveries={[
       { id: 'secret', recipientId: 'agent-1', recipientName: '拽姐', content: '' }
@@ -647,7 +660,7 @@ describe('private delivery disclosure', () => {
       phase: 'replying',
       agentIds: ['agent-1'],
       label: '拽姐',
-      startedAt: 1,
+      startedAt: Date.now(),
       action: { id: 'tool-1', tool: 'computer_list_files', status: 'running', target: 'Other' }
     }
 
@@ -671,7 +684,7 @@ describe('private delivery disclosure', () => {
       .toContain('Opening agreement.docx with the system default app')
 
     await act(async () => root.render(<ChatActivity activity={{ ...activity, action: undefined }} agents={agents} />))
-    expect(container.querySelector('.typing-activity-text')?.textContent).toBe('Thinking about the next step')
+    expect(container.querySelector('.typing-activity-text')?.textContent).toBe('Thinking about the next step · 0:00')
 
     await act(async () => root.render(
       <ChatActivity
@@ -731,6 +744,18 @@ describe('private delivery disclosure', () => {
     await act(async () => root.render(<ChatActivity activity={{ ...activity, agentIds: [agents[1].id] }} agents={agents} />))
     expect(container.querySelectorAll('.typing-row')).toHaveLength(1)
     expect(container.querySelector('.typing-label')?.textContent).toBe(agents[1].name)
+  })
+
+  it('shows each hosted member reply while it is streaming', async () => {
+    const activity: ConversationActivityState = {
+      conversationId: 'group', topicId: 'topic', phase: 'replying', agentIds: agents.map(agent => agent.id),
+      label: 'Replying', startedAt: Date.now(), drafts: { [agents[0].id]: 'A partial answer' }
+    }
+    await act(async () => root.render(<ChatActivity activity={activity} agents={agents} />))
+    const rows = container.querySelectorAll('.typing-row')
+    expect(rows[0].querySelector('.typing-activity-text')?.textContent).toBe('A partial answer')
+    expect(rows[0].querySelector('.typing-activity')?.classList.contains('is-streaming-draft')).toBe(true)
+    expect(rows[1].querySelector('.typing-activity-text')?.textContent).toContain('Thinking about the next step · 0:00')
   })
 
   it('shows local connection and stalled-progress feedback without claiming completion', async () => {

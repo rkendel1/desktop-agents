@@ -35,6 +35,7 @@ import { agentDisplayName, conversationMembers } from './components/common'
 import { WelcomeDialog } from './components/WelcomeDialog'
 import { CodeArtifactWindow } from './components/CodeArtifactWindow'
 import { isImeCommitEnter } from './ime'
+import { TurnIntoWorkDialog, type WorkDraft } from './components/TurnIntoWorkDialog'
 
 type Dialog =
   | { kind: 'agent-permissions'; agent: AgentConfig }
@@ -45,6 +46,7 @@ type Dialog =
   | { kind: 'bot'; agent?: AgentConfig; localAgentId?: string; creating?: boolean }
   | { kind: 'add-members' | 'remove-members'; conversation: Conversation }
   | { kind: 'group'; conversation?: Conversation; initialAgentIds?: string[] }
+  | { kind: 'turn-into-work'; draft: WorkDraft }
   | null
 
 export function App(): ReactElement {
@@ -424,6 +426,7 @@ function WorkspaceApp(): ReactElement {
           setDialog({ kind: 'member-profile', agentId, anchor })
         }}
         onOpenUserProfile={(anchor) => setDialog({ kind: 'self-profile', anchor })}
+        onCreateWork={(draft) => setDialog({ kind: 'turn-into-work', draft })}
         queuedMessages={queuedMessages.filter((item) => item.conversationId === conversation?.id)}
         onPromoteQueued={(id) => messageQueue.promote(id)}
         onRemoveQueued={(id) => messageQueue.remove(id)}
@@ -503,6 +506,14 @@ function WorkspaceApp(): ReactElement {
           onNewBot={() => setDialog({ kind: 'bot' })}
         />
       )}
+      {dialog?.kind === 'turn-into-work' && <TurnIntoWorkDialog
+        draft={dialog.draft}
+        projects={uiSnapshot.projects ?? []}
+        agents={uiSnapshot.agents}
+        onClose={() => setDialog(null)}
+        onAddProject={() => window.douchat.chooseProject()}
+        onStarted={(session) => { setDialog(null); setCodingSelection({ projectId: session.projectId, sessionId: session.id }); setView('projects') }}
+      />}
       {settingsOpen && (
         <SettingsPanel
           user={{ name: snapshot.userName, image: snapshot.userAvatar }}
