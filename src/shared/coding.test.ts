@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canContinue, changeLabel, codingDisplayState, describeApproval, formatCommandLine, isUntracked, parseCommandLine } from './coding'
+import { canContinue, changeLabel, codingDisplayState, describeApproval, formatCommandLine, isDeferredWorkReply, isUntracked, parseCommandLine } from './coding'
 
 describe('coding display', () => {
   it('shows waiting for approval only for a running session that is waiting; every other state is the backend’s', () => {
@@ -7,11 +7,20 @@ describe('coding display', () => {
     expect(codingDisplayState({ status: 'running' }, { state: 'awaiting-approval' })).toBe('awaiting-approval')
     expect(codingDisplayState({ status: 'running' }, { state: 'running' })).toBe('running')
     for (const status of ['succeeded', 'failed', 'cancelled', 'interrupted'] as const) expect(codingDisplayState({ status }, { state: 'awaiting-approval' })).toBe(status)
+    expect(codingDisplayState({ status: 'succeeded', result: "I'm checking this and I'll share a plan shortly.", changes: [] })).toBe('failed')
+    expect(codingDisplayState({ status: 'succeeded', result: "I'll share more later.", changes: [{ path: 'a.ts', code: ' M', origin: 'session' }] })).toBe('succeeded')
   })
 
   it('lets any finished session continue, and never a running one', () => {
     expect(canContinue({ status: 'running' })).toBe(false)
     for (const status of ['succeeded', 'failed', 'cancelled', 'interrupted'] as const) expect(canContinue({ status })).toBe(true)
+  })
+
+  it('distinguishes deferred progress claims from completed findings', () => {
+    expect(isDeferredWorkReply("I'm reviewing the setup and I'll have more details shortly.")).toBe(true)
+    expect(isDeferredWorkReply("I'll propose a plan once I've reviewed the configuration.")).toBe(true)
+    expect(isDeferredWorkReply('I reviewed the setup. The shared route is configured in src/router.ts.')).toBe(false)
+    expect(isDeferredWorkReply('No change was needed because the existing test already covers this case.')).toBe(false)
   })
 
   it('describes what an agent wants to do, relative to the project', () => {

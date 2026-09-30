@@ -68,6 +68,12 @@ it.each([['failed', 'Failed'], ['cancelled', 'Cancelled'], ['running', 'Running'
   if (status === 'failed') expect(node.querySelector('.coding-error')!.textContent).toBe('the agent stopped')
 })
 
+it('shows a persisted future-work promise as failed instead of successful work', async () => {
+  await panel({ status: 'succeeded', result: "I'm reviewing the setup. I'll propose a solution once I've finished checking it.", changes: [] })
+  expect(node.querySelector('[role=status]')!.textContent).toBe('Failed')
+  expect(node.querySelector('.coding-error')!.textContent).toContain('only described future work')
+})
+
 it('says a running session is running, with its live activity, and can cancel it', async () => {
   await panel({ status: 'running', finishedAt: undefined }, { sessionId: 's1', state: 'running', label: 'Running npm test', source: 'agent', since: 1 })
   expect(node.querySelector('.coding-activity')!.textContent).toContain('Running npm test')
@@ -183,15 +189,18 @@ it('lists the events of the session in order', async () => {
 
 const snapshot = (patch: Partial<AppSnapshot> = {}): AppSnapshot => ({ agents: [agent], projects: [project], codingSessions: [session({ id: 's9', task: 'Old task' })], codingActivity: [], ...patch } as AppSnapshot)
 
-it('lists projects with their path, Git status, check command and sessions, and selecting one opens it', async () => {
+it('lists only projects in the sidebar and keeps work, checks and session history inside the project', async () => {
   const select = vi.fn()
   api.projectGitStatus.mockResolvedValue({ branch: 'main', changes: [{ path: 'a', code: ' M' }] })
   await render(<ProjectsView snapshot={snapshot()} selection={{}} onSelect={select} />)
-  expect(node.textContent).toContain('Fixture'); expect(node.textContent).toContain('/work/fixture'); expect(node.textContent).toContain('Old task')
+  expect(node.textContent).toContain('Fixture'); expect(node.textContent).toContain('/work/fixture')
+  expect(node.querySelector('.contact-list')?.textContent).not.toContain('Old task')
   await click(/Fixture/)
   expect(select).toHaveBeenCalledWith({ projectId: 'p1' })
   await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={select} />)
-  expect(node.textContent).toContain('main · 1 changed files')
+  await click('Work')
+  expect(node.textContent).toContain('main · 1 changed files'); expect(node.textContent).toContain('Old task')
+  await click('Checks')
   expect(node.querySelector('[aria-label="Check command"]')!.textContent).toContain('npm test')
 })
 
@@ -222,18 +231,20 @@ it('adds a project through the folder picker and starts a session with the chose
   expect(select).toHaveBeenCalledWith({ projectId: 'p1' })
 
   await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={select} />)
-  const task = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Task"]')!
+  await click('Work')
+  const task = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Work request"]')!
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(task, 'Add a test')
     task.dispatchEvent(new Event('input', { bubbles: true }))
   })
-  await click('Start session')
+  await click('Start work')
   expect(api.startCodingSession).toHaveBeenCalledWith({ projectId: 'p1', agentId: 'a1', task: 'Add a test', execution: { kind: 'compute' } })
-  expect(select).toHaveBeenLastCalledWith({ projectId: 'p1', sessionId: 's1' })
+  expect(select).toHaveBeenLastCalledWith({ projectId: 'p1' })
 })
 
 it('discovers project check commands for selection and keeps a custom command option', async () => {
   await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={vi.fn()} />)
+  await click('Checks')
   await vi.waitFor(() => expect(api.discoverProjectCommands).toHaveBeenCalledWith('p1'))
   const select = node.querySelector<HTMLSelectElement>('select[aria-label="Check command"]')!
   expect([...select.options].map(option => option.textContent)).toEqual(expect.arrayContaining(['lint — npm run lint', 'test — npm test', 'Custom command…']))
@@ -260,13 +271,14 @@ it('shows the session panel when a session is selected', async () => {
 
 it('offers the project’s environment as the place to run, shows what Compute says about it, and starts the session there without naming a Computer', async () => {
   await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={vi.fn()} />)
+  await click('Work')
   const execution = [...node.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'compute'))!
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(execution, 'compute'); execution.dispatchEvent(new Event('change', { bubbles: true })) })
   expect(api.environmentState).toHaveBeenCalledWith('p1')
   expect(node.querySelector('.coding-compute')!.textContent).toContain('developer · Linux x86_64 · Ready')
-  const task = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Task"]')!
+  const task = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Work request"]')!
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(task, 'Run the tests'); task.dispatchEvent(new Event('input', { bubbles: true })) })
-  await click('Start session')
+  await click('Start work')
   expect(api.startCodingSession).toHaveBeenCalledWith({ projectId: 'p1', agentId: 'a1', task: 'Run the tests', execution: { kind: 'compute' } })
 })
 
@@ -274,13 +286,14 @@ it('will not start on an environment Compute has not reported ready, says why, a
   api.environmentState.mockResolvedValue(environmentView({ state: 'not-ready', readiness: 'unavailable', actions: ['destroy'],
     reason: { category: 'requirements_unsatisfied', title: 'Environment couldn’t become ready.', message: 'The selected Computer cannot satisfy what this environment requires.' } }))
   await render(<ProjectsView snapshot={snapshot()} selection={{ projectId: 'p1' }} onSelect={vi.fn()} />)
+  await click('Work')
   const execution = [...node.querySelectorAll('select')].find(item => [...item.options].some(option => option.value === 'compute'))!
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(execution, 'compute'); execution.dispatchEvent(new Event('change', { bubbles: true })) })
   const alerts = [...node.querySelectorAll('.coding-compute [role=alert]')].map(item => item.textContent).join(' ')
   expect(alerts).toContain('Environment couldn’t become ready.'); expect(alerts).toContain('Nothing will run on this computer instead.')
-  const task = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Task"]')!
+  const task = node.querySelector<HTMLTextAreaElement>('textarea[aria-label="Work request"]')!
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(task, 'Run the tests'); task.dispatchEvent(new Event('input', { bubbles: true })) })
-  expect([...node.querySelectorAll('button')].find(item => item.textContent === 'Start session')!.disabled).toBe(true)
+  expect([...node.querySelectorAll('button')].find(item => item.textContent === 'Start work')!.disabled).toBe(true)
 })
 
 it('shows that a session runs on a Computer, and reads its changes and diff from that Computer', async () => {

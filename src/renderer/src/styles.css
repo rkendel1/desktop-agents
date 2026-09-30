@@ -7045,7 +7045,7 @@ html.native-dialog-window,
 .coding-dot.coding-state-awaiting-approval { background: #e6a100; }
 .coding-dot.coding-state-succeeded { background: #22a06b; }
 .coding-dot.coding-state-failed { background: #d92d20; }
-.coding-session-row { padding-left: 34px; }
+.project-work-detail-heading { display: flex; align-items: center; gap: 10px; }
 .coding-activity { display: flex; align-items: center; gap: 10px; }
 .coding-activity .secondary-button { margin-left: auto; }
 .coding-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-600); animation: coding-pulse 1.4s ease-in-out infinite; }

@@ -5,7 +5,7 @@ import { ComputeClient } from '../compute/client'
 import { EnvironmentRefusal, type Admission, type EnvironmentService } from '../environment/service'
 import { computeLauncher, ComputeInterruption } from '../compute/launcher'
 import { PAX_OPERATIONS, runPax, type PaxInspection, type PaxOperation, type PaxRun } from '../compute/pax'
-import { describeApproval, formatCommandLine } from '../../shared/coding'
+import { DEFERRED_WORK_ERROR, describeApproval, formatCommandLine, isDeferredWorkReply } from '../../shared/coding'
 import type { CodingNotification } from '../../shared/codingApi'
 import type { DesktopRepository } from '../desktopRepository'
 import { resolveSavedWorkspace, validateWorkspaceFolder } from '../localWorkspaces'
@@ -30,6 +30,7 @@ const MAX_COMMANDS = 20
 const CHECK_TIMEOUT_MS = 10 * 60_000
 const RESUME_PROMPT = 'Continue where you left off. Check the repository’s current state first.'
 const INTERRUPTED_PROMPT = 'Your previous turn was interrupted when Foundry closed, so its process is gone. Check the repository’s current state and continue the task.'
+const workPrompt = (task: string): string => `${task}\n\nFOUNDRY-WORK-CONTEXT\nThis is an executable project-work session, not a planning chat. Work directly in the current repository and complete the request in this turn. Inspect the existing project before deciding what to change. If the request calls for implementation, make the changes and verify them before replying. Do not merely announce that you are checking, reviewing, starting, or that you will provide details later. Return the concrete completed result, or a specific blocker and what remains undone.`
 
 /** Live facts about one running session: the process side of it, gone when the app closes. */
 interface Live { topicId: string; projectId: string; sessionId: string; agentId: string; conversationId: string; projectName: string; workingDirectory: string; task: string; since: number }
@@ -370,7 +371,7 @@ export class CodingService {
       await this.repository.setActiveTopic(session.conversationId, session.topicId)
       // Cancelled before the agent was ever started: there is nothing to stop.
       if (launchFailure) throw launchFailure
-      if (!this.cancelled.has(session.id)) await this.runtime.sendMessage(session.conversationId, prompt)
+      if (!this.cancelled.has(session.id)) await this.runtime.sendMessage(session.conversationId, workPrompt(prompt))
     } catch (error) { failure = error instanceof Error ? error.message : String(error) }
     // The session is over, so anything still waiting for an answer can no longer be approved.
     this.runtime.expirePermissions?.(session.agentId)
@@ -387,10 +388,16 @@ export class CodingService {
     this.cancelled.delete(session.id)
     const interruption = this.onCompute.get(session.id)?.interruption ?? launchFailure
     this.onCompute.delete(session.id)
-    const error = interruption?.message ?? failure ?? run?.error
     const during = changes.filter(change => change.origin === 'session').length
     const already = changes.length - during
     const headMoved = finalState?.head !== undefined && session.baseline.head !== undefined && finalState.head !== session.baseline.head
+    const toolSucceeded = reply?.actions?.some(action => action.status === 'succeeded') === true
+    let completionFailure: string | undefined
+    if (status === 'succeeded' && !during && !cleaned.length && !headMoved && !toolSucceeded && isDeferredWorkReply(reply?.text ?? '')) {
+      status = 'failed'
+      completionFailure = DEFERRED_WORK_ERROR
+    }
+    const error = interruption?.message ?? failure ?? run?.error ?? completionFailure
     this.announce('files.changed', session, { during, alreadyModified: already, cleaned: cleaned.length, headMoved })
     await this.record(session.id, { kind: 'changes', label: during ? `${during} file${during === 1 ? '' : 's'} changed during this session` : 'No files changed during this session',
       detail: [already ? `${already} already modified before it started` : '', cleaned.length ? `${cleaned.length} modified before, clean now` : '', headMoved ? 'HEAD moved to a new commit' : ''].filter(Boolean).join(' · ') || undefined })

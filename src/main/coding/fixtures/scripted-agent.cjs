@@ -79,6 +79,8 @@ if (task.action === 'fix-add') {
 } else if (task.action === 'fail') {
   console.error('the scripted agent could not complete the task')
   process.exit(2)
+} else if (task.action === 'defer') {
+  console.log("I'm reviewing the current setup. I'll propose a solution once I've finished checking it.")
 } else {
   console.log(lines.join('\n'))
 }

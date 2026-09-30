@@ -1,6 +1,6 @@
 import { FolderGit2, Plus, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
-import { codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
+import { DEFERRED_WORK_ERROR, codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
 import type { AppSnapshot, Conversation, DevelopmentEnvironmentView, GitState, Project, ProjectCommandOption } from '../../../shared/types'
 import type { StoredJevEvaluation } from '../../../shared/jev'
 import { t, tr } from '../preferences'
@@ -87,8 +87,9 @@ function ProjectConversation({ project, snapshot, onCreateWork }: { project: Pro
   </section>
 }
 
-function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { project: Project; snapshot: AppSnapshot; onOpenSession: (id: string) => void; onCreateWork?: (draft: WorkDraft) => void }): ReactElement {
+function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { project: Project; snapshot: AppSnapshot; initialSessionId?: string; onCreateWork?: (draft: WorkDraft) => void }): ReactElement {
   const [section, setSection] = useState<'chats' | 'work' | 'environment' | 'checks' | 'history'>('chats')
+  const [selectedSessionId, setSelectedSessionId] = useState(initialSessionId ?? '')
   const [git, setGit] = useState<GitState | { error: string }>()
   const [agentId, setAgentId] = useState('')
   const [task, setTask] = useState('')
@@ -104,6 +105,7 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
   const sessions = (snapshot.codingSessions ?? []).filter(session => session.projectId === project.id)
   const running = sessions.find(session => session.status === 'running')
   const latest = sessions[0]
+  const selectedSession = sessions.find(session => session.id === selectedSessionId)
   const activity = running ? snapshot.codingActivity?.find(item => item.sessionId === running.id) : undefined
   const agents = snapshot.agents
   const chosenAgent = agentId || agents[0]?.id || ''
@@ -129,7 +131,10 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
     window.douchat.environmentState(project.id).then(value => { if (live) setEnvironment(value) }, () => { if (live) setEnvironment(undefined) })
     return () => { live = false }
   }, [project.id])
-  useEffect(() => { setSection('chats') }, [project.id])
+  useEffect(() => {
+    setSelectedSessionId(initialSessionId ?? '')
+    setSection(initialSessionId ? 'work' : 'chats')
+  }, [initialSessionId, project.id])
   useEffect(() => {
     let live = true
     const saved = project.testCommand ? formatCommandLine(project.testCommand) : ''
@@ -169,6 +174,7 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
   }
   const recentChecks = sessions.flatMap(session => session.commands.map(result => ({ result, session }))).sort((a, b) => b.result.startedAt - a.result.startedAt).slice(0, 5)
   const lastState = latest ? codingDisplayState(latest) : undefined
+  const openSession = (id: string): void => { setSelectedSessionId(id); setSection('work') }
   return <div className="coding-project">
     <header>
       <h2>{project.name}</h2>
@@ -192,7 +198,18 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
 
     {section === 'environment' && <EnvironmentPanel project={project} />}
 
-    {section === 'work' && <>
+    {section === 'work' && selectedSession && <>
+      <div className="project-work-detail-heading">
+        <button className="secondary-button" onClick={() => setSelectedSessionId('')}>{t('Back to project work')}</button>
+        <span className="muted">{t('Work details stay inside this project.')}</span>
+      </div>
+      <CodingSessionPanel session={selectedSession} project={project}
+        messages={(snapshot.messages ?? []).filter(message => message.conversationId === selectedSession.conversationId && message.topicId === selectedSession.topicId)}
+        agent={snapshot.agents.find(agent => agent.id === selectedSession.agentId)}
+        activity={snapshot.codingActivity?.find(activity => activity.sessionId === selectedSession.id)} />
+    </>}
+
+    {section === 'work' && !selectedSession && <>
 
     <section className="coding-section" aria-label={t('Now')}>
       <h3>{running ? t('Happening now') : t('Last time')}</h3>
@@ -204,7 +221,7 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
           ? <ApprovalCard activity={activity} session={running} project={project} agent={agentOf(running.agentId)} onCancel={() => void guard(() => window.douchat.cancelCodingSession(running.id))} />
           : <p><span className="coding-pulse" aria-hidden />{activity?.label ?? t('Running…')}</p>}
         <div className="coding-actions">
-          <button className="secondary-button" onClick={() => onOpenSession(running.id)}>{t('Open session')}</button>
+          <button className="secondary-button" onClick={() => openSession(running.id)}>{t('Open details')}</button>
           {activity?.state !== 'awaiting-approval' && <button className="secondary-button danger" disabled={busy} onClick={() => void guard(() => window.douchat.cancelCodingSession(running.id))}>{t('Cancel session')}</button>}
         </div>
       </> : latest ? <>
@@ -214,9 +231,10 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
         {latest.result && latest.status !== 'cancelled' && <p className="muted">{latest.result.slice(0, 240)}{latest.result.length > 240 ? '…' : ''}</p>}
         {latest.error && latest.status !== 'interrupted' && <p className="coding-error">{latest.error}</p>}
         <p className="muted">{tr('{count} changed files', { count: latest.changes.filter(change => change.origin === 'session').length })} · {tr('{count} checks', { count: latest.commands.length })}</p>
+        {latest.status === 'succeeded' && lastState === 'failed' && <p className="coding-error" role="alert">{t(DEFERRED_WORK_ERROR)}</p>}
         <div className="coding-actions">
-          <button className="primary-button" disabled={busy} onClick={() => latest.status === 'interrupted' ? void guard(async () => { await window.douchat.continueCodingSession(latest.id); onOpenSession(latest.id) }) : onOpenSession(latest.id)}>{latest.status === 'interrupted' ? t('Continue') : t('Continue…')}</button>
-          <button className="secondary-button" onClick={() => onOpenSession(latest.id)}>{t('Review')}</button>
+          {latest.status === 'interrupted' && <button className="primary-button" disabled={busy} onClick={() => void guard(async () => { await window.douchat.continueCodingSession(latest.id); openSession(latest.id) })}>{t('Continue')}</button>}
+          <button className="secondary-button" onClick={() => openSession(latest.id)}>{t('Open details')}</button>
         </div>
       </> : <p className="muted">{t('No sessions yet.')}</p>}
     </section>
@@ -227,7 +245,7 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
       {!agents.length ? <p className="muted">{t('Create an agent first.')}</p> : <form className="coding-start" onSubmit={event => {
         event.preventDefault()
         if (!task.trim()) return
-        void guard(async () => { const session = await window.douchat.startCodingSession({ projectId: project.id, agentId: chosenAgent, task, ...(execution === 'compute' ? { execution: { kind: 'compute' as const } } : {}) }); setTask(''); onOpenSession(session.id) })
+        void guard(async () => { const session = await window.douchat.startCodingSession({ projectId: project.id, agentId: chosenAgent, task, ...(execution === 'compute' ? { execution: { kind: 'compute' as const } } : {}) }); setTask(''); openSession(session.id) })
       }}>
         <label>{t('Agent')}
           <select value={chosenAgent} onChange={event => setAgentId(event.target.value)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>
@@ -283,7 +301,7 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
         <code>{formatCommandLine(result.argv)}</code>
         <span className={result.exitCode === 0 ? 'coding-ok' : 'coding-bad'}>{result.exitCode === 0 ? '✓' : '✗'} {result.cancelled ? t('cancelled') : result.timedOut ? t('timed out') : tr('exit {code}', { code: result.exitCode ?? result.signal ?? '?' })}</span>
         <span className="muted"> · {seconds(result.durationMs)} · {when(result.startedAt)}</span>
-        <button className="secondary-button" onClick={() => onOpenSession(session.id)}>{t('Open session')}</button>
+        <button className="secondary-button" onClick={() => openSession(session.id)}>{t('Open details')}</button>
       </li>)}</ul>}
     </section>
 
@@ -309,7 +327,7 @@ function ProjectPanel({ project, snapshot, onOpenSession, onCreateWork }: { proj
       {!sessions.length ? <p className="muted">{t('No sessions yet.')}</p> : <ul className="coding-session-list">
         {sessions.map(session => {
           const state = codingDisplayState(session, snapshot.codingActivity?.find(item => item.sessionId === session.id))
-          return <li key={session.id}><button onClick={() => onOpenSession(session.id)}>
+          return <li key={session.id}><button onClick={() => openSession(session.id)}>
             <span className={`coding-state coding-state-${state}`}>{t(codingStateLabels[state])}</span> {session.task.split('\n')[0]}
             <span className="muted"> · {agentOf(session.agentId)?.name ?? session.agentId} · {session.execution?.kind === 'compute' ? t('Compute') : t('This Computer')} · {when(session.finishedAt ?? session.startedAt ?? session.createdAt)}</span>
           </button></li>
@@ -348,22 +366,14 @@ export function ProjectsView({ snapshot, selection, onSelect, onCreateWork }: { 
         {!projects.length && <p className="empty-search">{t('No projects yet. Add a local repository to let an agent work in it.')}</p>}
         {!!projects.length && !visibleProjects.length && <p className="empty-search">{t('No matching projects')}</p>}
         {visibleProjects.map(item => <div key={item.id}>
-          <button className={`contact-row ${item.id === project?.id && !session ? 'active' : ''}`} onClick={() => onSelect({ projectId: item.id })}>
+          <button className={`contact-row ${item.id === project?.id ? 'active' : ''}`} onClick={() => onSelect({ projectId: item.id })}>
             <FolderGit2 size={18} /><span className="contact-row-copy"><strong>{item.name}</strong><small>{item.path}</small></span>
           </button>
-          {sessions.filter(candidate => candidate.projectId === item.id && (!search || item.name.toLocaleLowerCase().includes(search) || item.path.toLocaleLowerCase().includes(search) || candidate.task.toLocaleLowerCase().includes(search))).slice(0, 5).map(candidate => {
-            const state = codingDisplayState(candidate, snapshot.codingActivity?.find(activity => activity.sessionId === candidate.id))
-            return <button key={candidate.id} className={`contact-row coding-session-row ${candidate.id === session?.id ? 'active' : ''}`} onClick={() => onSelect({ projectId: item.id, sessionId: candidate.id })}>
-              <span className={`coding-dot coding-state-${state}`} aria-hidden /><span className="contact-row-copy"><strong>{candidate.task}</strong><small>{t(codingStateLabels[state])}</small></span>
-            </button>
-          })}
         </div>)}
       </div>
     </aside>
     <main className="workspace coding-workspace">
-      {session ? <CodingSessionPanel session={session} project={project} messages={(snapshot.messages ?? []).filter(message => message.conversationId === session.conversationId && message.topicId === session.topicId)} agent={snapshot.agents.find(agent => agent.id === session.agentId)}
-          activity={snapshot.codingActivity?.find(activity => activity.sessionId === session.id)} />
-        : project ? <ProjectPanel project={project} snapshot={snapshot} onCreateWork={onCreateWork} onOpenSession={id => onSelect({ projectId: project.id, sessionId: id })} />
+      {project ? <ProjectPanel project={project} snapshot={snapshot} initialSessionId={session?.id} onCreateWork={onCreateWork} />
           : <div className="contact-empty-copy"><h2>{t('Projects')}</h2><p className="muted">{t('Choose a project, or add a local repository.')}</p>
             <button className="primary-button" onClick={() => void add()}>{t('Add project')}</button></div>}
     </main>

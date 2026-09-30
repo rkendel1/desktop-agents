@@ -291,6 +291,20 @@ describe('an agent coding in a real repository', () => {
     // The folder and its files are untouched by any of it.
     expect(existsSync(join(path, 'src', 'math.js'))).toBe(true)
   })
+
+  it('does not call a future-work promise successful project work', async () => {
+    const booted = await boot()
+    const path = repository()
+    const agent = await scriptedAgent(booted)
+    const project = await booted.coding.addProject(path)
+    const started = await booted.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Implement the shared route.', { action: 'defer' }) })
+    const session = (await booted.coding.settled(started.id))!
+    expect(session.status).toBe('failed')
+    expect(session.error).toContain('only described future work')
+    expect(session.changes).toEqual([])
+    expect(session.events.at(-1)).toMatchObject({ kind: 'finished', label: 'Failed' })
+    expect((await booted.desktop.repository.topicMessages(session.conversationId, session.topicId))[0].text).toContain('This is an executable project-work session')
+  }, 60_000)
 })
 
 describe('restart', () => {

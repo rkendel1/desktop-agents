@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { EnvironmentContext } from './EnvironmentPanel'
-import { canContinue, changeLabel, codingDisplayState, codingStateLabels, continueSemantics, describeApproval, formatCommandLine, groupChanges, isUntracked } from '../../../shared/coding'
+import { DEFERRED_WORK_ERROR, canContinue, changeLabel, codingDisplayState, codingStateLabels, continueSemantics, describeApproval, formatCommandLine, groupChanges, isUntracked } from '../../../shared/coding'
 import type { AgentConfig, ChatMessage, CodingActivity, CodingSession, CommandResult, GitChange, GitState, Project } from '../../../shared/types'
 import { t } from '../preferences'
 
@@ -96,6 +96,7 @@ export function CodingSessionPanel({ session, project, agent, activity, messages
   session: CodingSession; project?: Project; agent?: AgentConfig; activity?: CodingActivity; messages?: ChatMessage[]
 }): ReactElement {
   const state = codingDisplayState(session, activity)
+  const deferredWithoutWork = session.status === 'succeeded' && state === 'failed'
   const [live, setLive] = useState<GitState>()
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
@@ -138,6 +139,7 @@ export function CodingSessionPanel({ session, project, agent, activity, messages
     </section>}
 
     {session.error && session.status !== 'interrupted' && <p className="coding-error" role="alert">{session.error}</p>}
+    {deferredWithoutWork && <p className="coding-error" role="alert">{t(DEFERRED_WORK_ERROR)}</p>}
     {session.result && <section className="coding-section"><h3>{t('Result')}</h3><p className="coding-result">{session.result}</p></section>}
 
     <ChangeList session={session} project={project} live={live} />
@@ -154,7 +156,7 @@ export function CodingSessionPanel({ session, project, agent, activity, messages
       <h3>{t('Conversation')}</h3>
       <ol className="coding-conversation">{messages.filter(message => message.kind === 'message').map(message => <li key={message.id} data-author={message.authorId === 'user' ? 'user' : 'agent'}>
         <strong>{message.authorId === 'user' ? t('You') : message.authorName}</strong> <time className="muted">{time(message.createdAt)}</time>
-        <pre className="coding-output">{message.text.split('\nCODING-TASK ')[0]}</pre>
+        <pre className="coding-output">{message.text.split(/\n(?:CODING-TASK |FOUNDRY-WORK-CONTEXT\n)/)[0]}</pre>
       </li>)}</ol>
     </section>}
 

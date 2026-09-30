@@ -29,7 +29,7 @@ Git/PAX/Compute answers each time. It stores nothing that could disagree with th
 The project header keeps repository identity and current Git/PAX reality visible. The rest of the page is divided by intent so that discussion, execution and evidence do not compete for the same space.
 
 - **Chats** contains the project's durable conversations. A project can have multiple named chats for separate topics, all pointing at the same project workspace. Sending a chat message discusses or plans work; it does **not** start an agent process or change files. Use *Turn into work* on a useful reply, or move to **Work**, when the discussion is ready to execute.
-- **Work** shows what is happening now and what happened last, then provides **Assign executable work**. This is the box for a concrete request to inspect or change project files. Work begins only after *Start work* is pressed. The same tab shows the working tree, diffs, staging and commit controls.
+- **Work** is the single project-work surface. It shows what is happening now and what happened last, then provides **Assign executable work**. This is the box for a concrete request to inspect or change project files. Work begins only after *Start work* is pressed. Session details open inside this tab; they are not separate rows in the project list. The same tab shows the working tree, diffs, staging and commit controls.
 - **Environment** shows where Compute will run the work: recipe and version, Computer, configuration and readiness, plus lifecycle controls. Environment readiness does not itself start work.
 - **Checks** owns command discovery and selection, recent check results and CI. Selecting a command configures future checks; *Run checks* is the explicit execution action.
 - **History** contains durable work-session history and structured decisions, separate from the conversational histories in **Chats**.
@@ -52,6 +52,8 @@ execution target is chosen the workbench requests Compute. Selecting local is ex
 ## Agent activity and approvals
 
 Activity shown is what Foundry observed: the agent's own activity where its CLI reports one, Foundry's approvals, checks and repository changes, and native/project results. An agent that reports nothing is shown as running with no step-by-step claim; nothing is invented.
+
+Every work turn is explicitly framed as executable repository work. A reply that only promises future checking or a later plan, with no repository change or completed tool action, is failed rather than presented as successful. The same rule is applied when displaying older sessions, so persisted no-op promises are not still shown as completed work.
 
 Approvals are the runtime's permission broker, unchanged: scoped to the session, withdrawn when the session ends, is continued or Foundry restarts, and answerable once. On the project home and in the session they show the agent, project, folder and the exact action (`Run …`, `Edit path`, …).
 

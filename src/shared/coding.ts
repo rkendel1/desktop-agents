@@ -4,7 +4,12 @@ import type { PermissionRequest } from './agentPermissions'
 /** What a coding session shows as its state. The backend owns the states; this only adds "waiting for approval", which is live. */
 export type CodingDisplayState = 'running' | 'awaiting-approval' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 
-export function codingDisplayState(session: Pick<CodingSession, 'status'>, activity?: Pick<CodingActivity, 'state'>): CodingDisplayState {
+export const DEFERRED_WORK_ERROR = 'Work did not complete: the agent only described future work and produced no repository change or completed tool action. Give it a concrete follow-up or choose a coding-capable agent.'
+
+export function codingDisplayState(session: Pick<CodingSession, 'status'> & Partial<Pick<CodingSession, 'result' | 'changes' | 'cleaned' | 'finalHead' | 'baseline' | 'commands'>>, activity?: Pick<CodingActivity, 'state'>): CodingDisplayState {
+  const observedWork = session.changes?.some(change => change.origin === 'session') || Boolean(session.cleaned?.length)
+    || Boolean(session.finalHead && session.baseline?.head && session.finalHead !== session.baseline.head) || Boolean(session.commands?.length)
+  if (session.status === 'succeeded' && !observedWork && isDeferredWorkReply(session.result ?? '')) return 'failed'
   return session.status === 'running' && activity?.state === 'awaiting-approval' ? 'awaiting-approval' : session.status
 }
 
@@ -14,6 +19,15 @@ export const codingStateLabels: Record<CodingDisplayState, string> = {
 
 /** A finished session can be continued; a running one cannot. */
 export const canContinue = (session: Pick<CodingSession, 'status'>): boolean => session.status !== 'running'
+
+/** A reply that promises later work instead of returning the result of this turn. */
+export function isDeferredWorkReply(text: string): boolean {
+  const reply = text.replace(/\s+/g, ' ').trim()
+  if (!reply) return false
+  return /\b(?:i(?:'|’)ll|i will|we(?:'|’)ll|we will)\b[^.]{0,180}\b(?:shortly|in a bit|later|once|after|when)\b/i.test(reply)
+    || /\b(?:i(?:'|’)m|i am|we(?:'|’)re|we are)\s+(?:starting|checking|reviewing|investigating|looking into)\b/i.test(reply)
+    || /\b(?:more details|a solution|a plan|an update)\s+(?:shortly|in a bit|later)\b/i.test(reply)
+}
 
 /**
  * "Agent wants to: …" for a permission request, in the words a person needs:
