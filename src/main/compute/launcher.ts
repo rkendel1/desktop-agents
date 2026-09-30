@@ -40,7 +40,9 @@ export class ComputeChild extends EventEmitter {
     private readonly target: { environment: string; repository: string },
     readonly processName: string,
     private readonly argv: string[],
-    private readonly interrupted: (error: ComputeInterruption) => void
+    private readonly interrupted: (error: ComputeInterruption) => void,
+    /** `process`: a plain command (a CI step). `agent`: an agent. Both are Compute processes; both are stopped, read and removed the same way. */
+    private readonly role: 'agent' | 'process' = 'agent'
   ) {
     super()
     this.stdin.resume()
@@ -49,7 +51,8 @@ export class ComputeChild extends EventEmitter {
 
   private async begin(): Promise<void> {
     try {
-      await this.client.startAgent(this.target.environment, this.processName, this.argv, { repository: this.target.repository })
+      const start = this.role === 'process' ? this.client.startProcess.bind(this.client) : this.client.startAgent.bind(this.client)
+      await start(this.target.environment, this.processName, this.argv, { repository: this.target.repository })
     } catch (error) {
       this.finish(() => { this.emit('error', error instanceof Error ? error : new Error(String(error))); this.emit('close', null, null) })
       return

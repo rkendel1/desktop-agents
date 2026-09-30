@@ -8,8 +8,10 @@ import type { CommandResult } from '../../shared/types'
  */
 export const PAX_INSPECTIONS = ['info', 'doctor', 'deps', 'scripts', 'workspaces', 'lock', 'graph', 'reality', 'drift'] as const
 export const PAX_OPERATIONS = ['build', 'test', 'lint', 'typecheck'] as const
+/** Materialising a workspace's dependencies is a delegated PAX execution too (`pax install`): PAX chooses the tool. */
+export const PAX_PREPARATIONS = ['install'] as const
 export type PaxInspection = typeof PAX_INSPECTIONS[number]
-export type PaxOperation = typeof PAX_OPERATIONS[number]
+export type PaxOperation = typeof PAX_OPERATIONS[number] | typeof PAX_PREPARATIONS[number]
 
 export interface PaxRun {
   command: string

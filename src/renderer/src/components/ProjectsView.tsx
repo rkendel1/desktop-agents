@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactElement } from 'react'
 import { codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
 import type { AppSnapshot, ComputeInventory, GitState, Project } from '../../../shared/types'
 import { t, tr } from '../preferences'
+import { CiPanel } from './CiPanel'
 import { CodingSessionPanel } from './CodingSessionPanel'
 
 export interface ProjectSelection { projectId?: string; sessionId?: string }
@@ -95,6 +96,8 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
       </form>}
       {error && <p className="coding-error" role="alert">{error}</p>}
     </section>
+
+    {project.isGit && <CiPanel project={project} runs={(snapshot.ciRuns ?? []).filter(run => run.projectId === project.id)} />}
 
     <section className="coding-section" aria-label={t('Sessions')}>
       <h3>{t('Sessions')}</h3>

@@ -6,7 +6,7 @@ import type { AgentStatus, AppSnapshot, CodingActivity, ComputerSession, Convers
 import type { DesktopRepository, RecordChange } from './desktopRepository'
 import {
   eventFromRecord, messageFromRecord, privateMessageFromRecord, routineFromRecord, runFromRecord,
-  projectFromRecord, codingSessionFromRecord, type CodingSessionRecord, type WorkspaceRecord, type ExecutionEventRecord, type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord
+  projectFromRecord, codingSessionFromRecord, ciRunFromRecord, type CiRunRecord, type CodingSessionRecord, type WorkspaceRecord, type ExecutionEventRecord, type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord
 } from './felt/records'
 
 /** What exists only while the app runs, and so is never in FeltDB. */
@@ -78,10 +78,10 @@ export class DesktopProjection {
   /** Everything the renderer shows, read from FeltDB, for a renderer that has just connected. */
   async snapshot(): Promise<ProjectionSnapshot> {
     const sequence = this.sequence
-    const [agents, conversations, messages, privateMessages, routines, runs, runEvents, attention, games, workflows, connectors, userName, userAvatar, desktop, projects, codingSessions] = await Promise.all([
+    const [agents, conversations, messages, privateMessages, routines, runs, runEvents, attention, games, workflows, connectors, userName, userAvatar, desktop, projects, codingSessions, ciRuns] = await Promise.all([
       this.repository.agents(), this.repository.conversations(), this.repository.recentMessages(), this.repository.privateMessages(), this.repository.routines(),
       this.repository.runs(), this.repository.runEvents(), this.repository.attentionItems(), this.repository.groupGames(), this.repository.groupWorkflows(),
-      this.sources.connectors(), this.repository.userName(), this.repository.userAvatar(), this.desktopInfo(), this.repository.projects(), this.repository.codingSessions()
+      this.sources.connectors(), this.repository.userName(), this.repository.userAvatar(), this.desktopInfo(), this.repository.projects(), this.repository.codingSessions(), this.repository.ciRuns()
     ])
     const conversationIds = new Set(conversations.map(conversation => conversation.id))
     const shownRuns = [...runs].sort((a, b) => b.createdAt - a.createdAt).slice(0, RUNS_SHOWN)
@@ -108,6 +108,7 @@ export class DesktopProjection {
         connectors, userName, userAvatar,
         projects: projects.sort((a, b) => a.name.localeCompare(b.name)),
         codingSessions: codingSessions.sort((a, b) => b.createdAt - a.createdAt),
+        ciRuns: ciRuns.sort((a, b) => b.createdAt - a.createdAt),
         codingActivity: ephemeral.codingActivity ?? [],
         agentStatuses: Object.fromEntries(agents.map(agent => [agent.id, ephemeral.agentStatuses[agent.id] ?? 'idle'])),
         activity: ephemeral.activity.filter(activity => conversationIds.has(activity.conversationId)),
@@ -189,6 +190,9 @@ export class DesktopProjection {
       }
       case 'CodingSession':
         this.direct.push({ kind: 'codingSession', id: change.id, value: record ? codingSessionFromRecord(record as unknown as CodingSessionRecord) : null })
+        break
+      case 'CiRun':
+        this.direct.push({ kind: 'ciRun', id: change.id, value: record ? ciRunFromRecord(record as unknown as CiRunRecord) : null })
         break
       case 'Setting':
         if (change.id === 'connectors') this.slices.add('connectors')

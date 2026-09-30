@@ -5,7 +5,7 @@ import { lstat, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type {
-  AgentConfig, AttentionItem, ChatMessage, CodingEvent, CodingSession, Conversation, CreateGroupInput, CreateRoutineInput, EmailConnectorAccount, MessageAttachment,
+  AgentConfig, AttentionItem, ChatMessage, CiEvent, CiRun, CodingEvent, CodingSession, Conversation, CreateGroupInput, CreateRoutineInput, EmailConnectorAccount, MessageAttachment,
   MessageDeliveryReply, PrivateMessage, ResolvedCreateAgentInput, Routine, RunEvent, RunStatus, TaskRun, Topic,
   Project, UpdateAgentInput, UpdateConversationInput
 } from '../shared/types'
@@ -20,9 +20,9 @@ import type { GroupWorkflow } from '../shared/groupWorkflow'
 import { mediaName, MAX_IM_FILE_BYTES, IMMediaError } from './imMedia'
 import { DESKTOP_SCHEMA_VERSION, FeltDatabase, FeltDatabaseError, type Batch, type RecordChange, type Records } from './felt/database'
 import {
-  agentFromRecord, agentToRecord, codingSessionFromRecord, codingSessionToRecord, projectFromRecord, conversationFromParts, conversationParts, eventFromRecord, eventToRecord, messageFromRecord,
+  agentFromRecord, agentToRecord, ciRunFromRecord, ciRunToRecord, codingSessionFromRecord, codingSessionToRecord, projectFromRecord, conversationFromParts, conversationParts, eventFromRecord, eventToRecord, messageFromRecord,
   messageToRecord, privateMessageFromRecord, privateMessageToRecord, routineFromRecord, routineToRecord, runFromRecord, runToRecord,
-  type AgentProcessRow, type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CodingSessionRecord, type ExecutionEventRecord, type LocalAgentDefinitionRecord, type GroupMemberRecord, type GroupRecord,
+  type AgentProcessRow, type AgentProfileRecord, type AgentRecord, type AttachmentRecord, type CiRunRecord, type CodingSessionRecord, type ExecutionEventRecord, type LocalAgentDefinitionRecord, type GroupMemberRecord, type GroupRecord,
   type MessageRecord, type PrivateMessageRecord, type RunRecord, type ScheduleRecord, type SessionRecord, type TopicRecord, type WorkspaceRecord
 } from './felt/records'
 import { MemoryRepository, type MemoryRecord } from './memoryRepository'
@@ -39,6 +39,7 @@ const DEFAULT_TOPIC_ID = 'main'
 const AVATAR_LIMIT = 1_500_000
 const PRIVATE_MESSAGE_LIMIT = 400
 const MAX_CODING_EVENTS = 100
+const MAX_CI_EVENTS = 100
 const RUN_LIMIT = 120
 const RUN_EVENT_LIMIT = 2_000
 /** Trim in bursts, so a stream of events does not read the whole log each time. */
@@ -150,6 +151,7 @@ export class DesktopRepository {
   private readonly profiles: Records<AgentProfileRecord>
   private readonly workspaces: Records<WorkspaceRecord>
   private readonly codingRows: Records<CodingSessionRecord>
+  private readonly ciRows: Records<CiRunRecord>
   private readonly localAgentRows: Records<LocalAgentDefinitionRecord>
   private readonly processRows: Records<AgentProcessRow>
   /** Coding sessions found still `running` when this desktop opened: their process died with the last run. */
@@ -187,6 +189,7 @@ export class DesktopRepository {
     this.profiles = felt.collection('AgentProfile')
     this.workspaces = felt.collection('Workspace')
     this.codingRows = felt.collection('CodingSession')
+    this.ciRows = felt.collection('CiRun')
     this.localAgentRows = felt.collection('LocalAgentDefinition')
     this.processRows = felt.collection('AgentProcess')
     this.sessions = felt.collection('Session')
@@ -1456,6 +1459,7 @@ export class DesktopRepository {
       const record = await this.workspaces.get(id)
       if (record?.name === undefined) return false
       if ((await this.codingRows.where({ workspaceId: id })).some(row => row.status === 'running')) throw new Error('This project has a coding session that is still running.')
+      if ((await this.ciRows.where({ workspaceId: id })).some(row => row.status === 'running')) throw new Error('This project has a CI run that is still running.')
       const { name: _name, isGit: _isGit, testCommand: _test, ...rest } = record
       await this.workspaces.put({ ...rest, updatedAt: Date.now() })
       return true
@@ -1545,6 +1549,44 @@ export class DesktopRepository {
         recovered.push(next)
       }
       return recovered
+    })
+  }
+
+  // ───────────────────────────── CI runs ─────────────────────────────
+
+  async ciRuns(projectId?: string): Promise<CiRun[]> {
+    const rows = projectId ? await this.ciRows.where({ workspaceId: projectId }) : await this.ciRows.all()
+    return rows.map(ciRunFromRecord)
+  }
+
+  async ciRun(id: string): Promise<CiRun | undefined> {
+    const record = await this.ciRows.get(id)
+    return record ? ciRunFromRecord(record) : undefined
+  }
+
+  /** A new run, numbered within its project. */
+  createCiRun(input: Omit<CiRun, 'id' | 'number' | 'createdAt' | 'operations' | 'events'> & { events?: CiEvent[] }): Promise<CiRun> {
+    return this.exclusive(async () => {
+      if (!(await this.project(input.projectId))) throw new Error('Project not found')
+      const existing = await this.ciRows.where({ workspaceId: input.projectId })
+      if (existing.some(row => row.status === 'running')) throw new Error('This project already has a CI run in progress.')
+      const run: CiRun = { operations: [], events: [], ...input, id: randomUUID(), number: existing.reduce((highest, row) => Math.max(highest, row.number), 0) + 1, createdAt: Date.now() }
+      await this.ciRows.put(ciRunToRecord(run))
+      return run
+    })
+  }
+
+  /** Patch a run. A finished run stays finished: a late update cannot revive it, and its status is not rewritten. */
+  updateCiRun(id: string, patch: Partial<Omit<CiRun, 'id' | 'projectId' | 'number' | 'createdAt'>>, event?: Omit<CiEvent, 'at'>): Promise<CiRun | undefined> {
+    return this.exclusive(async () => {
+      const record = await this.ciRows.get(id)
+      if (!record) return undefined
+      const current = ciRunFromRecord(record)
+      const finished = current.status !== 'running'
+      const { status: _status, phase: _phase, ...rest } = patch
+      const next: CiRun = { ...current, ...(finished ? rest : patch), events: event ? [...current.events, { at: Date.now(), ...event }].slice(-MAX_CI_EVENTS) : current.events }
+      await this.ciRows.put(ciRunToRecord(next))
+      return next
     })
   }
 

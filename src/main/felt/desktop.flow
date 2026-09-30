@@ -83,6 +83,27 @@ app desktop {
     index by_session using index sessionId
   }
 
+  // A CI run on an ephemeral Compute Computer: what was tested, PAX's plan, bounded results, and references to the Computer. Never source,
+  // artifacts or the Computer's own state — Compute owns the Computer, and it is gone once released.
+  collection CiRun {
+    id: text
+    workspaceId: text
+    number: integer
+    status: text
+    phase: text
+    createdAt: integer
+    startedAt: integer?
+    finishedAt: integer?
+    source: json
+    platform: json?
+    computer: json?
+    plan: json?
+    operations: json?
+    failure: json?
+    events: json?
+    index by_workspace using index workspaceId
+  }
+
   collection LocalAgentDefinition {
     id: text
     name: text

@@ -203,7 +203,9 @@ A coding session can run on a Computer from an installed [Compute Configured](ht
 (`brew install compute-configured`, then `compute-configured-verify`) instead of on this machine: choose **Execution →
 Compute** and a Computer when you start it. The agent, its files, tests and PAX commands then run on that Computer, and
 there is no fallback to running locally. Foundry shows the platform as Compute states it (Linux x86_64 — Certified, macOS
-ARM64 — Preview). See [docs/compute-integration.md](docs/compute-integration.md).
+ARM64 — Preview). **Run CI** on a Git project does the same for its CI workload: PAX plans the operations, an ephemeral Compute
+Computer runs them against a committed revision, the results are kept, and the Computer is released. See
+[docs/compute-integration.md](docs/compute-integration.md).
 
 ## Where data is stored
 

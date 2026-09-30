@@ -1,4 +1,4 @@
-import type { CodingSession, Project, AgentConfig, ExecutionEventKind, ChatMessage, Conversation, PrivateMessage, RunEvent, Routine, TaskRun, Topic } from '../../shared/types'
+import type { CiRun, CodingSession, Project, AgentConfig, ExecutionEventKind, ChatMessage, Conversation, PrivateMessage, RunEvent, Routine, TaskRun, Topic } from '../../shared/types'
 
 /** The stored shapes declared in desktop.flow, and the domain types they compose. */
 
@@ -29,6 +29,10 @@ export interface CodingSessionRecord {
   id: string; workspaceId: string; agentId: string; sessionId: string; topicId: string; cwd: string; task: string; status: string
   createdAt: number; startedAt?: number; finishedAt?: number; runId?: string; error?: string; result?: string
   baseline?: unknown; changes?: unknown; commands?: unknown; events?: unknown; cleaned?: string[]; finalHead?: string; execution?: unknown
+}
+export interface CiRunRecord {
+  id: string; workspaceId: string; number: number; status: string; phase: string; createdAt: number; startedAt?: number; finishedAt?: number
+  source: unknown; platform?: unknown; computer?: unknown; plan?: unknown; operations?: unknown; failure?: unknown; events?: unknown
 }
 export interface MessageRecord {
   id: string; sessionId: string; topicId: string; role: 'user' | 'assistant' | 'system'
@@ -249,4 +253,19 @@ export function codingSessionFromRecord(record: CodingSessionRecord): CodingSess
     baseline: (record.baseline as CodingSession['baseline']) ?? { changes: [] }, changes: (record.changes as CodingSession['changes']) ?? [],
     commands: (record.commands as CodingSession['commands']) ?? [], events: (record.events as CodingSession['events']) ?? [],
     ...(record.cleaned ? { cleaned: record.cleaned } : {}), ...(record.execution ? { execution: record.execution as CodingSession['execution'] } : {}), ...(record.finalHead ? { finalHead: record.finalHead } : {}) }
+}
+
+export function ciRunToRecord(run: CiRun): CiRunRecord {
+  return { id: run.id, workspaceId: run.projectId, number: run.number, status: run.status, phase: run.phase, createdAt: run.createdAt,
+    ...(run.startedAt !== undefined ? { startedAt: run.startedAt } : {}), ...(run.finishedAt !== undefined ? { finishedAt: run.finishedAt } : {}),
+    source: run.source, ...(run.platform ? { platform: run.platform } : {}), ...(run.computer ? { computer: run.computer } : {}), ...(run.plan ? { plan: run.plan } : {}),
+    operations: run.operations, ...(run.failure ? { failure: run.failure } : {}), events: run.events }
+}
+
+export function ciRunFromRecord(record: CiRunRecord): CiRun {
+  return { id: record.id, projectId: record.workspaceId, number: record.number, status: record.status as CiRun['status'], phase: record.phase as CiRun['phase'], createdAt: record.createdAt,
+    ...(record.startedAt !== undefined ? { startedAt: record.startedAt } : {}), ...(record.finishedAt !== undefined ? { finishedAt: record.finishedAt } : {}),
+    source: record.source as CiRun['source'], ...(record.platform ? { platform: record.platform as CiRun['platform'] } : {}), ...(record.computer ? { computer: record.computer as CiRun['computer'] } : {}),
+    ...(record.plan ? { plan: record.plan as CiRun['plan'] } : {}), operations: (record.operations as CiRun['operations']) ?? [],
+    ...(record.failure ? { failure: record.failure as CiRun['failure'] } : {}), events: (record.events as CiRun['events']) ?? [] }
 }
