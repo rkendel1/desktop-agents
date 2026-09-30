@@ -74,6 +74,10 @@ app desktop {
     changes: json?
     commands: json?
     events: json?
+    cleaned: json?
+    finalHead: text?
+    // Where the agent runs: a reference to a Compute environment and repository, never a copy of the Computer's state.
+    execution: json?
     index by_workspace using index workspaceId
     index by_agent using index agentId
     index by_session using index sessionId

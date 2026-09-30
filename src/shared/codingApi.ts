@@ -76,6 +76,8 @@ export interface SessionView {
   /** Set while the session runs: what is known about what it is doing, and how it is known. */
   activity?: { label: string; origin: ActivityOrigin; since: number }
   pendingApproval?: ApprovalView
+  /** Where the agent runs. `compute`: on a Compute Computer, named by its environment; the Computer's own state is Compute's. */
+  execution?: { kind: 'local' | 'compute'; environment?: string; repository?: string }
   changedFiles: { path: string; code: string; from?: string; origin?: GitChange['origin'] }[]
   /** Modified when the session started and clean now. */
   cleanedFiles: string[]

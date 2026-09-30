@@ -1772,6 +1772,7 @@ export class DouchatRuntime {
         let releaseWorkspace: (() => void) | undefined
         try {
           const workspaceDirectory = context === 'controller' || toolsDisabled ? undefined : await this.conversationWorkspace(conversationId, sessionKey, config)
+          const launch = context === 'controller' || toolsDisabled ? undefined : this.launchResolver?.({ conversationId, topicId })
           if (context !== 'controller' && !toolsDisabled) skillBridge = await openLocalSkillBridge([...this.skillInstallationTools(config.id, sessionKey), ...this.skillTools(config.id), ...await this.artifactTools(config.id, sessionKey)], abort.signal)
           const promptParts = [
             ...(skillBridge ? [skillInstallationPrompt, artifactPrompt, skillBridge.prompt] : []),
@@ -1801,7 +1802,7 @@ export class DouchatRuntime {
               ? 'For image generation or editing, check for the registered Nano Banana MCP tools (mcp_nanobanana_generate_image, mcp_nanobanana_edit_image). Use them when available, with preview=false and at most four output images per turn. Foundry attaches new images from nanobanana-output automatically. Do not substitute shell commands or browser automation. If the tools are missing, explain that the Nano Banana extension needs to be installed. If the tool reports missing credentials, explain that a Google AI Studio key must be configured through gemini extensions config nanobanana or NANOBANANA_API_KEY; CLI account login alone does not configure this extension. Do not ask the human to paste a secret in chat.'
               : '',
             context !== 'controller' ? 'Before starting substantial work, briefly explain what you will do. During long tasks, provide concise progress updates based on completed actions, and state blockers honestly.' : '',
-            workspaceDirectory ? `Your working directory is the human's project folder: ${workspaceDirectory}. Work on its files in place. Other agents in this chat share this folder and take turns, so check the current state of files before changing them. Do not delete or rewrite unrelated files.` : '',
+            workspaceDirectory ? `Your working directory is the human's project folder: ${launch?.workingDirectory ?? workspaceDirectory}. Work on its files in place. Other agents in this chat share this folder and take turns, so check the current state of files before changing them. Do not delete or rewrite unrelated files.` : '',
             prompt
           ].filter(Boolean)
           if (workspaceDirectory) {
@@ -1815,6 +1816,7 @@ export class DouchatRuntime {
           })), {
             sessionKey,
             workspaceDirectory,
+            ...(launch ? { launch } : {}),
             transient: context === 'controller' || sessionKey.startsWith('handoff-summary:'),
             imageToolsAllowed: context !== 'controller' && !toolsDisabled,
             continuationPrompt: promptParts.join('\n\n'),
@@ -3126,6 +3128,11 @@ export class DouchatRuntime {
 
   /** Something that may veto a turn before anything is stored or started (it throws to refuse). */
   setTurnGuard(guard: ((turn: { conversationId: string; topicId: string }) => Promise<void>) | undefined): void { this.turnGuard = guard }
+
+  private launchResolver?: (turn: { conversationId: string; topicId: string }) => import('../shared/agentExecutor').LocalLauncher | undefined
+
+  /** Where an agent turn's process is started, when not on this computer: asked for each turn, by chat and topic. */
+  setLaunchResolver(resolver: ((turn: { conversationId: string; topicId: string }) => import('../shared/agentExecutor').LocalLauncher | undefined) | undefined): void { this.launchResolver = resolver }
 
   /** Told when a permission request appears and how it ends. */
   observePermissions(observer: ((event: import('./agentPermissions').PermissionEvent) => void) | undefined): void { this.permissions.observe(observer) }

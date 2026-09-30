@@ -2,6 +2,9 @@ import { describeApproval } from '../../shared/coding'
 import { activityOrigin, checkView, projectView, type ApprovalView, type CodingNotification, type GitStateView, type ProjectView, type SessionView } from '../../shared/codingApi'
 import type { CodingSession, Project } from '../../shared/types'
 import type { DesktopRepository } from '../desktopRepository'
+import type { ComputeClient } from '../compute/client'
+import { PAX_INSPECTIONS, type PaxInspection, type PaxRun } from '../compute/pax'
+import type { ComputeInventory } from '../../shared/types'
 import { gitRemoteUrl } from './git'
 import type { CodingService } from './service'
 
@@ -39,7 +42,9 @@ export class CodingApi {
     private readonly repository: DesktopRepository,
     private readonly coding: CodingService,
     /** The runtime's permission answer — the one path desktop and remote approvals share. */
-    private readonly answer: (approvalId: string, allow: boolean) => void
+    private readonly answer: (approvalId: string, allow: boolean) => void,
+    /** Compute, when installed: read for the inventory of Computers a session can run on. */
+    private readonly compute?: ComputeClient
   ) {}
 
   private async guarded<T>(work: () => Promise<T>): Promise<T> {
@@ -101,12 +106,14 @@ export class CodingApi {
     return this.view(await this.requireSession(id))
   }
 
-  async startSession(input: { projectId: string; agentId: string; task: string }): Promise<SessionView> {
+  async startSession(input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' | 'compute'; environment?: string } }): Promise<SessionView> {
     if (typeof input.task !== 'string' || !input.task.trim()) throw new CodingApiError('invalid', 'Describe the task for the agent.')
     if (input.task.length > MAX_TASK) throw new CodingApiError('invalid', `The task is too long (at most ${MAX_TASK} characters).`)
     await this.requireProject(input.projectId)
     if (typeof input.agentId !== 'string' || !(await this.repository.agent(input.agentId))) throw new CodingApiError('not-found', 'Agent not found')
-    return this.guarded(async () => this.view(await this.coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task })))
+    if (input.execution?.kind === 'compute' && !input.execution.environment) throw new CodingApiError('invalid', 'Name the Compute environment to run on.')
+    const execution = input.execution?.kind === 'compute' ? { kind: 'compute' as const, environment: input.execution.environment! } : undefined
+    return this.guarded(async () => this.view(await this.coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task, ...(execution ? { execution } : {}) })))
   }
 
   async continueSession(id: string, text?: string): Promise<SessionView> {
@@ -130,6 +137,21 @@ export class CodingApi {
     const session = await this.repository.codingSession(id)
     if (!session) throw new CodingApiError('not-found', 'Coding session not found')
     return session
+  }
+
+  // ───────────────────────────── Compute and PAX ─────────────────────────────
+
+  /** What Compute reports: the installed product's platform label, and the Computers a session can run on. Read from Compute; nothing is kept. */
+  async computeInventory(): Promise<ComputeInventory> {
+    if (!this.compute) return { available: false, reason: 'Compute is not available in this build.', daemon: { endpoint: '', reachable: false }, environments: [] }
+    return this.compute.inventory()
+  }
+
+  /** A read-only PAX inspection of the session's project, run where the session runs. PAX's answer, untouched. */
+  async pax(sessionId: string, command: PaxInspection): Promise<PaxRun> {
+    await this.requireSession(sessionId)
+    if (!PAX_INSPECTIONS.includes(command)) throw new CodingApiError('invalid', `PAX inspection must be one of ${PAX_INSPECTIONS.join(', ')}.`)
+    return this.guarded(() => this.coding.pax(sessionId, command))
   }
 
   // ───────────────────────────── approvals ─────────────────────────────
@@ -185,6 +207,7 @@ export class CodingApi {
       ...(session.result ? { result: session.result } : {}), ...(session.error ? { error: session.error } : {}),
       ...(activity ? { activity: { label: activity.label, origin: activityOrigin(activity.source), since: activity.since } } : {}),
       ...(pending ? { pendingApproval: pending } : {}),
+      ...(session.execution ? { execution: session.execution.kind === 'compute' ? { kind: 'compute' as const, environment: session.execution.environment, repository: session.execution.repository } : { kind: 'local' as const } } : {}),
       changedFiles: session.changes.map(change => ({ path: change.path, code: change.code, ...(change.from ? { from: change.from } : {}), ...(change.origin ? { origin: change.origin } : {}) })),
       cleanedFiles: session.cleaned ?? [],
       ...(session.baseline.head ? { headAtStart: session.baseline.head } : {}), ...(session.finalHead ? { headAtEnd: session.finalHead } : {}),

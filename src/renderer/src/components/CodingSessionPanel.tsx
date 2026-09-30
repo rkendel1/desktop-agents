@@ -44,7 +44,7 @@ function ChangeList({ session, project, live }: { session: CodingSession; projec
   const select = async (path: string, untracked: boolean): Promise<void> => {
     setSelected(path); setDiff(undefined)
     if (untracked || !project) return
-    try { setDiff(await window.douchat.projectGitDiff(project.id, path)) } catch (error) { setDiff({ error: error instanceof Error ? error.message : String(error) }) }
+    try { setDiff(await window.douchat.projectGitDiff(project.id, path, session.execution?.kind === 'compute' ? session.id : undefined)) } catch (error) { setDiff({ error: error instanceof Error ? error.message : String(error) }) }
   }
   const chosen = all.find(change => change.path === selected)
   const list = (changes: GitChange[]): ReactElement => <ul className="coding-changes">
@@ -100,8 +100,8 @@ export function CodingSessionPanel({ session, project, agent, activity }: {
   const [text, setText] = useState('')
   const refresh = useCallback(async () => {
     if (!project?.isGit) return
-    try { setLive(await window.douchat.projectGitStatus(project.id)) } catch { setLive(undefined) }
-  }, [project?.id, project?.isGit])
+    try { setLive(await window.douchat.projectGitStatus(project.id, session.execution?.kind === 'compute' ? session.id : undefined)) } catch { setLive(undefined) }
+  }, [project?.id, project?.isGit, session.id, session.execution?.kind])
   // The repository is read again whenever the session changes (it finished, checks ran).
   useEffect(() => { void refresh() }, [refresh, session.status, session.finishedAt, session.commands.length])
   const act = async (work: () => Promise<unknown>): Promise<void> => {
@@ -118,6 +118,7 @@ export function CodingSessionPanel({ session, project, agent, activity }: {
         <span className={`coding-state coding-state-${state}`} role="status">{t(codingStateLabels[state])}</span>
         {' · '}{agent?.name ?? session.agentId}{' · '}{project?.name ?? session.projectId}{' · '}<code>{session.workingDirectory}</code>
       </p>
+      {session.execution?.kind === 'compute' && <p className="coding-meta">{t('Runs on Computer')} <code>{session.execution.environment}</code> <span className="muted">— {t('the agent, its commands and its changes are on that Computer; this computer’s copy is untouched.')}</span> <button type="button" className="secondary-button" onClick={() => void window.douchat.openComputeUi()}>{t('Open Compute')}</button></p>}
       <p className="coding-meta muted">{t('Started')} {time(session.startedAt ?? session.createdAt)}{session.finishedAt ? ` · ${t('Finished')} ${time(session.finishedAt)}` : ''}</p>
     </header>
 

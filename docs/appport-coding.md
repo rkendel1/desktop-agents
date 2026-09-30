@@ -101,6 +101,13 @@ later reads the `interrupted` history entry.
 - `@appport/github` gets its own local-owner boundary that grants read capabilities only. Its credential is a *reference*
   in the flow; the token is in Foundry's credential vault (`github:<secretId>`), never in FeltDB state, evidence or logs.
 
+## Compute
+
+Two capabilities reach the Compute integration ([compute-integration.md](compute-integration.md)):
+`douchat.coding.compute.inventory` (the Computers Compute reports, read from Compute) and `douchat.coding.sessions.pax`
+(read-only PAX inspections of a session's project on its Computer). `sessions.start` takes an optional `execution`, and a
+session view reports it. No route to the Computer's filesystem or to running commands is added.
+
 ## What is intentionally not exposed
 
 No read or write of files, no command execution, no shell, no change of a session's folder, no reusable "allow" grants, no

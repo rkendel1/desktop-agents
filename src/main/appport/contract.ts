@@ -2,6 +2,7 @@ import { AppPortError } from '@appport/protocol'
 import { defineCapability, defineEvent, type AnyCapability, type AnyEvent } from '@appport/core'
 import { s } from '@appport/schema'
 import { PRODUCT_NAME } from '../../shared/brand'
+import { PAX_INSPECTIONS } from '../compute/pax'
 import { CODING_EVENT_NAMES } from '../../shared/codingApi'
 import { CodingApiError, type CodingApi } from '../coding/api'
 
@@ -49,6 +50,7 @@ const session = s.object({
   result: s.optional(s.string()), error: s.optional(s.string()),
   activity: s.optional(s.object({ label: s.string(), origin, since: s.number() })),
   pendingApproval: s.optional(approval),
+  execution: s.optional(s.object({ kind: s.enum(['local', 'compute'] as const), environment: s.optional(s.string()), repository: s.optional(s.string()) })),
   changedFiles: s.array(s.object({ path: s.string(), code: s.string(), from: s.optional(s.string()), origin: s.optional(s.enum(['before', 'session'] as const)) })),
   cleanedFiles: s.array(s.string()),
   headAtStart: s.optional(s.string()), headAtEnd: s.optional(s.string()),
@@ -94,12 +96,24 @@ export function codingCapabilities(api: CodingApi, remote?: RemoteLookup): AnyCa
     defineCapability({ name: 'douchat.coding.sessions.get', version: 1, description: 'One coding session: state, task, agent, changes, checks and history. Reconnecting reads this; it never starts anything.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
       input: idInput, output: session, handler: input => mapped(() => api.getSession(input.id)) }),
     defineCapability({ name: 'douchat.coding.sessions.start', version: 1, description: 'Start an agent on a project. Returns as soon as the session exists.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
-      input: s.object({ projectId: s.string(), agentId: s.string(), task: s.string({ minLength: 1, maxLength: 20000 }) }), output: session, handler: input => mapped(() => api.startSession(input)) }),
+      input: s.object({ projectId: s.string(), agentId: s.string(), task: s.string({ minLength: 1, maxLength: 20000 }), execution: s.optional(s.object({ kind: s.enum(['local', 'compute'] as const), environment: s.optional(s.string()) })) }), output: session, handler: input => mapped(() => api.startSession(input)) }),
     defineCapability({ name: 'douchat.coding.sessions.continue', version: 1, description: 'Another turn in a finished or interrupted session. A new agent process starts; the old one is never resumed.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
       input: s.object({ id: s.string(), text: s.optional(s.string({ maxLength: 20000 })) }), output: session, handler: input => mapped(() => api.continueSession(input.id, input.text)) }),
     defineCapability({ name: 'douchat.coding.sessions.cancel', version: 1, description: 'Stop a running session. This is the only way a client ends one; disconnecting does not.', effect: 'consequential', authorization: [PERMISSIONS.codingControl],
       input: idInput, output: session, handler: input => mapped(() => api.cancelSession(input.id)) }),
 
+    defineCapability({ name: 'douchat.coding.compute.inventory', version: 1, description: 'What Compute reports: the installed product’s platform (Certified or Preview, as Compute states it) and the Computers a session can run on. Read from Compute each time.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: s.empty(), output: s.object({
+        available: s.boolean(), reason: s.optional(s.string()), uiUrl: s.optional(s.string()),
+        installation: s.optional(s.object({ binary: s.string(), version: s.string(), configured: s.boolean() })),
+        platform: s.optional(s.object({ platform: s.string(), status: s.enum(['certified', 'preview', 'unverified'] as const), label: s.string(), computeVersion: s.optional(s.string()), evidence: s.string() })),
+        daemon: s.object({ endpoint: s.string(), reachable: s.boolean() }),
+        environments: s.array(s.object({ name: s.string(), environmentId: s.string(), observed: s.string(), explanation: s.optional(s.string()), target: s.optional(s.string()) }))
+      }), handler: () => mapped(() => api.computeInventory()) }),
+    defineCapability({ name: 'douchat.coding.sessions.pax', version: 1, description: 'A read-only PAX inspection (info, doctor, deps, scripts, workspaces, lock, graph, reality, drift) of the session’s project, run where the session runs. PAX’s own answer, including ambiguity and drift, unchanged. Delegated operations (build, test, …) are not offered here.', effect: 'observation', authorization: [PERMISSIONS.codingRead],
+      input: s.object({ id: s.string(), command: s.enum(PAX_INSPECTIONS) }),
+      output: s.object({ command: s.string(), argv: s.array(s.string()), exitCode: s.nullable(s.number()), json: s.optional(s.unknown()), stdout: s.string(), stderr: s.string(), findings: s.object({ ambiguous: s.boolean(), drift: s.boolean(), failedClosed: s.boolean() }) }),
+      handler: input => mapped(() => api.pax(input.id, input.command)) }),
     defineCapability({ name: 'douchat.coding.approvals.list', version: 1, description: 'Approvals waiting for an answer now, each with its agent, project, session and folder.', effect: 'observation', authorization: [PERMISSIONS.approvalsRead],
       input: s.object({ sessionId: s.optional(s.string()) }), output: s.object({ approvals: s.array(approval) }), handler: input => mapped(async () => ({ approvals: await api.pendingApprovals(input.sessionId) })) }),
     defineCapability({ name: 'douchat.coding.approvals.resolve', version: 1, description: 'Approve or deny one pending approval, once. It must belong to the named session and still be pending.', effect: 'consequential', authorization: [PERMISSIONS.approvalsResolve],

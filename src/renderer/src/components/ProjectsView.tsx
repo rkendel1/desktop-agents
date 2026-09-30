@@ -1,7 +1,7 @@
 import { FolderGit2, Plus } from 'lucide-react'
 import { useEffect, useState, type ReactElement } from 'react'
 import { codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
-import type { AppSnapshot, GitState, Project } from '../../../shared/types'
+import type { AppSnapshot, ComputeInventory, GitState, Project } from '../../../shared/types'
 import { t, tr } from '../preferences'
 import { CodingSessionPanel } from './CodingSessionPanel'
 
@@ -12,6 +12,9 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
   const [agentId, setAgentId] = useState('')
   const [task, setTask] = useState('')
   const [command, setCommand] = useState('')
+  const [execution, setExecution] = useState<'local' | 'compute'>('local')
+  const [environment, setEnvironment] = useState('')
+  const [inventory, setInventory] = useState<ComputeInventory>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const sessions = (snapshot.codingSessions ?? []).filter(session => session.projectId === project.id)
@@ -22,6 +25,15 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
     window.douchat.projectGitStatus(project.id).then(state => { if (live) setGit(state) }, cause => { if (live) setGit({ error: cause instanceof Error ? cause.message : String(cause) }) })
     return () => { live = false }
   }, [project.id, project.isGit, sessions.map(session => `${session.id}:${session.status}`).join()])
+  // Compute's inventory is asked for when Compute is chosen and read from Compute each time: Foundry keeps no list of Computers.
+  useEffect(() => {
+    if (execution !== 'compute') return
+    let live = true
+    setInventory(undefined)
+    window.douchat.computeInventory().then(value => { if (live) { setInventory(value); setEnvironment(current => value.environments.some(item => item.name === current) ? current : value.environments.find(item => item.observed === 'running')?.name ?? '') } },
+      cause => { if (live) setInventory({ available: false, reason: cause instanceof Error ? cause.message : String(cause), daemon: { endpoint: '', reachable: false }, environments: [] }) })
+    return () => { live = false }
+  }, [execution])
   const agents = snapshot.agents
   const chosenAgent = agentId || agents[0]?.id || ''
   const guard = async (work: () => Promise<unknown>): Promise<void> => {
@@ -53,13 +65,33 @@ function ProjectPanel({ project, snapshot, onOpenSession }: { project: Project; 
       {!agents.length ? <p className="muted">{t('Create an agent first.')}</p> : <form className="coding-start" onSubmit={event => {
         event.preventDefault()
         if (!task.trim()) return
-        void guard(async () => { const session = await window.douchat.startCodingSession({ projectId: project.id, agentId: chosenAgent, task }); setTask(''); onOpenSession(session.id) })
+        void guard(async () => { const session = await window.douchat.startCodingSession({ projectId: project.id, agentId: chosenAgent, task, ...(execution === 'compute' ? { execution: { kind: 'compute' as const, environment } } : {}) }); setTask(''); onOpenSession(session.id) })
       }}>
         <label>{t('Agent')}
           <select value={chosenAgent} onChange={event => setAgentId(event.target.value)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>
         </label>
+        <label>{t('Execution')}
+          <select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}>
+            <option value="local">{t('Local')}</option>
+            <option value="compute">{t('Compute')}</option>
+          </select>
+        </label>
+        {execution === 'compute' && <div className="coding-compute" aria-label={t('Compute')}>
+          {!inventory ? <p className="muted">{t('Asking Compute…')}</p> : <>
+            {inventory.platform && <p className="coding-meta"><span className={`coding-platform coding-platform-${inventory.platform.status}`}>{t(inventory.platform.label)}</span>{inventory.installation ? <span className="muted"> · Compute Configured {inventory.installation.version}</span> : null}</p>}
+            {inventory.available && inventory.environments.length > 0 && <label>{t('Computer')}
+              <select value={environment} onChange={event => setEnvironment(event.target.value)}>
+                <option value="" disabled>{t('Choose a Computer')}</option>
+                {inventory.environments.map(item => <option key={item.environmentId} value={item.name}>{item.name} — {item.observed}</option>)}
+              </select>
+            </label>}
+            {inventory.available && !inventory.environments.length && <p className="muted">{t('Compute has no Computers yet. Create one in Compute.')}</p>}
+            {!inventory.available && <p className="coding-error" role="alert">{inventory.reason}</p>}
+            <button type="button" className="secondary-button" onClick={() => void window.douchat.openComputeUi()}>{t('Open Compute')}</button>
+          </>}
+        </div>}
         <textarea value={task} onChange={event => setTask(event.target.value)} rows={3} placeholder={t('What should the agent do in this project?')} aria-label={t('Task')} />
-        <button className="primary-button" type="submit" disabled={busy || !task.trim()}>{t('Start session')}</button>
+        <button className="primary-button" type="submit" disabled={busy || !task.trim() || (execution === 'compute' && !environment)}>{t('Start session')}</button>
       </form>}
       {error && <p className="coding-error" role="alert">{error}</p>}
     </section>
