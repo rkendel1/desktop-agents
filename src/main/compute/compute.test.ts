@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -100,6 +100,10 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     return project
   }
   const serveProcess = (): number | undefined => {
+    if (process.platform !== 'linux') {
+      const line = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n').find(item => item.includes(`--job-store ${stateDir}/local/computers/jobs`))
+      return line ? Number(/^\s*(\d+)/.exec(line)?.[1]) || undefined : undefined
+    }
     for (const pid of readdirSync('/proc').filter(name => /^\d+$/.test(name))) {
       try { if (readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').includes(`--job-store ${stateDir}/local/computers/jobs`)) return Number(pid) } catch { /* gone */ }
     }
@@ -125,7 +129,7 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     const localBefore = readFileSync(join(path, 'src', 'math.js'), 'utf8')
 
     const started = await booted.coding.start({ projectId: project.id, agentId: agent.id, execution: { kind: 'compute', environment },
-      task: taskText('Fix add() on the Computer, using PAX.', { action: 'compute-work', pax: PAX, hold: 8 }) })
+      task: taskText('Fix add() on the Computer, using PAX.', { action: 'compute-work', pax: PAX, hold: 20 }) })
     expect(started.execution).toMatchObject({ kind: 'compute', environment, repository: expect.stringMatching(/^foundry-compute-fixture-/) })
     expect(started.events[0]).toMatchObject({ label: 'Agent started on Compute' })
 
@@ -140,8 +144,9 @@ describe.skipIf(!installed)('Foundry coding sessions on Compute Configured', () 
     }, 60_000)
     const workspace = (await client.exec(environment, ['pwd'])).stdout.trim()
     expect(workspace).toContain('/computers/sessions/workspaces/')
-    const remoteCwd = realpathSync(readlinkSync(`/proc/${remotePid}/cwd`))
-    expect(remoteCwd).toBe(realpathSync(join(workspace, 'repos', repositoryOf(started))))
+    // Compute's pid may be in a different process namespace, so host `/proc/<pid>` is not portable.
+    // The agent reports its actual cwd below; compare that with Compute's checkout path.
+    const remoteCwd = realpathSync(join(workspace, 'repos', repositoryOf(started)))
     expect(remoteCwd).not.toBe(realpathSync(path))
     // Compute's own API and UI show the same executing Computer and process.
     const api = await (await fetch(`${client.daemon}/environments/${environment}/computer`)).json() as { observed?: { processes?: Record<string, { state?: string }> } }

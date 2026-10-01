@@ -430,7 +430,10 @@ export class DouchatRuntime {
     void (async () => {
       let source: import('@earendil-works/pi-ai').AssistantMessageEventStream
       try {
-        if (!config.automaticModelSelection && !(await fabric.policy()).automatic) source = direct()
+        // A model explicitly chosen for an agent is authoritative. The global
+        // automatic policy is only a default for agents that follow the default
+        // model; per-agent automatic selection still opts in directly.
+        if (!config.automaticModelSelection && !(config.followDefaultModel && (await fabric.policy()).automatic)) source = direct()
         else source = routedStream({ fabric, request: fabric.request('general', requirementsOf(streamContext)), context: streamContext, ...(options ? { options } : {}),
           open: (candidate, context, opts) => {
             const record = this.decisionProviders.find(item => item.id === candidate.provider)

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
-import { EnvironmentContext } from './EnvironmentPanel'
 import { DEFERRED_WORK_ERROR, canContinue, changeLabel, codingDisplayState, codingStateLabels, continueSemantics, describeApproval, formatCommandLine, groupChanges, isUntracked } from '../../../shared/coding'
 import type { AgentConfig, ChatMessage, CodingActivity, CodingSession, CommandResult, GitChange, GitState, Project } from '../../../shared/types'
 import { t } from '../preferences'
@@ -119,10 +118,9 @@ export function CodingSessionPanel({ session, project, agent, activity, messages
       {session.task.includes('\n') && <details className="coding-task-full"><summary>{t('Full task')}</summary><pre className="coding-output">{session.task}</pre></details>}
       <p className="coding-meta">
         <span className={`coding-state coding-state-${state}`} role="status">{t(codingStateLabels[state])}</span>
-        {' · '}{agent?.name ?? session.agentId}{' · '}{project?.name ?? session.projectId}{' · '}<code>{session.workingDirectory}</code>
+        {' · '}{agent?.name ?? session.agentId}{' · '}{project?.name ?? session.projectId}
       </p>
-      {session.execution?.kind === 'compute' && <p className="coding-meta">{t('Runs on Computer')} <code>{session.execution.environment}</code> <span className="muted">— {t('the agent, its commands and its changes are on that Computer; this computer’s copy is untouched.')}</span> <button type="button" className="secondary-button" onClick={() => void window.douchat.openComputeUi()}>{t('Open Compute')}</button></p>}
-      {session.execution?.kind === 'compute' && <EnvironmentContext projectId={session.projectId} />}
+      <p className="coding-meta muted">{session.execution?.kind === 'compute' ? <>{t('Compute')} · <code>{session.execution.environment}</code> <button type="button" className="secondary-button" onClick={() => void window.douchat.openComputeUi()}>{t('Open Compute')}</button></> : t('Project folder on this computer')}</p>
       <p className="coding-meta muted">{t('Started')} {time(session.startedAt ?? session.createdAt)}{session.finishedAt ? ` · ${t('Finished')} ${time(session.finishedAt)}` : ''}</p>
     </header>
 

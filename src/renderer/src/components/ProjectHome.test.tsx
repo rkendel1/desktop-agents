@@ -165,7 +165,7 @@ it('remembers what I was doing last time from the durable session, and continues
   await render(snapshot({ codingSessions: [interrupted] }))
   await click('Work')
   const last = node.querySelector('[aria-label="Now"]')!.textContent!
-  expect(last).toContain('Last time'); expect(last).toContain('Interrupted'); expect(last).toContain('Fix add()'); expect(last).toContain('This Computer'); expect(last).toContain('1 changed files')
+  expect(last).toContain('Last time'); expect(last).toContain('Interrupted'); expect(last).toContain('Fix add()'); expect(last).toContain('Project folder on this computer'); expect(last).toContain('1 changed files')
   await click('Continue')
   expect(api.continueCodingSession).toHaveBeenCalledWith('s1')
 })
@@ -180,17 +180,16 @@ it('lists recent checks with argv, exit status, duration and time, and runs chec
   expect(api.runCodingChecks).toHaveBeenCalledWith('s1')
 })
 
-it('makes Compute the default, labels local as fallback, and refuses to fake Compute when it is unavailable', async () => {
+it('uses the project folder for a hosted-model agent and does not pretend it runs on Compute', async () => {
   await render(snapshot())
   await click('Work')
-  expect(node.textContent).toContain('If it is not ready, nothing starts here instead')
   const select = [...node.querySelectorAll('select')].find(item => item.closest('label')?.textContent?.startsWith('Execution')) as HTMLSelectElement
-  expect(select.value).toBe('compute')
-  expect([...select.options].map(option => option.textContent)).toEqual(['Compute environment (recommended)', 'This Computer — local fallback'])
-  expect(node.textContent).toContain('If it is not ready, nothing starts here instead')
-  expect(node.textContent).toContain('Start it with `compute start`')
+  expect(select.value).toBe('local')
+  expect(select.options[0].disabled).toBe(true)
+  expect([...select.options].map(option => option.textContent)).toEqual(['Compute environment', 'Project folder on this computer'])
+  expect(node.textContent).toContain('Its selected model is unchanged.')
   const start = [...node.querySelectorAll('button')].find(item => item.textContent === 'Start work') as HTMLButtonElement
-  expect(start.disabled).toBe(true)
+  expect(start.disabled).toBe(true) // no task yet, not because Compute is down
   expect(api.startCodingSession).not.toHaveBeenCalled()
 })
 

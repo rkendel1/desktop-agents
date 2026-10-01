@@ -918,7 +918,7 @@ export class DesktopRepository {
   async projectConversations(projectId: string): Promise<Conversation[]> {
     if (!(await this.project(projectId))) throw new Error('Project not found')
     await this.ensureProjectConversation(projectId)
-    return (await this.conversations()).filter(conversation => conversation.projectId === projectId)
+    return (await this.conversations()).filter(conversation => conversation.projectId === projectId && !conversation.id.startsWith(`work-${projectId}-`))
       .sort((a, b) => b.updatedAt - a.updatedAt || a.createdAt - b.createdAt)
   }
 
@@ -935,6 +935,29 @@ export class DesktopRepository {
       const conversation: Conversation = {
         id: `project-${projectId}-${randomUUID()}`, projectId, type: 'group', autoNamed: false, hidden: true,
         name: clean, description: `Project chat for ${project.name}`, agentIds, leadAgentId: agentIds[0], workspacePath: project.path,
+        topics: [topic], activeTopicId: topic.id, unread: 0, readAt: now, createdAt: now, updatedAt: now
+      }
+      await this.felt.transaction(batch => this.stageConversation(batch, conversation))
+      return (await this.conversation(conversation.id))!
+    })
+  }
+
+  /**
+   * A Work run is not an ordinary private chat. Give it a private, hidden
+   * conversation of its own so its executable instructions, workspace and
+   * native model thread can never leak into the agent's regular chat.
+   */
+  createCodingConversation(projectId: string, agentId: string, task: string): Promise<Conversation> {
+    return this.exclusive(async () => {
+      const project = await this.project(projectId)
+      if (!project) throw new Error('Project not found')
+      if (!(await this.agentRows.has(agentId))) throw new Error('Agent not found')
+      const now = Date.now()
+      const topic = newTopic(`Work: ${task}`.slice(0, 80), now)
+      const conversation: Conversation = {
+        id: `work-${projectId}-${randomUUID()}`, projectId, type: 'direct', autoNamed: false, hidden: true,
+        name: `${project.name} · Work`, description: `Private Work session for ${project.name}`,
+        agentIds: [agentId], leadAgentId: agentId, workspacePath: project.path,
         topics: [topic], activeTopicId: topic.id, unread: 0, readAt: now, createdAt: now, updatedAt: now
       }
       await this.felt.transaction(batch => this.stageConversation(batch, conversation))

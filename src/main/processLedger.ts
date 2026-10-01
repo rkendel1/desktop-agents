@@ -45,9 +45,11 @@ export async function processIdentity(pid: number): Promise<string | undefined> 
       return fields[19]
     }
     if (process.platform === 'darwin') {
-      const { stdout } = await run('ps', ['-o', 'lstart=,stat=', '-p', String(pid)], { timeout: 5000 })
-      const text = stdout.trim()
-      return text && !/\sZ\S*$/.test(text) ? text : undefined
+      const { stdout } = await run('ps', ['-o', 'lstart=,state=', '-p', String(pid)], { timeout: 5000 })
+      const match = /^(.*\d{4})\s+(\S+)$/.exec(stdout.trim())
+      if (!match || match[2].startsWith('Z') || match[2].startsWith('X')) return undefined
+      // Status flags change while a process runs; its OS start time does not.
+      return match[1]
     }
   } catch { /* gone */ }
   return undefined

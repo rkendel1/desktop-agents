@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
-import { useMemo, useState, type FormEvent, type ReactElement } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactElement } from 'react'
+import { canRunWorkOnCompute } from '../../../shared/coding'
 import type { AgentConfig, CodingSession, Project } from '../../../shared/types'
 import { t } from '../preferences'
 import { NativeDialog } from './NativeDialog'
@@ -26,6 +27,8 @@ export function TurnIntoWorkDialog({ draft, projects, agents, onClose, onAddProj
   const [execution, setExecution] = useState<'local' | 'compute'>('compute')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const computeEligible = canRunWorkOnCompute(agents.find(agent => agent.id === agentId))
+  useEffect(() => { if (!computeEligible) setExecution('local') }, [computeEligible])
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
     if (!projectId || !agentId || !task.trim() || busy) return
@@ -51,7 +54,7 @@ export function TurnIntoWorkDialog({ draft, projects, agents, onClose, onAddProj
           <label><span>{t('Project')}</span><select autoFocus value={projectId} onChange={event => setProjectId(event.target.value)}>{projects.map(project => <option key={project.id} value={project.id}>{project.name} — {project.path}</option>)}</select></label>
           <label><span>{t('Agent')}</span><select value={agentId} onChange={event => setAgentId(event.target.value)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
         </div>
-        <label className="field-row"><span>{t('Execution')}</span><select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}><option value="compute">{t('Compute environment (recommended)')}</option><option value="local">{t('This Computer — local fallback')}</option></select></label>
+        <label className="field-row"><span>{t('Execution')}</span><select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}><option value="compute" disabled={!computeEligible}>{t('Compute environment')}</option><option value="local">{t('Project folder on this computer')}</option></select></label>
         <label className="field-row"><span>{t('Work instructions')}</span><textarea rows={12} value={task} onChange={event => setTask(event.target.value)} /></label>
         <p className="settings-note">{t('Review the instructions before starting. The agent will work in the selected project and the session will appear under Projects.')}</p>
         <div className="modal-footer"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>{t('Cancel')}</button><button className="primary-button" disabled={busy || !projectId || !agentId || !task.trim()}>{t(busy ? 'Starting…' : 'Start work')}</button></div>

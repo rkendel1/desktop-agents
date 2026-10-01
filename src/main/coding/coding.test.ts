@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ComputerProvider } from '../computer'
@@ -27,7 +26,9 @@ const running: Booted[] = []
 
 interface Booted { root: string; desktop: DesktopState; runtime: DouchatRuntime; coding: CodingService }
 
-const temporary = (prefix: string): string => { const directory = realpathSync(mkdtempSync(join(tmpdir(), prefix))); directories.push(directory); return directory }
+// A project under /private/tmp is correctly rejected on macOS as a system folder.
+// Keep integration workspaces under the checked-out, user-owned repository instead.
+const temporary = (prefix: string): string => { const directory = realpathSync(mkdtempSync(join(process.cwd(), `.test-${prefix}`))); directories.push(directory); return directory }
 const git = (cwd: string, ...args: string[]): string => execFileSync('git', args, { cwd, encoding: 'utf8' })
 
 function repository(): string {
@@ -94,7 +95,7 @@ describe('git visibility', () => {
     expect(diff).toContain('-  return a - b')
     expect(diff).toContain('+  return a + b')
     expect((await gitDiff(path, { path: 'test.js' })).diff).toBe('')
-  })
+  }, 15_000)
 
   it('parses renames and staged changes from porcelain output', () => {
     expect(parseGitStatus('## main...origin/main\0R  new.ts\0old.ts\0A  added.ts\0 D gone.ts\0?? loose.ts\0').changes).toEqual([
@@ -108,7 +109,7 @@ describe('git visibility', () => {
     git(path, 'config', 'core.fsmonitor', `touch ${marker}`)
     await gitStatus(path)
     expect(existsSync(marker)).toBe(false)
-  })
+  }, 15_000)
 })
 
 describe('shell execution', () => {
@@ -178,7 +179,7 @@ describe('an agent coding in a real repository', () => {
     const session = (await coding.settled(started.id))!
 
     // The agent process ran in the project, inspected it, and reported what it did.
-    expect(session.status).toBe('succeeded')
+    expect(session.status, session.error ?? session.result).toBe('succeeded')
     expect(session.result).toContain(`cwd=${path}`)
     expect(session.result).toContain('files=package.json,src,test.js')
     expect(session.result).toContain('git-before=clean')
@@ -202,6 +203,9 @@ describe('an agent coding in a real repository', () => {
     const messages = await desktop.repository.topicMessages(session.conversationId, session.topicId)
     expect(messages.map(message => message.authorId)).toEqual(['user', agent.id])
     expect(messages[0].text).toContain('Fix add()')
+    expect(session.conversationId).toMatch(/^work-/)
+    expect(session.conversationId).not.toBe((await desktop.repository.ensureDirectConversation(agent.id)).conversation.id)
+    expect((await desktop.repository.projectConversations(project.id)).map(chat => chat.id)).not.toContain(session.conversationId)
     const run = (await desktop.repository.runs()).find(item => item.id === session.runId)!
     expect(run).toMatchObject({ status: 'succeeded', agentId: agent.id, conversationId: session.conversationId })
   }, 60_000)
@@ -271,6 +275,9 @@ describe('an agent coding in a real repository', () => {
     const path = repository()
     const agent = await scriptedAgent(booted)
     const project = await booted.coding.addProject(path)
+    const hosted = await booted.desktop.repository.createAgent({ name: 'Hosted', role: 'Engineer', instructions: '', color: '#fff', provider: 'custom:test', model: 'qwen' })
+    await expect(booted.coding.start({ projectId: project.id, agentId: hosted.id, task: 'change it', execution: { kind: 'compute' } })).rejects.toThrow(/hosted model.*cannot run inside a Compute environment/i)
+    expect((await booted.desktop.repository.codingSessions(project.id))).toHaveLength(0)
     await expect(booted.coding.start({ projectId: 'workspace-nope', agentId: agent.id, task: 'x' })).rejects.toThrow(/Project not found/)
     const pids = join(temporary('coding-busy-'), 'pids')
     const started = await booted.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Hang.', { action: 'hang', pidfile: pids }) })

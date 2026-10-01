@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ComputerProvider } from '../computer'
 import type { SecretCodec } from '../credentialVault'
@@ -22,7 +21,8 @@ export class TestKit {
   readonly directories: string[] = []
   readonly running: Booted[] = []
 
-  temporary(prefix: string): string { const directory = realpathSync(mkdtempSync(join(tmpdir(), prefix))); this.directories.push(directory); return directory }
+  /** macOS resolves tmpdir beneath /private, which production intentionally rejects as a workspace. */
+  temporary(prefix: string): string { const directory = realpathSync(mkdtempSync(join(process.cwd(), `.test-${prefix}`))); this.directories.push(directory); return directory }
   git(cwd: string, ...args: string[]): string { return execFileSync('git', args, { cwd, encoding: 'utf8' }) }
 
   repository(): string {

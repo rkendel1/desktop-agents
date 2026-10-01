@@ -30,7 +30,7 @@ used) that has been given a name.
 
 ```
 Foundry UI ─ IPC ─▶ CodingService.start          (main/coding/service.ts)
-  create topic in the agent's direct chat; point the chat's workspace at the project;
+  create a private hidden Work conversation pinned to the project workspace;
   baseline `git status`; record CodingSession(status=running) in FeltDB
         │
         ▼
@@ -59,7 +59,7 @@ persists the reply as a message, finishes the Run, then CodingService re-reads
 | Step | Implementation |
 | --- | --- |
 | Agent creation | `douchat:create-agent` (index.ts) → `validateLocalAgent` → `repository.createAgent`; a local agent is `provider: 'local'` plus `localAgentId`. |
-| Session creation | A "session" is a chat topic: session key `direct:<conversation>:<topic>` (group: `group:…`). `CodingService.start` adds the `CodingSession` record and gives it its own topic. |
+| Session creation | Each `CodingSession` gets a private hidden direct conversation and topic: session key `direct:<conversation>:<topic>`. It never reuses the agent's regular chat. |
 | Provider selection | `config.localAgentId` set → local CLI branch; otherwise a hosted model through `pi-agent-core`. Nothing is inferred from a provider's name. |
 | Process spawning | `spawn(...)` in `localAgentRuntime.ts` (one-shot) and `localAgentConnection.ts` (persistent); own process group (`detached`), pipes for stdio. |
 | Working directory | `localWorkspace(config, sessionKey, workspaceDirectory)`; `workspaceDirectory` comes only from `conversation.workspacePath`. Without one the agent gets an app-owned directory under `userData/local-workspaces` (a scratch space, not a project). |

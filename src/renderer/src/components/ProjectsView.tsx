@@ -1,6 +1,6 @@
 import { FolderGit2, Plus, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
-import { DEFERRED_WORK_ERROR, codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
+import { DEFERRED_WORK_ERROR, canRunWorkOnCompute, codingDisplayState, codingStateLabels, formatCommandLine } from '../../../shared/coding'
 import type { AppSnapshot, Conversation, DevelopmentEnvironmentView, GitState, Project, ProjectCommandOption } from '../../../shared/types'
 import type { StoredJevEvaluation } from '../../../shared/jev'
 import { t, tr } from '../preferences'
@@ -23,7 +23,8 @@ const seconds = (ms: number): string => `${(ms / 1000).toFixed(ms < 10_000 ? 1 :
  * Everything is read from Foundry's service, FeltDB and Git each time; nothing is kept here.
  */
 function ProjectConversation({ project, snapshot, onCreateWork }: { project: Project; snapshot: AppSnapshot; onCreateWork: (draft: WorkDraft) => void }): ReactElement {
-  const projected = (snapshot.conversations ?? []).filter(item => item.projectId === project.id)
+  const workConversationIds = new Set((snapshot.codingSessions ?? []).map(session => session.conversationId))
+  const projected = (snapshot.conversations ?? []).filter(item => item.projectId === project.id && !item.id.startsWith(`work-${project.id}-`) && !workConversationIds.has(item.id))
   const [loaded, setLoaded] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState('')
   const [creating, setCreating] = useState(false)
@@ -109,7 +110,10 @@ function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { p
   const activity = running ? snapshot.codingActivity?.find(item => item.sessionId === running.id) : undefined
   const agents = snapshot.agents
   const chosenAgent = agentId || agents[0]?.id || ''
+  const computeEligible = canRunWorkOnCompute(agents.find(agent => agent.id === chosenAgent))
   const agentOf = (id: string) => agents.find(agent => agent.id === id)
+
+  useEffect(() => { if (!computeEligible) setExecution('local') }, [computeEligible])
 
   // Git is read when the project opens, whenever a session starts, ends or runs a check, when the window returns, and while an agent works.
   const refreshGit = useCallback(async (): Promise<void> => {
@@ -190,19 +194,12 @@ function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { p
           {id === 'environment' && environment ? <span className={`project-tab-dot is-${environment.state}`} aria-label={t(environment.state)} /> : null}
         </button>)}
     </nav>
-    <div className="project-section-summary" role="status">
-      <span><strong>{t('Chat')}</strong> {t('plan and decide')}</span><span aria-hidden>→</span><span><strong>{t('Work')}</strong> {t('assign executable changes')}</span><span aria-hidden>→</span><span><strong>{t('History')}</strong> {t('review results')}</span>
-    </div>
-
     {section === 'chats' && <ProjectConversation project={project} snapshot={snapshot} onCreateWork={onCreateWork ?? (() => undefined)} />}
 
     {section === 'environment' && <EnvironmentPanel project={project} />}
 
     {section === 'work' && selectedSession && <>
-      <div className="project-work-detail-heading">
-        <button className="secondary-button" onClick={() => setSelectedSessionId('')}>{t('Back to project work')}</button>
-        <span className="muted">{t('Work details stay inside this project.')}</span>
-      </div>
+      <div className="project-work-detail-heading"><button className="secondary-button" onClick={() => setSelectedSessionId('')}>{t('Back to project work')}</button></div>
       <CodingSessionPanel session={selectedSession} project={project}
         messages={(snapshot.messages ?? []).filter(message => message.conversationId === selectedSession.conversationId && message.topicId === selectedSession.topicId)}
         agent={snapshot.agents.find(agent => agent.id === selectedSession.agentId)}
@@ -215,7 +212,7 @@ function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { p
       <h3>{running ? t('Happening now') : t('Last time')}</h3>
       {running ? <>
         <p className="coding-meta"><span className={`coding-state coding-state-${codingDisplayState(running, activity)}`} role="status">{t(codingStateLabels[codingDisplayState(running, activity)])}</span>
-          {' · '}{agentOf(running.agentId)?.name ?? running.agentId}{' · '}{running.execution?.kind === 'compute' ? `${t('Environment')} ${running.execution.environment}` : t('This Computer')}</p>
+          {' · '}{agentOf(running.agentId)?.name ?? running.agentId}{' · '}{running.execution?.kind === 'compute' ? `${t('Compute')} · ${running.execution.environment}` : t('Project folder on this computer')}</p>
         <p className="coding-task">{running.task.split('\n')[0]}</p>
         {activity?.state === 'awaiting-approval'
           ? <ApprovalCard activity={activity} session={running} project={project} agent={agentOf(running.agentId)} onCancel={() => void guard(() => window.douchat.cancelCodingSession(running.id))} />
@@ -226,7 +223,7 @@ function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { p
         </div>
       </> : latest ? <>
         <p className="coding-meta"><span className={`coding-state coding-state-${lastState}`}>{t(codingStateLabels[lastState!])}</span>
-          {' · '}{agentOf(latest.agentId)?.name ?? latest.agentId}{' · '}{latest.execution?.kind === 'compute' ? `${t('Compute')} ${latest.execution.environment}` : t('This Computer')}{' · '}{when(latest.finishedAt ?? latest.startedAt ?? latest.createdAt)}</p>
+          {' · '}{agentOf(latest.agentId)?.name ?? latest.agentId}{' · '}{latest.execution?.kind === 'compute' ? `${t('Compute')} · ${latest.execution.environment}` : t('Project folder on this computer')}{' · '}{when(latest.finishedAt ?? latest.startedAt ?? latest.createdAt)}</p>
         <p className="coding-task">{latest.task.split('\n')[0]}</p>
         {latest.result && latest.status !== 'cancelled' && <p className="muted">{latest.result.slice(0, 240)}{latest.result.length > 240 ? '…' : ''}</p>}
         {latest.error && latest.status !== 'interrupted' && <p className="coding-error">{latest.error}</p>}
@@ -252,11 +249,11 @@ function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { p
         </label>
         <label>{t('Execution')}
           <select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}>
-            <option value="compute">{t('Compute environment (recommended)')}</option>
-            <option value="local">{t('This Computer — local fallback')}</option>
+            <option value="compute" disabled={!computeEligible}>{t('Compute environment')}</option>
+            <option value="local">{t('Project folder on this computer')}</option>
           </select>
         </label>
-        <p className="muted coding-note">{execution === 'local' ? t('Local execution: the agent runs on this computer, in this folder. No network or Compute is needed.') : t('Environment: the agent runs on this project’s Compute environment, on a checkout of the committed revision, once Compute reports it ready. If it is not ready, nothing starts here instead.')}</p>
+        <p className="muted coding-note">{execution === 'local' ? t('The agent works in this project folder. Its selected model is unchanged.') : t('A command-line agent runs in this project’s Compute checkout of the committed revision.')}</p>
         {execution === 'compute' && <div className="coding-compute" aria-label={t('Environment')}>
           {!environment ? <p className="muted">{t('Asking Compute…')}</p> : <>
             <p className="coding-meta">{environment.reference ? <>{environment.recipe?.name ?? environment.reference.environment}{environment.computer?.platformLabel ? ` · ${environment.computer.platformLabel}` : ''} · </> : null}<EnvironmentStatus view={environment} /></p>
@@ -329,7 +326,7 @@ function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { p
           const state = codingDisplayState(session, snapshot.codingActivity?.find(item => item.sessionId === session.id))
           return <li key={session.id}><button onClick={() => openSession(session.id)}>
             <span className={`coding-state coding-state-${state}`}>{t(codingStateLabels[state])}</span> {session.task.split('\n')[0]}
-            <span className="muted"> · {agentOf(session.agentId)?.name ?? session.agentId} · {session.execution?.kind === 'compute' ? t('Compute') : t('This Computer')} · {when(session.finishedAt ?? session.startedAt ?? session.createdAt)}</span>
+            <span className="muted"> · {agentOf(session.agentId)?.name ?? session.agentId} · {session.execution?.kind === 'compute' ? t('Compute') : t('Project folder on this computer')} · {when(session.finishedAt ?? session.startedAt ?? session.createdAt)}</span>
           </button></li>
         })}
       </ul>}

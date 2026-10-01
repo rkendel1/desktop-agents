@@ -39,10 +39,10 @@ interface Live { topicId: string; projectId: string; sessionId: string; agentId:
  * Coding sessions: an agent working in a project folder.
  *
  * Coding is a mode of the ordinary agent runtime, not a second one: a session
- * runs its agent through the same chat turn (same conversation, topic, workspace
- * and native thread) that a person typing in the chat would use. The folder is the
- * authority for the code; FeltDB records that the project and the session exist,
- * which agent and chat carry it, what happened and what it produced. The OS
+ * runs through a private project-scoped conversation that is never the agent's
+ * regular chat. The folder is the authority for the code; FeltDB records that
+ * the project and the session exist, which agent and chat carry it, what happened
+ * and what it produced. The OS
  * processes are transient: a session that was still running when the app closed
  * becomes `interrupted`, and continuing it starts a new turn on the same
  * conversation — never a reattachment to the old process.
@@ -290,7 +290,8 @@ export class CodingService {
   /**
    * Start an agent on a project. Returns as soon as the session exists; the turn
    * runs on, and `settled` resolves with the finished session. Each session gets
-   * its own topic, so its conversation stays apart from the agent's other chats.
+   * its own hidden conversation, so its instructions, workspace and native thread
+   * stay apart from the agent's other chats.
    */
   async start(input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment?: string } }): Promise<CodingSession> {
     const task = input.task.trim()
@@ -306,17 +307,17 @@ export class CodingService {
     let where: GitLocation = directory
     const notes: string[] = []
     if (input.execution?.kind === 'compute') {
+      if (!agent.localAgentId) {
+        throw new Error('This agent uses a hosted model, so it cannot run inside a Compute environment. Choose “Project folder on this computer”, or select a command-line agent for Compute.')
+      }
       let prepared: Awaited<ReturnType<CodingService['prepareCompute']>>
       try { prepared = await this.prepareCompute(project, directory, (await this.admit(project.id, input.execution.environment)).environment) }
       catch (error) { throw new Error(`Compute was selected, so nothing was started on this computer. ${error instanceof Error ? error.message : String(error)}`) }
       execution = prepared.target; where = this.remoteGit(prepared.target); notes.push(`runs on Computer "${prepared.target.environment}" in ${prepared.workingDirectory}`, ...prepared.notes)
     }
-    const { conversation } = await this.repository.ensureDirectConversation(agent.id)
-    // The runtime takes its working directory from the chat, so the chat is pointed at the project first.
-    if (conversation.workspacePath !== directory) await this.repository.setConversationWorkspace(conversation.id, directory)
-    const topic = await this.repository.createTopic(conversation.id)
+    const conversation = await this.repository.createCodingConversation(project.id, agent.id, task)
+    const topic = conversation.topics[0]
     if (!topic) throw new Error('Could not open a topic for this session.')
-    await this.repository.renameTopic(conversation.id, topic.id, `Coding: ${task}`.slice(0, 80))
     const baseline = project.isGit || execution ? await gitStatus(where, undefined, { fingerprints: true }) : { changes: [] }
     const session = await this.repository.createCodingSession({
       projectId: project.id, agentId: agent.id, conversationId: conversation.id, topicId: topic.id, workingDirectory: directory,

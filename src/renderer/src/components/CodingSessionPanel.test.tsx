@@ -10,7 +10,7 @@ import { ProjectsView } from './ProjectsView'
 vi.mock('../preferences', () => ({ t: (text: string) => text, tr: (text: string, values: Record<string, unknown> = {}) => text.replace(/\{(\w+)\}/g, (_all, key) => String(values[key])) }))
 
 const project: Project = { id: 'p1', name: 'Fixture', path: '/work/fixture', isGit: true, testCommand: ['npm', 'test'], createdAt: 1, updatedAt: 1 }
-const agent = { id: 'a1', name: 'Coder' } as AgentConfig
+const agent = { id: 'a1', name: 'Coder', localAgentId: 'codex' } as AgentConfig
 const session = (patch: Partial<CodingSession> = {}): CodingSession => ({
   id: 's1', projectId: 'p1', agentId: 'a1', conversationId: 'c', topicId: 't', workingDirectory: '/work/fixture', task: 'Fix add()', status: 'succeeded',
   createdAt: 1000, startedAt: 1000, finishedAt: 5000, result: 'Fixed it.', baseline: { changes: [] }, changes: [], commands: [], events: [], ...patch
@@ -58,7 +58,7 @@ const panel = (patch: Partial<CodingSession> = {}, activity?: CodingActivity, ex
 it('shows the task, agent, project, times, result and the backend state', async () => {
   await panel()
   const text = node.textContent!
-  expect(text).toContain('Fix add()'); expect(text).toContain('Coder'); expect(text).toContain('Fixture'); expect(text).toContain('/work/fixture'); expect(text).toContain('Fixed it.')
+  expect(text).toContain('Fix add()'); expect(text).toContain('Coder'); expect(text).toContain('Fixture'); expect(text).toContain('Fixed it.')
   expect(node.querySelector('[role=status]')!.textContent).toBe('Succeeded')
 })
 
@@ -166,7 +166,7 @@ it('says an interrupted session was interrupted, and Continue starts it again wi
   expect(node.querySelector('[role=status]')!.textContent).toContain('Interrupted')
   expect(node.textContent).toContain('This session was interrupted when Foundry closed.')
   expect(node.textContent).toContain('A new agent process will be started in this project. The previous process will not be resumed.')
-  expect(node.textContent).toContain('Continue will start a new conversation with the existing project/session context.')
+  expect(node.textContent).toContain('The agent’s own conversation is picked up again where its CLI supports it; the project and session context are provided too.')
   await click('Continue')
   expect(api.continueCodingSession).toHaveBeenCalledWith('s1')
 })
@@ -296,15 +296,14 @@ it('will not start on an environment Compute has not reported ready, says why, a
   expect([...node.querySelectorAll('button')].find(item => item.textContent === 'Start work')!.disabled).toBe(true)
 })
 
-it('shows that a session runs on a Computer, and reads its changes and diff from that Computer', async () => {
+it('shows a compact Compute location, and reads its changes and diff from that Computer', async () => {
   await panel({ execution: { kind: 'compute', environment: 'workbench', repository: 'foundry-x-1' }, changes: [{ path: 'a.ts', code: ' M', origin: 'session' }] })
-  expect(node.textContent).toContain('Runs on Computer')
+  expect(node.textContent).toContain('Compute · workbench')
   expect(node.textContent).toContain('workbench')
   expect(api.projectGitStatus).toHaveBeenCalledWith('p1', 's1')
   await click(/a\.ts/)
   expect(api.projectGitDiff).toHaveBeenCalledWith('p1', 'a.ts', 's1')
-  // The session says which environment it runs on and what Compute says about it.
-  expect(node.querySelector('.env-context')!.textContent).toContain('Environment developer · Linux x86_64 · Ready')
+  expect(node.querySelector('.env-context')).toBeNull()
   await click('Open Compute')
   expect(api.openComputeUi).toHaveBeenCalled()
 })

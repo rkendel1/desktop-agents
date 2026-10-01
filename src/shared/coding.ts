@@ -1,4 +1,4 @@
-import type { CodingActivity, CodingSession, GitChange, Project } from './types'
+import type { AgentConfig, CodingActivity, CodingSession, GitChange, Project } from './types'
 import type { PermissionRequest } from './agentPermissions'
 
 /** What a coding session shows as its state. The backend owns the states; this only adds "waiting for approval", which is live. */
@@ -19,6 +19,9 @@ export const codingStateLabels: Record<CodingDisplayState, string> = {
 
 /** A finished session can be continued; a running one cannot. */
 export const canContinue = (session: Pick<CodingSession, 'status'>): boolean => session.status !== 'running'
+
+/** Compute can launch command-line agents only; hosted-model agents run against the selected project folder. */
+export const canRunWorkOnCompute = (agent: Pick<AgentConfig, 'localAgentId'> | undefined): boolean => Boolean(agent?.localAgentId)
 
 /** A reply that promises later work instead of returning the result of this turn. */
 export function isDeferredWorkReply(text: string): boolean {

@@ -32,7 +32,7 @@ const catalog = { data: [
   { id: 'gamma-paid', pricing: { prompt: '0.000003', completion: '0.000015' }, context_length: 200000, supported_parameters: ['tools'], architecture: { input_modalities: ['text'], output_modalities: ['text'] } }
 ] }
 
-async function world(limit: (model: string) => boolean, automaticModelSelection = false) {
+async function world(limit: (model: string) => boolean, automaticModelSelection = false, followDefaultModel = false) {
   const hits: string[] = []
   const server = createServer((request, response) => {
     let body = ''; request.on('data', chunk => { body += chunk })
@@ -53,7 +53,7 @@ async function world(limit: (model: string) => boolean, automaticModelSelection 
   await runtime.configureCustomModels([record], 'mine/gamma-paid')
   const fabric = new ModelFabric(new MemoryStore(), () => customProviderAdapters([record], { stream: runtime.streamModel as never }))
   runtime.attachModelFabric(fabric)
-  const agent = await store.createAgent({ name: 'Coder', role: 'Assistant', instructions: '', color: '#fff', automaticModelSelection, ...runtime.customAgentModel('mine', 'gamma-paid') })
+  const agent = await store.createAgent({ name: 'Coder', role: 'Assistant', instructions: '', color: '#fff', automaticModelSelection, ...runtime.customAgentModel('mine', 'gamma-paid'), followDefaultModel })
   const conversation = (await store.conversations()).find(item => item.type === 'direct' && item.agentIds.includes(agent.id))!
   const key = `direct:${conversation.id}:${await store.activeTopicId(conversation.id)}`
   const internals = runtime as unknown as { session: (config: typeof agent, key: string, context: 'direct') => Promise<{ streamFunction: (model: unknown, context: Context) => AsyncIterable<{ type: string }> & { result(): Promise<{ stopReason: string; content: { type: string; text?: string }[]; errorMessage?: string }> }; state: { model: unknown } }>; activeRun: Map<string, string> }
@@ -70,7 +70,7 @@ describe('the runtime with the model fabric attached', () => {
   })
 
   it('automatic selection on: routed to a free model, cycling past a rate limit, with a Model switched note in Activity — and the paid model is never called', async () => {
-    const w = await world(model => model === 'alpha-free')
+    const w = await world(model => model === 'alpha-free', false, true)
     await w.fabric.discover(); await w.fabric.setPolicy({ automatic: true })
     const events = vi.spyOn(w.store, 'addRunEvent').mockResolvedValue({} as never)
     w.internals.activeRun.set(w.key, 'run-1')
@@ -90,7 +90,7 @@ describe('the runtime with the model fabric attached', () => {
   })
 
   it('when every free model is limited the agent’s call fails with the clear message, says so in Activity, and still does not spend', async () => {
-    const w = await world(model => model !== 'gamma-paid')
+    const w = await world(model => model !== 'gamma-paid', false, true)
     await w.fabric.discover(); await w.fabric.setPolicy({ automatic: true })
     const events = vi.spyOn(w.store, 'addRunEvent').mockResolvedValue({} as never)
     w.internals.activeRun.set(w.key, 'run-2')
@@ -101,7 +101,7 @@ describe('the runtime with the model fabric attached', () => {
   })
 
   it('reads the policy on each call: turning automatic selection off returns the agent to its own model at once', async () => {
-    const w = await world(() => false)
+    const w = await world(() => false, false, true)
     await w.fabric.discover(); await w.fabric.setPolicy({ automatic: true })
     await w.ask(); expect(w.hits.at(-1)).not.toBe('gamma-paid')
     await w.fabric.setPolicy({ automatic: false }); await w.ask(); expect(w.hits.at(-1)).toBe('gamma-paid')

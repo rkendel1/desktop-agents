@@ -159,6 +159,63 @@ describe('Compute authority', () => {
 })
 
 /**
+ * Guards the Work architecture documented in docs/audit-2026-10-01-work-project-single-path.md.
+ * Providers execute; CodingService owns the durable Work → Project association and result.
+ */
+describe('Work → Project authority', () => {
+  const strip = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const pathsCalling = (pattern: RegExp): string[] => production.filter(file => pattern.test(strip(file.text))).map(file => file.path).sort()
+
+  it('has one durable Work mutation entrypoint', () => {
+    expect(pathsCalling(/\.(?:createCodingSession|updateCodingSession|resumeCodingSession|addCodingEvent)\(/)).toEqual(['main/coding/service.ts'])
+    expect(pathsCalling(/\.createCodingConversation\(/)).toEqual(['main/coding/service.ts'])
+    const repository = readFileSync(join(root, 'main/desktopRepository.ts'), 'utf8')
+    expect(repository).toMatch(/updateCodingSession\(id: string, patch: Partial<Omit<CodingSession, 'id' \| 'projectId' \| 'createdAt'>>\)/)
+  })
+
+  it('funnels desktop and remote starts, continuations and cancellations through CodingService', () => {
+    expect(pathsCalling(/\bcoding\.start\(/)).toEqual(['main/coding/api.ts', 'main/index.ts'])
+    expect(pathsCalling(/\bcoding\.continue\(/)).toEqual(['main/coding/api.ts', 'main/index.ts'])
+    expect(pathsCalling(/\bcoding\.cancel\(/)).toEqual(['main/coding/api.ts', 'main/index.ts'])
+    expect(pathsCalling(/\.startCodingSession\(/)).toEqual(['renderer/src/components/ProjectsView.tsx', 'renderer/src/components/TurnIntoWorkDialog.tsx'])
+  })
+
+  it('keeps providers, local-agent adapters and Compute launchers out of Work and Project persistence', () => {
+    const execution = production.filter(file => /^main\/(?:models\/|compute\/|localAgentRuntime\.ts$|desktopAgentExecutor\.ts$)/.test(file.path))
+    for (const file of execution) {
+      const code = strip(file.text)
+      expect(code, file.path).not.toMatch(/(?:create|update|resume)CodingSession|addCodingEvent|createCodingConversation|codingRows|workspaceRows/)
+      if (file.path !== 'main/models/store.ts') expect(code, file.path).not.toMatch(/DesktopRepository/)
+    }
+  })
+
+  it('makes every provider converge through the common runtime result before CodingService records Work', () => {
+    const coding = strip(readFileSync(join(root, 'main/coding/service.ts'), 'utf8'))
+    expect(coding).toMatch(/await this\.runtime\.sendMessage\(session\.conversationId, workPrompt\(prompt\)\)/)
+    expect(coding).toMatch(/const run = \(await this\.repository\.runs\(\)\).*conversationId === session\.conversationId/)
+    expect(coding).toMatch(/const reply = \(await this\.repository\.topicMessages\(session\.conversationId, session\.topicId\)\)/)
+    expect(coding.indexOf('await this.runtime.sendMessage')).toBeLessThan(coding.indexOf('await this.repository.updateCodingSession'))
+  })
+
+  it('keeps UI and ordinary chat outside persistence and makes Work an explicit action', () => {
+    for (const file of production.filter(item => item.path.startsWith('renderer/'))) {
+      const code = strip(file.text)
+      expect(code, file.path).not.toMatch(/from ['"](?:\.\.\/)+main\//)
+      expect(code, file.path).not.toMatch(/createCodingSession|updateCodingSession|resumeCodingSession|addCodingEvent|codingRows|workspaceRows|@feltdb\/core/)
+    }
+    const project = strip(readFileSync(join(root, 'renderer/src/components/ProjectsView.tsx'), 'utf8'))
+    expect(project).toContain('Chat replies do not start coding work; use Turn into work or the Work tab when you want files changed.')
+  })
+
+  it('keeps each Work run in an isolated hidden conversation and rejects hosted + Compute', () => {
+    const repository = strip(readFileSync(join(root, 'main/desktopRepository.ts'), 'utf8'))
+    const coding = strip(readFileSync(join(root, 'main/coding/service.ts'), 'utf8'))
+    expect(repository).toMatch(/id: `work-\$\{projectId\}-\$\{randomUUID\(\)\}`[\s\S]*type: 'direct'[\s\S]*hidden: true/)
+    expect(coding).toMatch(/if \(!agent\.localAgentId\)[\s\S]*hosted model[\s\S]*cannot run inside a Compute environment/)
+  })
+})
+
+/**
  * Guards the invariants of the model fabric (docs/model-fabric.md): routing is provider-neutral, a paid model cannot reach a provider
  * under free-only, and the fabric adds no hidden authority — no store of its own, no credentials, no module-level state.
  */
@@ -218,7 +275,7 @@ describe('Model fabric authority', () => {
   it('is optional and compatible: automatic routing is off by default unless an agent explicitly selects it, and the direct path remains available', () => {
     expect(readFileSync(join(root, 'shared/modelFabric.ts'), 'utf8')).toContain("automatic: false")
     const runtime = readFileSync(join(root, 'main/runtime.ts'), 'utf8')
-    expect(runtime).toMatch(/if \(!config\.automaticModelSelection && !\(await fabric\.policy\(\)\)\.automatic\) source = direct\(\)/)
+    expect(runtime).toMatch(/if \(!config\.automaticModelSelection && !\(config\.followDefaultModel && \(await fabric\.policy\(\)\)\.automatic\)\) source = direct\(\)/)
     expect(runtime).toMatch(/if \(!fabric \|\| config\.localAgentId \|\| !config\.provider\.startsWith\(CUSTOM_PROVIDER_PREFIX\)\) return direct\(\)/)
   })
 })
