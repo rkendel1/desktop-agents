@@ -139,6 +139,9 @@ const defaultAgents = (): AgentConfig[] => {
  *
  * Writes that belong together commit as one FeltDB transaction. Operations
  * that read and then write are serialized, so two of them cannot interleave.
+ * This class persists state; CodingService, providers, and Compute own their respective
+ * lifecycle/execution decisions. Repository invariants prevent identity fields from changing,
+ * but this class is not a second Work orchestrator.
  */
 export class DesktopRepository {
   readonly memories: MemoryRepository
@@ -1649,8 +1652,11 @@ export class DesktopRepository {
       const record = await this.codingRows.get(id)
       if (!record) return undefined
       const current = codingSessionFromRecord(record)
-      if (current.status !== 'running' && patch.status === 'running') return current
-      const next: CodingSession = { ...current, ...patch }
+      // The public type excludes identity fields; stripping them as well makes the invariant
+      // survive untyped IPC input, casts, provider output, and future JavaScript callers.
+      const { id: _id, projectId: _projectId, createdAt: _createdAt, ...safePatch } = patch as Partial<CodingSession>
+      if (current.status !== 'running' && safePatch.status === 'running') return current
+      const next: CodingSession = { ...current, ...safePatch }
       await this.codingRows.put(codingSessionToRecord(next))
       return next
     })

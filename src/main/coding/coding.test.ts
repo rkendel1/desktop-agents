@@ -12,6 +12,7 @@ import { runCommand } from './commands'
 import { gitDiff, gitStatus, parseGitStatus } from './git'
 import { CodingService } from './service'
 import { DesktopProjection } from '../projection'
+import type { CodingSession } from '../../shared/types'
 
 /**
  * Real repository, real processes. Nothing here is a mocked tool call: the agent
@@ -299,6 +300,17 @@ describe('an agent coding in a real repository', () => {
     expect(existsSync(join(path, 'src', 'math.js'))).toBe(true)
   })
 
+  it('establishes Project identity at Work creation and cannot retarget it through a result update', async () => {
+    const booted = await boot()
+    const project = await booted.coding.addProject(repository(), 'Original')
+    const other = await booted.coding.addProject(repository(), 'Other')
+    const agent = await booted.desktop.repository.createAgent({ name: 'Hosted', role: 'Engineer', instructions: '', color: '#fff', provider: 'custom:test', model: 'qwen' })
+    const created = await booted.desktop.repository.createCodingSession({ projectId: project.id, agentId: agent.id, conversationId: 'work-test', topicId: 'topic-test', workingDirectory: project.path, task: 'work', status: 'running', baseline: { changes: [] } })
+    const updated = await booted.desktop.repository.updateCodingSession(created.id, { status: 'failed', result: 'provider result', projectId: other.id } as Partial<CodingSession>)
+    expect(updated).toMatchObject({ id: created.id, projectId: project.id, result: 'provider result', status: 'failed' })
+    expect(updated?.projectId).not.toBe(other.id)
+  }, 20_000)
+
   it('does not call a future-work promise successful project work', async () => {
     const booted = await boot()
     const path = repository()
@@ -357,9 +369,12 @@ describe('restart', () => {
 
     const second = await boot(root)
     const recovered = (await second.desktop.repository.codingSession(running.id))!
-    expect(recovered.status).toBe('interrupted')
+    expect(recovered).toMatchObject({ id: running.id, projectId: project.id, agentId: agent.id, conversationId: 'direct-x', topicId: 't', status: 'interrupted' })
     expect(recovered.error).toContain('did not survive')
     expect(recovered.finishedAt).toBeDefined()
+    expect(recovered.result).toBeUndefined()
+    expect(recovered.runId).toBeUndefined()
+    expect((await second.desktop.repository.codingSessions()).filter(session => session.id === running.id)).toHaveLength(1)
     // It can be started afresh: the interrupted session does not block the agent.
     const next = await second.coding.start({ projectId: project.id, agentId: agent.id, task: taskText('Look around.', { action: 'none' }) })
     expect((await second.coding.settled(next.id))!.status).toBe('succeeded')

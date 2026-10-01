@@ -165,27 +165,55 @@ describe('Compute authority', () => {
 describe('Work → Project authority', () => {
   const strip = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
   const pathsCalling = (pattern: RegExp): string[] => production.filter(file => pattern.test(strip(file.text))).map(file => file.path).sort()
+  const methodSource = (text: string, name: string): string => {
+    const start = text.lastIndexOf(`\n  ${name}(`)
+    const open = text.indexOf('{', start)
+    let depth = 0
+    for (let index = open; index < text.length; index++) {
+      if (text[index] === '{') depth++
+      if (text[index] === '}' && --depth === 0) return text.slice(start, index + 1)
+    }
+    return ''
+  }
 
   it('has one durable Work mutation entrypoint', () => {
     expect(pathsCalling(/\.(?:createCodingSession|updateCodingSession|resumeCodingSession|addCodingEvent)\(/)).toEqual(['main/coding/service.ts'])
     expect(pathsCalling(/\.createCodingConversation\(/)).toEqual(['main/coding/service.ts'])
     const repository = readFileSync(join(root, 'main/desktopRepository.ts'), 'utf8')
     expect(repository).toMatch(/updateCodingSession\(id: string, patch: Partial<Omit<CodingSession, 'id' \| 'projectId' \| 'createdAt'>>\)/)
+    expect(methodSource(repository, 'updateCodingSession')).toMatch(/projectId: _projectId[\s\S]*safePatch/)
+  })
+
+  it('has no alternate CodingSession persistence route and classifies recovery as the only direct lifecycle exception', () => {
+    expect(pathsCalling(/\bcodingRows\.put\(/)).toEqual(['main/desktopRepository.ts'])
+    expect(pathsCalling(/\.collection\(['"]CodingSession['"]\)/)).toEqual(['main/desktopRepository.ts'])
+    expect(pathsCalling(/\b(?:create|update|insert|persist|save|resume)[A-Za-z]*Work\s*\(/)).toEqual([])
+    const repository = strip(readFileSync(join(root, 'main/desktopRepository.ts'), 'utf8'))
+    const recovery = methodSource(repository, 'recoverInterruptedCodingSessions')
+    expect(recovery).toContain("status: 'interrupted'")
+    expect(recovery).not.toMatch(/createCodingSession|addMessage|result\s*:|runId\s*:|projectId\s*:/)
   })
 
   it('funnels desktop and remote starts, continuations and cancellations through CodingService', () => {
     expect(pathsCalling(/\bcoding\.start\(/)).toEqual(['main/coding/api.ts', 'main/index.ts'])
     expect(pathsCalling(/\bcoding\.continue\(/)).toEqual(['main/coding/api.ts', 'main/index.ts'])
     expect(pathsCalling(/\bcoding\.cancel\(/)).toEqual(['main/coding/api.ts', 'main/index.ts'])
+    expect(pathsCalling(/\bcoding\.runChecks\(/)).toEqual(['main/index.ts'])
+    expect(pathsCalling(/\bapi\.startSession\(/)).toEqual(['main/appport/contract.ts'])
+    expect(pathsCalling(/\bapi\.continueSession\(/)).toEqual(['main/appport/contract.ts'])
+    expect(pathsCalling(/\bapi\.cancelSession\(/)).toEqual(['main/appport/contract.ts'])
     expect(pathsCalling(/\.startCodingSession\(/)).toEqual(['renderer/src/components/ProjectsView.tsx', 'renderer/src/components/TurnIntoWorkDialog.tsx'])
+    expect(pathsCalling(/\.continueCodingSession\(/)).toEqual(['renderer/src/components/CodingSessionPanel.tsx', 'renderer/src/components/ProjectsView.tsx'])
+    expect(pathsCalling(/\.cancelCodingSession\(/)).toEqual(['renderer/src/App.tsx', 'renderer/src/components/CodingSessionPanel.tsx', 'renderer/src/components/ProjectsView.tsx'])
+    expect(pathsCalling(/\.runCodingChecks\(/)).toEqual(['renderer/src/components/CodingSessionPanel.tsx', 'renderer/src/components/ProjectsView.tsx'])
   })
 
   it('keeps providers, local-agent adapters and Compute launchers out of Work and Project persistence', () => {
-    const execution = production.filter(file => /^main\/(?:models\/|compute\/|localAgentRuntime\.ts$|desktopAgentExecutor\.ts$)/.test(file.path))
+    const execution = production.filter(file => /^main\/(?:runtime\.ts$|models\/|compute\/|localAgentRuntime\.ts$|desktopAgentExecutor\.ts$)/.test(file.path))
     for (const file of execution) {
       const code = strip(file.text)
       expect(code, file.path).not.toMatch(/(?:create|update|resume)CodingSession|addCodingEvent|createCodingConversation|codingRows|workspaceRows/)
-      if (file.path !== 'main/models/store.ts') expect(code, file.path).not.toMatch(/DesktopRepository/)
+      if (!['main/runtime.ts', 'main/models/store.ts'].includes(file.path)) expect(code, file.path).not.toMatch(/DesktopRepository/)
     }
   })
 

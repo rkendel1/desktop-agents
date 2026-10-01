@@ -13,7 +13,11 @@ import type { EphemeralState } from '../projection'
 import { runCommand } from './commands'
 import { accountChanges, gitCommit, gitDiff, gitRemoteUrl, gitRoot, gitStage, gitStatus, gitUnstage, type GitLocation } from './git'
 
-/** What the service needs from the agent runtime: run a turn in a chat, stop it, and tell it what is going on. */
+/**
+ * Execution/result boundary used by Work. A runtime runs and streams provider work and records
+ * its common TaskRun/ChatMessage result. It never persists CodingSession or Project state;
+ * CodingService consumes that result and owns the durable Work lifecycle.
+ */
 export interface CodingRuntime {
   sendMessage(conversationId: string, text: string): Promise<void>
   stopConversation(conversationId: string): Promise<void>
