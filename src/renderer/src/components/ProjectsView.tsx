@@ -93,6 +93,7 @@ function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { p
   const [selectedSessionId, setSelectedSessionId] = useState(initialSessionId ?? '')
   const [git, setGit] = useState<GitState | { error: string }>()
   const [agentId, setAgentId] = useState('')
+  const [participantAgentIds, setParticipantAgentIds] = useState<string[]>([])
   const [task, setTask] = useState('')
   const [command, setCommand] = useState('')
   const [commandChoice, setCommandChoice] = useState('')
@@ -110,7 +111,7 @@ function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { p
   const activity = running ? snapshot.codingActivity?.find(item => item.sessionId === running.id) : undefined
   const agents = snapshot.agents
   const chosenAgent = agentId || agents[0]?.id || ''
-  const computeEligible = canRunWorkOnCompute(agents.find(agent => agent.id === chosenAgent))
+  const computeEligible = [chosenAgent, ...participantAgentIds].every(id => canRunWorkOnCompute(agents.find(agent => agent.id === id)))
   const agentOf = (id: string) => agents.find(agent => agent.id === id)
 
   useEffect(() => { if (!computeEligible) setExecution('local') }, [computeEligible])
@@ -242,11 +243,15 @@ function ProjectPanel({ project, snapshot, initialSessionId, onCreateWork }: { p
       {!agents.length ? <p className="muted">{t('Create an agent first.')}</p> : <form className="coding-start" onSubmit={event => {
         event.preventDefault()
         if (!task.trim()) return
-        void guard(async () => { const session = await window.douchat.startCodingSession({ projectId: project.id, agentId: chosenAgent, task, ...(execution === 'compute' ? { execution: { kind: 'compute' as const } } : {}) }); setTask(''); openSession(session.id) })
+        void guard(async () => { const session = await window.douchat.startCodingSession({ projectId: project.id, agentId: chosenAgent, ...(participantAgentIds.length ? { participantAgentIds } : {}), task, ...(execution === 'compute' ? { execution: { kind: 'compute' as const } } : {}) }); setTask(''); openSession(session.id) })
       }}>
-        <label>{t('Agent')}
-          <select value={chosenAgent} onChange={event => setAgentId(event.target.value)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>
+        <label>{t('Coordinator')}
+          <select value={chosenAgent} onChange={event => { setAgentId(event.target.value); setParticipantAgentIds(ids => ids.filter(id => id !== event.target.value)) }}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select>
         </label>
+        <fieldset><legend>{t('Candidate participants')}</legend>
+          <p className="muted coding-note">{t('Optional. The coordinator invokes only agents it has a reason to use.')}</p>
+          {agents.filter(agent => agent.id !== chosenAgent).map(agent => <label key={agent.id}><input type="checkbox" checked={participantAgentIds.includes(agent.id)} onChange={event => setParticipantAgentIds(ids => event.target.checked ? [...ids, agent.id] : ids.filter(id => id !== agent.id))} /> {agent.name} · {agent.role}</label>)}
+        </fieldset>
         <label>{t('Execution')}
           <select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}>
             <option value="compute" disabled={!computeEligible}>{t('Compute environment')}</option>

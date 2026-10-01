@@ -44,6 +44,7 @@ import { homedir } from 'node:os'
 import { basename, join, dirname, isAbsolute } from 'node:path'
 import { Agent, type AgentTool } from '@earendil-works/pi-agent-core'
 import { DEFAULT_CLOUD_THINKING_LEVEL } from '../shared/thinkingLevels'
+import { WORK_MAX_PARTICIPANT_TURNS } from '../shared/types'
 import { Type, type ImageContent } from '@earendil-works/pi-ai'
 import { builtinModels } from '@earendil-works/pi-ai/providers/all'
 import type {
@@ -382,7 +383,7 @@ export class DouchatRuntime {
     for (const id of this.customProviders) this.models.deleteProvider(id)
     this.customProviders.clear()
     this.liveAuth.clear()
-    for (const record of records) {
+    for (const record of records.filter(record => record.kind !== 'jev')) {
       const provider = customModelProvider(record)
       this.models.setProvider(provider)
       this.customProviders.add(provider.id)
@@ -3103,7 +3104,8 @@ export class DouchatRuntime {
       history,
       privateMessages,
       signal,
-      maxTurns: 128,
+      // Work uses three waves at the existing parallel cap of four. Ordinary group chat keeps its wider conversational allowance.
+      maxTurns: conversation.id.startsWith('work-') ? WORK_MAX_PARTICIPANT_TURNS : 128,
       initiallyUnavailable: resume ? Object.keys(workflow.group.health ?? {}).filter(id => workflow.group.health![id].status === 'unavailable') : [...unavailableMembers],
       configuredRouting: true,
       directMentionRouting,

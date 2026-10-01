@@ -78,7 +78,7 @@ interface SettingRecord { id: string; value: unknown; updatedAt: number }
 /** Non-secret provider configuration. The secret itself is in the credential vault, named by `credentialRef`. */
 export interface ProviderRecord {
   id: string
-  kind: 'openai' | 'anthropic' | 'ollama'
+  kind: import('../shared/customModels').CustomModelKind
   name: string
   config: Omit<import('../shared/customModels').CustomProviderInput, 'id' | 'name' | 'kind' | 'apiKey'>
   credentialRef?: string
@@ -950,17 +950,18 @@ export class DesktopRepository {
    * conversation of its own so its executable instructions, workspace and
    * native model thread can never leak into the agent's regular chat.
    */
-  createCodingConversation(projectId: string, agentId: string, task: string): Promise<Conversation> {
+  createCodingConversation(projectId: string, agentId: string, task: string, participantAgentIds: string[] = []): Promise<Conversation> {
     return this.exclusive(async () => {
       const project = await this.project(projectId)
       if (!project) throw new Error('Project not found')
-      if (!(await this.agentRows.has(agentId))) throw new Error('Agent not found')
+      const agentIds = [...new Set([agentId, ...participantAgentIds])]
+      if (!(await Promise.all(agentIds.map(id => this.agentRows.has(id)))).every(Boolean)) throw new Error('Agent not found')
       const now = Date.now()
       const topic = newTopic(`Work: ${task}`.slice(0, 80), now)
       const conversation: Conversation = {
-        id: `work-${projectId}-${randomUUID()}`, projectId, type: 'direct', autoNamed: false, hidden: true,
+        id: `work-${projectId}-${randomUUID()}`, projectId, type: agentIds.length > 1 ? 'group' : 'direct', autoNamed: false, hidden: true,
         name: `${project.name} · Work`, description: `Private Work session for ${project.name}`,
-        agentIds: [agentId], leadAgentId: agentId, workspacePath: project.path,
+        agentIds, leadAgentId: agentId, workspacePath: project.path,
         topics: [topic], activeTopicId: topic.id, unread: 0, readAt: now, createdAt: now, updatedAt: now
       }
       await this.felt.transaction(batch => this.stageConversation(batch, conversation))

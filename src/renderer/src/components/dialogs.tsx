@@ -1,4 +1,4 @@
-import { CUSTOM_MODEL_PRESETS, type CustomModelConfig } from '../../../shared/customModels'
+import { CUSTOM_MODEL_PRESETS, isChatModelProvider, type CustomModelConfig } from '../../../shared/customModels'
 import { CHATGPT_FILES, CHATGPT_MEMORY, CHATGPT_PERMISSIONS, CHATGPT_USER } from '../../../shared/chatGPTPreset'
 import { CustomModelSelection } from './CustomModelSelection'
 import { EmbeddedAgentSettings, AgentDialogSurface as NativeDialog } from './AgentDialogSurface'
@@ -77,7 +77,7 @@ export function BotModal({
     }).catch(() => { if (active) setModelLoadError(t("Could not load custom models. Try again in Settings.")) })
     return () => { active = false }
   }, [agent])
-  const selectedProvider = customModels.providers.find(provider => provider.id === customProviderId)
+  const selectedProvider = customModels.providers.filter(isChatModelProvider).find(provider => provider.id === customProviderId)
   const selectedCustomModel = customProviderId === '@default' && customModels.defaultModel
     ? { providerId: '@default', model: 'default' }
     : selectedProvider?.models.includes(customModel) ? { providerId: customProviderId, model: customModel } : undefined

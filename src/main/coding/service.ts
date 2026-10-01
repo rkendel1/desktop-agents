@@ -1,5 +1,5 @@
 import type { PermissionEvent } from '../agentPermissions'
-import type { CodingActivity, CodingEvent, CodingSession, CommandResult, ExecutionTarget, GitDiffMode, GitState, Project, ProjectCommandOption } from '../../shared/types'
+import { WORK_MAX_PARTICIPANTS, type AgentConfig, type CodingActivity, type CodingEvent, type CodingSession, type CommandResult, type ExecutionTarget, type GitDiffMode, type GitState, type Project, type ProjectCommandOption } from '../../shared/types'
 import type { LocalLauncher } from '../../shared/agentExecutor'
 import { ComputeClient } from '../compute/client'
 import { EnvironmentRefusal, type Admission, type EnvironmentService } from '../environment/service'
@@ -12,6 +12,7 @@ import { resolveSavedWorkspace, validateWorkspaceFolder } from '../localWorkspac
 import type { EphemeralState } from '../projection'
 import { runCommand } from './commands'
 import { accountChanges, gitCommit, gitDiff, gitRemoteUrl, gitRoot, gitStage, gitStatus, gitUnstage, type GitLocation } from './git'
+import { initialWorkCoordination, summarizeWorkCoordination } from './coordinator'
 
 /**
  * Execution/result boundary used by Work. A runtime runs and streams provider work and records
@@ -297,35 +298,42 @@ export class CodingService {
    * its own hidden conversation, so its instructions, workspace and native thread
    * stay apart from the agent's other chats.
    */
-  async start(input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment?: string } }): Promise<CodingSession> {
+  async start(input: { projectId: string; agentId: string; participantAgentIds?: string[]; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment?: string } }): Promise<CodingSession> {
     const task = input.task.trim()
     if (!task) throw new Error('Describe the task for the agent.')
     const { project, directory } = await this.requireProject(input.projectId)
     const agent = await this.repository.agent(input.agentId)
     if (!agent) throw new Error('Agent not found')
-    if ((await this.repository.codingSessions()).some(session => session.agentId === agent.id && session.status === 'running')) {
-      throw new Error('This agent is already working on a coding session.')
-    }
+    const participantIds = [...new Set(input.participantAgentIds ?? [])].filter(id => id !== agent.id)
+    if (participantIds.length + 1 > WORK_MAX_PARTICIPANTS) throw new Error(`Work supports at most ${WORK_MAX_PARTICIPANTS} candidate participants.`)
+    const candidates = (await Promise.all(participantIds.map(id => this.repository.agent(id)))).filter((item): item is AgentConfig => Boolean(item))
+    if (candidates.length !== participantIds.length) throw new Error('Participant agent not found')
+    const roster = [agent, ...candidates]
+    const runningAgentIds = new Set((await this.repository.codingSessions()).filter(session => session.status === 'running')
+      .flatMap(session => session.coordination?.participants.map(item => item.agentId) ?? [session.agentId]))
+    const unavailable = roster.find(item => runningAgentIds.has(item.id))
+    if (unavailable) throw new Error(`${unavailable.name} is already working on a coding session.`)
     // An explicit Compute choice is honoured or refused, before anything else is created: it never becomes a local session.
     let execution: ExecutionTarget | undefined
     let where: GitLocation = directory
     const notes: string[] = []
     if (input.execution?.kind === 'compute') {
-      if (!agent.localAgentId) {
-        throw new Error('This agent uses a hosted model, so it cannot run inside a Compute environment. Choose “Project folder on this computer”, or select a command-line agent for Compute.')
+      const hosted = roster.find(item => !item.localAgentId)
+      if (hosted) {
+        throw new Error(`${hosted.name} uses a hosted model, so it cannot run inside a Compute environment. Choose local execution, or select only command-line agents for Compute.`)
       }
       let prepared: Awaited<ReturnType<CodingService['prepareCompute']>>
       try { prepared = await this.prepareCompute(project, directory, (await this.admit(project.id, input.execution.environment)).environment) }
       catch (error) { throw new Error(`Compute was selected, so nothing was started on this computer. ${error instanceof Error ? error.message : String(error)}`) }
       execution = prepared.target; where = this.remoteGit(prepared.target); notes.push(`runs on Computer "${prepared.target.environment}" in ${prepared.workingDirectory}`, ...prepared.notes)
     }
-    const conversation = await this.repository.createCodingConversation(project.id, agent.id, task)
+    const conversation = await this.repository.createCodingConversation(project.id, agent.id, task, participantIds)
     const topic = conversation.topics[0]
     if (!topic) throw new Error('Could not open a topic for this session.')
     const baseline = project.isGit || execution ? await gitStatus(where, undefined, { fingerprints: true }) : { changes: [] }
     const session = await this.repository.createCodingSession({
       projectId: project.id, agentId: agent.id, conversationId: conversation.id, topicId: topic.id, workingDirectory: directory,
-      task, status: 'running', startedAt: Date.now(), baseline, ...(execution ? { execution } : {}),
+      task, status: 'running', startedAt: Date.now(), baseline, coordination: initialWorkCoordination(agent, candidates), ...(execution ? { execution } : {}),
       events: [{ at: Date.now(), kind: 'started', label: execution ? 'Agent started on Compute' : 'Agent started', detail: `${task.slice(0, 200)}${baseline.changes.length ? ` — ${baseline.changes.length} file${baseline.changes.length === 1 ? ' was' : 's were'} already modified` : ''}${notes.length ? ` — ${notes.join('; ')}` : ''}` }]
     })
     this.announce('session.started', session, { task: task.slice(0, 200), agentId: agent.id, alreadyModified: baseline.changes.length, execution: execution ? 'compute' : 'local' })
@@ -365,7 +373,7 @@ export class CodingService {
     this.onActivityChange()
     let failure: string | undefined
     // Whatever an earlier session was granted or asked is withdrawn: an approval belongs to one running session.
-    this.runtime.expirePermissions?.(session.agentId)
+    for (const participant of session.coordination?.participants ?? [{ agentId: session.agentId }]) this.runtime.expirePermissions?.(participant.agentId)
     let launchFailure: ComputeInterruption | undefined
     try {
       // On a Compute session the agent's process is started on the Computer; the Computer must be there.
@@ -379,9 +387,10 @@ export class CodingService {
       if (!this.cancelled.has(session.id)) await this.runtime.sendMessage(session.conversationId, workPrompt(prompt))
     } catch (error) { failure = error instanceof Error ? error.message : String(error) }
     // The session is over, so anything still waiting for an answer can no longer be approved.
-    this.runtime.expirePermissions?.(session.agentId)
+    for (const participant of session.coordination?.participants ?? [{ agentId: session.agentId }]) this.runtime.expirePermissions?.(participant.agentId)
     const run = (await this.repository.runs()).filter(item => item.conversationId === session.conversationId && item.createdAt >= started).sort((a, b) => b.createdAt - a.createdAt)[0]
-    const reply = (await this.repository.topicMessages(session.conversationId, session.topicId)).filter(message => message.authorId === session.agentId && message.kind === 'message' && message.createdAt >= started).at(-1)
+    const participantIds = new Set(session.coordination?.participants.map(item => item.agentId) ?? [session.agentId])
+    const reply = (await this.repository.topicMessages(session.conversationId, session.topicId)).filter(message => participantIds.has(message.authorId) && message.kind === 'message' && message.createdAt >= started).at(-1)
     let status: CodingSession['status'] = 'succeeded'
     if (this.cancelled.has(session.id) || run?.status === 'cancelled') status = 'cancelled'
     else if (this.onCompute.get(session.id)?.interruption || launchFailure) status = 'interrupted'
@@ -403,12 +412,14 @@ export class CodingService {
       completionFailure = DEFERRED_WORK_ERROR
     }
     const error = interruption?.message ?? failure ?? run?.error ?? completionFailure
+    const workflow = (await this.repository.groupWorkflows()).filter(item => item.conversationId === session.conversationId && item.topicId === session.topicId).sort((a, b) => b.updatedAt - a.updatedAt)[0]
+    const coordination = summarizeWorkCoordination(session.coordination ?? initialWorkCoordination((await this.repository.agent(session.agentId))!, []), workflow, await this.repository.agents(), Date.now())
     this.announce('files.changed', session, { during, alreadyModified: already, cleaned: cleaned.length, headMoved })
     await this.record(session.id, { kind: 'changes', label: during ? `${during} file${during === 1 ? '' : 's'} changed during this session` : 'No files changed during this session',
       detail: [already ? `${already} already modified before it started` : '', cleaned.length ? `${cleaned.length} modified before, clean now` : '', headMoved ? 'HEAD moved to a new commit' : ''].filter(Boolean).join(' · ') || undefined })
     await this.record(session.id, { kind: status === 'interrupted' ? 'interrupted' : 'finished', label: status === 'succeeded' ? 'Agent finished' : status === 'cancelled' ? 'Cancelled' : status === 'interrupted' ? 'Interrupted: the Computer stopped answering' : 'Failed', ...(error ? { detail: error.slice(0, 300) } : {}) })
     const finished = await this.repository.updateCodingSession(session.id, {
-      status, finishedAt: Date.now(), changes, cleaned, ...(finalState?.head ? { finalHead: finalState.head } : {}), ...(run ? { runId: run.id } : {}), ...(reply ? { result: reply.text } : {}), ...(error ? { error } : { error: undefined })
+      status, finishedAt: Date.now(), changes, cleaned, coordination, ...(finalState?.head ? { finalHead: finalState.head } : {}), ...(run ? { runId: run.id } : {}), ...(reply ? { result: reply.text } : {}), ...(error ? { error } : { error: undefined })
     })
     this.live.delete(session.id)
     this.announce('session.finished', session, { status, ...(error ? { error: error.slice(0, 300) } : {}) })

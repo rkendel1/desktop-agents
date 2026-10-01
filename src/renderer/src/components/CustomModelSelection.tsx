@@ -1,5 +1,5 @@
 import { t, tr } from '../preferences'
-import type { CustomModelConfig } from '../../../shared/customModels'
+import { isChatModelProvider, type CustomModelConfig } from '../../../shared/customModels'
 
 /** Pick one of the model providers configured on this computer. */
 export function CustomModelSelection({ config, providerId, model, disabled, allowAutomatic, onChange }: {
@@ -11,8 +11,9 @@ export function CustomModelSelection({ config, providerId, model, disabled, allo
   onChange: (providerId: string, model: string) => void
 }) {
   const [defaultProviderId, ...parts] = config.defaultModel.split('/')
-  const defaultAvailable = Boolean(config.providers.find(item => item.id === defaultProviderId)?.models.includes(parts.join('/')))
-  const options = config.providers.flatMap(provider => provider.models.map(id => ({ providerId: provider.id, model: id, label: provider.id + '/' + id })))
+  const chatProviders = config.providers.filter(isChatModelProvider)
+  const defaultAvailable = Boolean(chatProviders.find(item => item.id === defaultProviderId)?.models.includes(parts.join('/')))
+  const options = chatProviders.flatMap(provider => provider.models.map(id => ({ providerId: provider.id, model: id, label: provider.id + '/' + id })))
   options.sort((a, b) => a.label.localeCompare(b.label, 'en', { sensitivity: 'base', numeric: true }))
   const isDefault = providerId === '@default'
   const isAutomatic = providerId === '@automatic'

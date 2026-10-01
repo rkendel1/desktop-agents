@@ -23,18 +23,19 @@ export function TurnIntoWorkDialog({ draft, projects, agents, onClose, onAddProj
   const initialProject = useMemo(() => projects.find(project => project.path === draft.workspacePath) ?? projects[0], [draft.workspacePath, projects])
   const [projectId, setProjectId] = useState(initialProject?.id ?? '')
   const [agentId, setAgentId] = useState(agents.some(agent => agent.id === draft.preferredAgentId) ? draft.preferredAgentId! : agents[0]?.id ?? '')
+  const [participantAgentIds, setParticipantAgentIds] = useState<string[]>([])
   const [task, setTask] = useState(draft.task)
   const [execution, setExecution] = useState<'local' | 'compute'>('compute')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const computeEligible = canRunWorkOnCompute(agents.find(agent => agent.id === agentId))
+  const computeEligible = [agentId, ...participantAgentIds].every(id => canRunWorkOnCompute(agents.find(agent => agent.id === id)))
   useEffect(() => { if (!computeEligible) setExecution('local') }, [computeEligible])
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault()
     if (!projectId || !agentId || !task.trim() || busy) return
     setBusy(true); setError('')
     try {
-      const session = await window.douchat.startCodingSession({ projectId, agentId, task: task.trim(), ...(execution === 'compute' ? { execution: { kind: 'compute' as const } } : {}) })
+      const session = await window.douchat.startCodingSession({ projectId, agentId, ...(participantAgentIds.length ? { participantAgentIds } : {}), task: task.trim(), ...(execution === 'compute' ? { execution: { kind: 'compute' as const } } : {}) })
       onStarted(session)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '') : String(cause))
@@ -52,8 +53,12 @@ export function TurnIntoWorkDialog({ draft, projects, agents, onClose, onAddProj
       </div> : <>
         <div className="two-fields">
           <label><span>{t('Project')}</span><select autoFocus value={projectId} onChange={event => setProjectId(event.target.value)}>{projects.map(project => <option key={project.id} value={project.id}>{project.name} — {project.path}</option>)}</select></label>
-          <label><span>{t('Agent')}</span><select value={agentId} onChange={event => setAgentId(event.target.value)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+          <label><span>{t('Coordinator')}</span><select value={agentId} onChange={event => { setAgentId(event.target.value); setParticipantAgentIds(ids => ids.filter(id => id !== event.target.value)) }}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
         </div>
+        <fieldset className="field-row"><legend>{t('Candidate participants')}</legend>
+          <p className="settings-note">{t('Optional. The coordinator invokes only agents it has a reason to use.')}</p>
+          {agents.filter(agent => agent.id !== agentId).map(agent => <label key={agent.id}><input type="checkbox" checked={participantAgentIds.includes(agent.id)} onChange={event => setParticipantAgentIds(ids => event.target.checked ? [...ids, agent.id] : ids.filter(id => id !== agent.id))} /> {agent.name} · {agent.role}</label>)}
+        </fieldset>
         <label className="field-row"><span>{t('Execution')}</span><select value={execution} onChange={event => setExecution(event.target.value as 'local' | 'compute')}><option value="compute" disabled={!computeEligible}>{t('Compute environment')}</option><option value="local">{t('Project folder on this computer')}</option></select></label>
         <label className="field-row"><span>{t('Work instructions')}</span><textarea rows={12} value={task} onChange={event => setTask(event.target.value)} /></label>
         <p className="settings-note">{t('Review the instructions before starting. The agent will work in the selected project and the session will appear under Projects.')}</p>

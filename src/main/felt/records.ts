@@ -29,7 +29,7 @@ export interface LocalAgentDefinitionRecord { id: string; name: string; command:
 export interface CodingSessionRecord {
   id: string; workspaceId: string; agentId: string; sessionId: string; topicId: string; cwd: string; task: string; status: string
   createdAt: number; startedAt?: number; finishedAt?: number; runId?: string; error?: string; result?: string
-  baseline?: unknown; changes?: unknown; commands?: unknown; events?: unknown; cleaned?: string[]; finalHead?: string; execution?: unknown
+  baseline?: unknown; changes?: unknown; commands?: unknown; events?: unknown; cleaned?: string[]; finalHead?: string; execution?: unknown; coordination?: unknown
 }
 export interface CiRunRecord {
   id: string; workspaceId: string; number: number; status: string; phase: string; createdAt: number; startedAt?: number; finishedAt?: number
@@ -254,7 +254,8 @@ export function codingSessionToRecord(session: CodingSession): CodingSessionReco
     ...(session.startedAt !== undefined ? { startedAt: session.startedAt } : {}), ...(session.finishedAt !== undefined ? { finishedAt: session.finishedAt } : {}),
     ...(session.runId ? { runId: session.runId } : {}), ...(session.error ? { error: session.error } : {}), ...(session.result ? { result: session.result } : {}),
     baseline: session.baseline, changes: session.changes, commands: session.commands, events: session.events,
-    ...(session.cleaned ? { cleaned: session.cleaned } : {}), ...(session.execution ? { execution: session.execution } : {}), ...(session.finalHead ? { finalHead: session.finalHead } : {}) }
+    ...(session.cleaned ? { cleaned: session.cleaned } : {}), ...(session.execution ? { execution: session.execution } : {}), ...(session.finalHead ? { finalHead: session.finalHead } : {}),
+    ...(session.coordination ? { coordination: session.coordination } : {}) }
 }
 
 export function codingSessionFromRecord(record: CodingSessionRecord): CodingSession {
@@ -264,7 +265,8 @@ export function codingSessionFromRecord(record: CodingSessionRecord): CodingSess
     ...(record.runId ? { runId: record.runId } : {}), ...(record.error ? { error: record.error } : {}), ...(record.result ? { result: record.result } : {}),
     baseline: (record.baseline as CodingSession['baseline']) ?? { changes: [] }, changes: (record.changes as CodingSession['changes']) ?? [],
     commands: (record.commands as CodingSession['commands']) ?? [], events: (record.events as CodingSession['events']) ?? [],
-    ...(record.cleaned ? { cleaned: record.cleaned } : {}), ...(record.execution ? { execution: record.execution as CodingSession['execution'] } : {}), ...(record.finalHead ? { finalHead: record.finalHead } : {}) }
+    ...(record.cleaned ? { cleaned: record.cleaned } : {}), ...(record.execution ? { execution: record.execution as CodingSession['execution'] } : {}), ...(record.finalHead ? { finalHead: record.finalHead } : {}),
+    ...(record.coordination ? { coordination: record.coordination as CodingSession['coordination'] } : {}) }
 }
 
 export function ciRunToRecord(run: CiRun): CiRunRecord {

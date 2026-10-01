@@ -138,6 +138,16 @@ export function CodingSessionPanel({ session, project, agent, activity, messages
 
     {session.error && session.status !== 'interrupted' && <p className="coding-error" role="alert">{session.error}</p>}
     {deferredWithoutWork && <p className="coding-error" role="alert">{t(DEFERRED_WORK_ERROR)}</p>}
+    {session.coordination && <section className="coding-section" aria-label={t('Coordination')}>
+      <h3>{t('Coordination')}</h3>
+      <p><strong>{t('Objective')}:</strong> {session.task.split('\n')[0]}</p>
+      <p><strong>{t('Coordinator')}:</strong> {session.coordination.participants.find(item => item.agentId === session.coordination!.coordinatorAgentId)?.role ?? session.coordination.coordinatorAgentId}</p>
+      <p><strong>{t('Progress')}:</strong> {session.coordination.metrics.participantTurns}/{session.coordination.limits.participantTurns} {t('participant turns')} · {session.coordination.metrics.coordinatorTurns}/{session.coordination.limits.coordinatorTurns} {t('decisions')}</p>
+      {session.coordination.next && <p><strong>{t('Next')}:</strong> {session.coordination.next}</p>}
+      {session.coordination.status === 'waiting' && <p className="coding-error" role="alert">{t('The coordinator needs human judgment before continuing.')}</p>}
+      {!!session.coordination.turns.length && <ol className="coding-events">{session.coordination.turns.map(turn => <li key={turn.id}><strong>{turn.role}</strong> — {turn.objective}{turn.result ? <span className="muted"> · {turn.result.slice(0, 240)}</span> : null}</li>)}</ol>}
+      {!!session.coordination.decisions.length && <details><summary>{t('Coordinator decisions')}</summary><ol className="coding-events">{session.coordination.decisions.map(decision => <li key={decision.id}><strong>{decision.action}</strong> — {decision.reason}</li>)}</ol></details>}
+    </section>}
     {session.result && <section className="coding-section"><h3>{t('Result')}</h3><p className="coding-result">{session.result}</p></section>}
 
     <ChangeList session={session} project={project} live={live} />

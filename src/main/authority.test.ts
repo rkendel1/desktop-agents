@@ -217,6 +217,23 @@ describe('Work → Project authority', () => {
     }
   })
 
+  it('keeps coordination journals as communication and CodingService as the only Work-state projector', () => {
+    expect(pathsCalling(/initialWorkCoordination\(|summarizeWorkCoordination\(/)).toEqual(['main/coding/coordinator.ts', 'main/coding/service.ts'])
+    const coordinator = strip(readFileSync(join(root, 'main/coding/coordinator.ts'), 'utf8'))
+    expect(coordinator).not.toMatch(/DesktopRepository|createCodingSession|updateCodingSession|resumeCodingSession|addCodingEvent/)
+    const group = production.filter(file => /(?:groupWorkflow|bot\/group|runtime)\.ts$/.test(file.path))
+    for (const file of group) expect(strip(file.text), file.path).not.toMatch(/createCodingSession|updateCodingSession|resumeCodingSession|addCodingEvent/)
+  })
+
+  it('bounds every coordinated Work turn and never hardcodes a role pipeline', () => {
+    const runtime = strip(readFileSync(join(root, 'main/runtime.ts'), 'utf8'))
+    const types = strip(readFileSync(join(root, 'shared/types.ts'), 'utf8'))
+    expect(runtime).toContain("conversation.id.startsWith('work-') ? WORK_MAX_PARTICIPANT_TURNS")
+    expect(types).toMatch(/WORK_MAX_PARTICIPANT_TURNS = 12/)
+    expect(types).toMatch(/WORK_MAX_COORDINATOR_TURNS = 13/)
+    expect(production.map(file => strip(file.text)).join('\n')).not.toMatch(/Planner\s*(?:→|->)\s*Coder\s*(?:→|->)\s*Tester/)
+  })
+
   it('makes every provider converge through the common runtime result before CodingService records Work', () => {
     const coding = strip(readFileSync(join(root, 'main/coding/service.ts'), 'utf8'))
     expect(coding).toMatch(/await this\.runtime\.sendMessage\(session\.conversationId, workPrompt\(prompt\)\)/)
@@ -238,8 +255,8 @@ describe('Work → Project authority', () => {
   it('keeps each Work run in an isolated hidden conversation and rejects hosted + Compute', () => {
     const repository = strip(readFileSync(join(root, 'main/desktopRepository.ts'), 'utf8'))
     const coding = strip(readFileSync(join(root, 'main/coding/service.ts'), 'utf8'))
-    expect(repository).toMatch(/id: `work-\$\{projectId\}-\$\{randomUUID\(\)\}`[\s\S]*type: 'direct'[\s\S]*hidden: true/)
-    expect(coding).toMatch(/if \(!agent\.localAgentId\)[\s\S]*hosted model[\s\S]*cannot run inside a Compute environment/)
+    expect(repository).toMatch(/id: `work-\$\{projectId\}-\$\{randomUUID\(\)\}`[\s\S]*type: agentIds\.length > 1 \? 'group' : 'direct'[\s\S]*hidden: true/)
+    expect(coding).toMatch(/const hosted = roster\.find\(item => !item\.localAgentId\)[\s\S]*uses a hosted model[\s\S]*cannot run inside a Compute environment/)
   })
 })
 

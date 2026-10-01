@@ -28,12 +28,12 @@ export class GroupDecisionService {
 
   async test(settings: DecisionSettings, provider: DecisionProvider, signal: AbortSignal): Promise<void> {
     if (provider.cloud) settings = { ...settings, model: provider.models[0] }
-    if ((provider.cloud?.protocol ?? decisionProtocol(settings.model)) !== 'jev') {
+    if ((provider.cloud?.protocol ?? (provider.kind === 'jev' ? 'jev' : decisionProtocol(settings.model))) !== 'jev') {
       const value = decisionJson(await this.complete(provider, settings.model, 'Return exactly this JSON object: {"ok":true}', signal)) as { ok?: boolean }
       if (value?.ok !== true) throw new Error('The model did not return valid decision JSON.')
       return
     }
-    if (provider.kind !== 'openai') throw new Error('Jev requires a System One compatible provider.')
+    if (provider.kind !== 'openai' && provider.kind !== 'jev') throw new Error('Jev requires a System One compatible provider.')
     const data = await this.post(customEndpoint(provider.apiBase, provider.kind).replace(/\/chat\/completions$/, '/systemone'), provider,
       { model: settings.model, state: 'A test message.', questions: { test: { type: 'noul', instructions: 'Is the state a text message?' } } }, signal, 8_000)
     if (typeof data.answers?.test?.noul !== 'number') throw new Error('The provider did not return the System One decision format.')
@@ -47,7 +47,7 @@ export class GroupDecisionService {
     if (Date.now() < this.retryAt) throw new Error('The decision service is temporarily unavailable. Using fallback coordination.')
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(40_000)])
     try {
-      const decision = (provider.cloud?.protocol ?? decisionProtocol(settings.model)) === 'jev'
+      const decision = (provider.cloud?.protocol ?? (provider.kind === 'jev' ? 'jev' : decisionProtocol(settings.model))) === 'jev'
         ? await this.jev(settings, provider, group, context, deadline)
         : await this.plan(provider, settings.model, group, context, deadline)
       this.failures = 0
@@ -193,7 +193,7 @@ export class GroupDecisionService {
 
   private async jev(settings: DecisionSettings, provider: DecisionProvider, group: BotGroup,
     context: GroupDecisionContext, signal: AbortSignal): Promise<GroupDecision> {
-    if (provider.kind !== 'openai') throw new Error('Jev requires a System One compatible provider.')
+    if (provider.kind !== 'openai' && provider.kind !== 'jev') throw new Error('Jev requires a System One compatible provider.')
     const latest = context.messages.find(message => message.id === context.requestMessageId)
       ?? [...context.messages].reverse().find(message => message.role === 'user') ?? context.messages.at(-1)
     if (!latest) throw new Error('Missing trigger message.')

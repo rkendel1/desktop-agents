@@ -146,6 +146,21 @@ it.each(['model', 'llm', 'jev'] as const)('routes ordinary models over chat comp
   expect(validateDecisionSettings({ ...settings, mode }).mode).toBe('model')
 })
 
+it('uses an explicitly configured local Jev provider regardless of its model name', async () => {
+  const local = { id: 'jev-local', name: 'Jev (local)', kind: 'jev' as const, apiBase: 'http://127.0.0.1:8765', apiKey: '', models: ['local-decision-model'] }
+  const request = vi.fn<typeof fetch>(async () => response({ answers: {
+    test: { type: 'noul', noul: .99 },
+    leader: { choice: 'lead', probabilities: { lead: .99 } }, route: { choice: 'single', probabilities: { single: .99 } },
+    worker: { choice: 'eng', probabilities: { eng: .99 } }, member_0: { noul: 0 }, member_1: { noul: 1 }
+  } }))
+  const service = new GroupDecisionService(request)
+  const localSettings = { mode: 'model' as const, providerId: local.id, model: 'local-decision-model' }
+  await expect(service.test(localSettings, local, signal)).resolves.toBeUndefined()
+  await expect(service.decide(localSettings, local, group, context, signal)).resolves.toMatchObject({ mode: 'single', memberIds: ['eng'] })
+  expect(request.mock.calls.map(call => call[0])).toEqual(['http://127.0.0.1:8765/v1/systemone', 'http://127.0.0.1:8765/v1/systemone'])
+  expect(new Headers(request.mock.calls[0][1]!.headers).has('authorization')).toBe(false)
+})
+
 it.each(['skip', 'replace', 'pause'] as const)('asks Jev for a leader and recovery action: %s', async action => {
   const request = vi.fn<typeof fetch>(async () => response({ answers: {
     leader: { choice: 'eng', probabilities: { eng: 1 } }, action: { choice: action, probabilities: { [action]: 1 } },

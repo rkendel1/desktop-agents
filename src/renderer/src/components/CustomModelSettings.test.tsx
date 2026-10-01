@@ -61,7 +61,7 @@ it('offers a detected Ollama service with its installed models and no API key', 
     const detected = [...container.querySelectorAll('button')].find(button => button.textContent === 'Use detected Ollama')!
     await act(async () => detected.click())
     expect([...container.querySelectorAll<HTMLInputElement>('input[aria-label^="Model ID"]')].map(input => input.value)).toEqual(ollama.models)
-    expect(container.querySelector('input[type="password"]')).toBeNull()
+    expect(container.querySelector<HTMLInputElement>('input[type="password"]')).toBeNull()
     expect([...container.querySelectorAll('button')].find(button => button.textContent === 'Save')!.disabled).toBe(false)
     await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
     expect(saveCustomModels).toHaveBeenCalledWith([expect.objectContaining(ollama)], 'ollama/llama3.2:latest')
@@ -127,7 +127,7 @@ it('places TokenDance after OpenRouter, defaults to OAuth, saves the authorized 
     await act(async () => button('Add provider').click())
     expect(container.textContent).toContain('These are local agents, not model providers')
     const preset = container.querySelector<HTMLSelectElement>('.custom-model-fields select')!
-    expect([...preset.options].map(o => o.value)).toEqual(['anthropic', 'openai', 'openrouter', 'tokendance', 'deepseek', 'ollama-cloud', 'ollama', 'custom'])
+    expect([...preset.options].map(o => o.value)).toEqual(['anthropic', 'openai', 'openrouter', 'tokendance', 'deepseek', 'ollama-cloud', 'ollama', 'jev-local', 'custom'])
     for (const id of ['anthropic', 'openai', 'openrouter', 'deepseek']) {
       await select(preset, id)
       expect(container.querySelector('a[target="_blank"]')?.textContent).toContain('Create an API key')
@@ -153,6 +153,32 @@ it('places TokenDance after OpenRouter, defaults to OAuth, saves the authorized 
     expect(container.querySelector<HTMLInputElement>('input[type="password"]')?.value).toBe('oauth-fixture-key')
     await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
     expect(saveCustomModels).toHaveBeenCalledWith([expect.objectContaining({ id: 'tokendance', apiKey: 'oauth-fixture-key', apiBase: 'https://tokendance.space/gateway/v1', models: ['mimo-v2.5'] })], 'tokendance/mimo-v2.5')
+  } finally { await act(async () => root.unmount()); container.remove() }
+})
+
+it('adds a keyless local Jev System One provider without changing the chat default', async () => {
+  ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+  const config = { providers: [{ id: 'mine', name: 'Mine', kind: 'openai' as const, apiBase: 'https://example.com/v1', models: ['chat'], hasKey: true }], defaultModel: 'mine/chat' }
+  const saveCustomModels = vi.fn(async () => config)
+  const testCustomModel = vi.fn(async () => ({ ok: true }))
+  Object.defineProperty(window, 'douchat', { configurable: true, value: { getCustomModels: vi.fn(async () => config), detectOllama: vi.fn(async () => null), saveCustomModels, testCustomModel, cancelTokenDanceAuthorization: vi.fn(async () => {}) } })
+  const container = document.createElement('div'); document.body.append(container)
+  const root = createRoot(container)
+  const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === text)!
+  try {
+    await act(async () => root.render(<CustomModelSettings />))
+    await act(async () => button('Add provider').click())
+    const preset = container.querySelector<HTMLSelectElement>('.custom-model-fields select')!
+    await act(async () => { preset.value = 'jev-local'; preset.dispatchEvent(new Event('change', { bubbles: true })) })
+    expect([...container.querySelectorAll<HTMLSelectElement>('select')].some(select => select.value === 'jev')).toBe(true)
+    expect(container.querySelector<HTMLInputElement>('input[value="http://127.0.0.1:8765"]')).not.toBeNull()
+    expect(container.querySelector<HTMLInputElement>('input[aria-label^="Model ID"]')?.value).toBe('jev-latest')
+    expect(container.querySelector<HTMLInputElement>('input[type="password"]')?.required).toBe(false)
+    expect(container.textContent).toContain('typed Noul decision')
+    await act(async () => button('Test connection').click())
+    expect(testCustomModel).toHaveBeenCalledWith({ provider: expect.objectContaining({ id: 'jev-local', kind: 'jev', apiBase: 'http://127.0.0.1:8765', apiKey: undefined, models: ['jev-latest'] }), model: 'jev-latest' })
+    await act(async () => container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+    expect(saveCustomModels).toHaveBeenCalledWith([expect.objectContaining({ id: 'mine' }), expect.objectContaining({ id: 'jev-local', kind: 'jev' })], 'mine/chat')
   } finally { await act(async () => root.unmount()); container.remove() }
 })
 

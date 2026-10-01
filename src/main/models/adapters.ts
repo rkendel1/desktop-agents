@@ -181,4 +181,4 @@ export function customProviderAdapter(record: CustomProviderRecord, deps: Adapte
   }
 }
 
-export const customProviderAdapters = (records: CustomProviderRecord[], deps: AdapterDeps): ModelProvider[] => records.map(record => customProviderAdapter(record, deps))
+export const customProviderAdapters = (records: CustomProviderRecord[], deps: AdapterDeps): ModelProvider[] => records.filter(record => record.kind !== 'jev').map(record => customProviderAdapter(record, deps))

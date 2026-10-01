@@ -81,6 +81,29 @@ it('normalizes complete and versioned endpoints without duplicate v1', () => {
   expect(customEndpoint('https://example.com/v1/chat/completions', 'openai')).toBe('https://example.com/v1/chat/completions')
   expect(customEndpoint('https://example.com/anthropic', 'anthropic')).toBe('https://example.com/anthropic/v1/messages')
   expect(customEndpoint('', 'ollama')).toBe('http://127.0.0.1:11434/v1/chat/completions')
+  expect(customEndpoint('', 'jev')).toBe('http://127.0.0.1:8765/v1/systemone')
+  expect(customEndpoint('http://127.0.0.1:8765/v1', 'jev')).toBe('http://127.0.0.1:8765/v1/systemone')
+  expect(customEndpoint('http://127.0.0.1:8765/v1/systemone', 'jev')).toBe('http://127.0.0.1:8765/v1/systemone')
+})
+it('persists and probes a keyless local Jev provider without making it a chat default', async () => {
+  const { store, vault } = await setup()
+  const jev = { id: 'jev-local', name: 'Jev (local)', kind: 'jev' as const, apiBase: 'http://127.0.0.1:8765', models: ['local-decision-model'] }
+  expect(await store.save([jev], '')).toMatchObject({ providers: [{ ...jev, hasKey: true }], defaultModel: '' })
+  expect(vault.has('provider:jev-local')).toBe(false)
+  expect((await store.records())[0]).toMatchObject({ ...jev, apiKey: '' })
+  let sent: Request | undefined
+  vi.stubGlobal('fetch', async (input: URL | RequestInfo, init?: RequestInit) => {
+    sent = new Request(input, init)
+    return Response.json({ model: 'local-decision-model', answers: { test: { type: 'noul', noul: .99 } } })
+  })
+  await expect(store.test({ provider: jev, model: 'local-decision-model' })).resolves.toEqual({ ok: true, model: 'local-decision-model' })
+  expect(sent!.url).toBe('http://127.0.0.1:8765/v1/systemone')
+  expect(sent!.headers.has('authorization')).toBe(false)
+  await expect(sent!.json()).resolves.toEqual({ model: 'local-decision-model', state: 'A test message.', questions: { test: { type: 'noul', instructions: 'Is the state a text message?' } } })
+  expect(() => customModelProvider({ ...jev, apiKey: '' })).toThrow('decision-only')
+  await store.save([{ ...jev, apiKey: 'optional-local-secret' }], '')
+  expect(vault.get('provider:jev-local')).toBe('optional-local-secret')
+  expect((await store.records())[0].apiKey).toBe('optional-local-secret')
 })
 it('tests with a saved key, blocks changed destinations, and does not echo upstream secrets', async () => {
   const { store } = await setup(); await store.save([provider], '')

@@ -2,7 +2,7 @@ import { useContext, useEffect, useRef, useState, type ReactElement } from 'reac
 import { X } from 'lucide-react'
 import type { AgentConfig, LocalAgent } from '../../../shared/types'
 import { configurableLocalAgents, localModelId, type LocalModelList } from '../../../shared/localModels'
-import type { CustomModelConfig } from '../../../shared/customModels'
+import { isChatModelProvider, type CustomModelConfig } from '../../../shared/customModels'
 import { DEFAULT_CLOUD_THINKING_LEVEL, THINKING_LEVELS, THINKING_LEVEL_LABELS, localThinkingLevels, type ThinkingLevel } from '../../../shared/thinkingLevels'
 import { t, tr } from '../preferences'
 import { EmbeddedAgentSettings, AgentDialogSurface as NativeDialog } from './AgentDialogSurface'
@@ -46,11 +46,12 @@ export function LocalModelDialog({ agent, localAgents = [], onModelSettings, onC
     return () => { active = false }
   }, [agent.id, revision, custom, selectedLocalAgentId])
   const supported = configurableLocalAgents.includes(selectedLocalAgentId)
-  const selectedProvider = customModels?.providers.find(provider => provider.id === customProviderId)
+  const chatProviders = customModels?.providers.filter(isChatModelProvider) ?? []
+  const selectedProvider = chatProviders.find(provider => provider.id === customProviderId)
   const automaticSelection = customProviderId === '@automatic' || customProviderId === '@lowest-cost'
   const validSelection = automaticSelection || customProviderId === '@default' ? Boolean(customModels?.defaultModel) : selectedProvider?.models.includes(model)
   const localModels = list?.models ?? []
-  const reasoningProvider = customProviderId === '@default' ? customModels?.providers.find(provider => customModels.defaultModel.startsWith(provider.id + '/')) : selectedProvider
+  const reasoningProvider = customProviderId === '@default' ? chatProviders.find(provider => customModels?.defaultModel.startsWith(provider.id + '/')) : selectedProvider
   const reasoningModel = customProviderId === '@default' ? customModels?.defaultModel.slice((reasoningProvider?.id.length ?? 0) + 1) : model
   const discoveredThinking = reasoningModel ? reasoningProvider?.thinkingLevels?.[reasoningModel] : undefined
   const thinkingLevels: readonly ThinkingLevel[] = !custom ? localThinkingLevels(selectedLocalAgentId)
@@ -91,7 +92,7 @@ export function LocalModelDialog({ agent, localAgents = [], onModelSettings, onC
             <option value="@default" disabled={!customModels?.defaultModel}>{t('Follow default model')}</option>
             <option value="@automatic" disabled={!customModels?.defaultModel}>{t('Choose the best model for the job')}</option>
             <option value="@lowest-cost" disabled={!customModels?.defaultModel}>{t('Choose the best price available')}</option>
-            {(customModels?.providers ?? []).map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+            {chatProviders.map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
           </select></label>
           {!customProviderId.startsWith('@') && <label className="field-row"><span>{t('Model')}</span><select aria-label={t('Model')} value={model} disabled={saving || loading} onChange={event => setModel(event.target.value)}>
             {(selectedProvider?.models ?? []).map(id => <option key={id} value={id}>{selectedProvider?.modelLabels?.[id] ?? id}</option>)}

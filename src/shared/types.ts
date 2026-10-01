@@ -661,7 +661,7 @@ export interface DouchatApi extends DesktopDataApi, DesktopDeviceApi {
   projectGitUnstage: (id: string, paths: string[]) => Promise<GitState>
   projectGitCommit: (id: string, message: string) => Promise<{ state: GitState; commit: string; summary: string }>
   listCodingSessions: (projectId?: string) => Promise<CodingSession[]>
-  startCodingSession: (input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment?: string } }) => Promise<CodingSession>
+  startCodingSession: (input: { projectId: string; agentId: string; participantAgentIds?: string[]; task: string; execution?: { kind: 'local' } | { kind: 'compute'; environment?: string } }) => Promise<CodingSession>
   computeInventory: () => Promise<ComputeInventory>
   openComputeUi: () => Promise<void>
   modelFabricStatus: () => Promise<import('./modelFabric').ModelFabricStatus>
@@ -775,6 +775,50 @@ export interface CommandResult {
 }
 
 export type CodingSessionStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+
+export const WORK_MAX_PARTICIPANTS = 12
+export const WORK_MAX_PARTICIPANT_TURNS = 12
+export const WORK_MAX_COORDINATOR_TURNS = 13
+
+export interface WorkParticipant {
+  agentId: string
+  role: string
+  status: 'available' | 'invoked' | 'completed' | 'failed' | 'skipped'
+  turns: number
+}
+
+export interface WorkParticipantTurn {
+  id: string
+  agentId: string
+  role: string
+  objective: string
+  status: 'completed' | 'failed'
+  result?: string
+  evidence: string[]
+  startedAt?: number
+  finishedAt?: number
+}
+
+export interface WorkCoordinatorDecision {
+  id: string
+  action: 'run-role' | 'retry-role' | 'change-role' | 'complete' | 'ask-human' | 'block'
+  agentIds: string[]
+  reason: string
+  at: number
+}
+
+/** A bounded projection of the existing group workflow. Chat remains communication; CodingSession remains Work authority. */
+export interface WorkCoordination {
+  mode: 'single' | 'coordinated'
+  status: 'running' | 'waiting' | 'completed' | 'blocked'
+  coordinatorAgentId: string
+  participants: WorkParticipant[]
+  decisions: WorkCoordinatorDecision[]
+  turns: WorkParticipantTurn[]
+  limits: { participants: number; coordinatorTurns: number; participantTurns: number }
+  metrics: { coordinatorTurns: number; participantTurns: number; toolCalls: number; elapsedMs: number; retries: number; rolesInvoked: string[]; skippedRoles: string[] }
+  next?: string
+}
 
 /**
  * An agent working on a project: which project, which agent, the explicit
@@ -953,6 +997,8 @@ export interface CodingSession {
   runId?: string
   /** The agent's final reply. */
   result?: string
+  /** Coordinator decisions and participant evidence, bounded independently of the private transcript. */
+  coordination?: WorkCoordination
   /** Repository state when the session began, and what changed by the end. */
   baseline: GitState
   changes: GitChange[]

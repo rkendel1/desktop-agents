@@ -1241,10 +1241,11 @@ app.whenReady().then(async () => {
     if (!isDouchatRenderer(event.sender) || (projectId !== undefined && typeof projectId !== 'string')) throw new Error('Unauthorized')
     return store.codingSessions(projectId as string | undefined)
   })
-  ipcMain.handle('douchat:start-coding-session', (event, input: { projectId?: unknown; agentId?: unknown; task?: unknown; execution?: { kind?: unknown; environment?: unknown } }) => {
-    if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.agentId !== 'string' || typeof input.task !== 'string') throw new Error('Unauthorized')
+  ipcMain.handle('douchat:start-coding-session', (event, input: { projectId?: unknown; agentId?: unknown; participantAgentIds?: unknown; task?: unknown; execution?: { kind?: unknown; environment?: unknown } }) => {
+    if (!isDouchatRenderer(event.sender) || typeof input?.projectId !== 'string' || typeof input.agentId !== 'string' || typeof input.task !== 'string'
+      || (input.participantAgentIds !== undefined && (!Array.isArray(input.participantAgentIds) || input.participantAgentIds.some(id => typeof id !== 'string')))) throw new Error('Unauthorized')
     const execution = input.execution?.kind === 'compute' ? { kind: 'compute' as const, ...(typeof input.execution.environment === 'string' ? { environment: input.execution.environment } : {}) } : undefined
-    return coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task, ...(execution ? { execution } : {}) })
+    return coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task, ...(input.participantAgentIds ? { participantAgentIds: input.participantAgentIds as string[] } : {}), ...(execution ? { execution } : {}) })
   })
   ipcMain.handle('douchat:continue-coding-session', (event, id: unknown, text?: unknown) => {
     if (!isDouchatRenderer(event.sender) || typeof id !== 'string' || (text !== undefined && typeof text !== 'string')) throw new Error('Unauthorized')

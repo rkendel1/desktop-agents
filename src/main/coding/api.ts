@@ -121,14 +121,15 @@ export class CodingApi {
     return this.view(await this.requireSession(id))
   }
 
-  async startSession(input: { projectId: string; agentId: string; task: string; execution?: { kind: 'local' | 'compute'; environment?: string } }): Promise<SessionView> {
+  async startSession(input: { projectId: string; agentId: string; participantAgentIds?: string[]; task: string; execution?: { kind: 'local' | 'compute'; environment?: string } }): Promise<SessionView> {
     if (typeof input.task !== 'string' || !input.task.trim()) throw new CodingApiError('invalid', 'Describe the task for the agent.')
     if (input.task.length > MAX_TASK) throw new CodingApiError('invalid', `The task is too long (at most ${MAX_TASK} characters).`)
     await this.requireProject(input.projectId)
     if (typeof input.agentId !== 'string' || !(await this.repository.agent(input.agentId))) throw new CodingApiError('not-found', 'Agent not found')
     // Compute execution means the project's development environment; a client may name it, but it must be that one.
     const execution = input.execution?.kind === 'compute' ? { kind: 'compute' as const, ...(input.execution.environment ? { environment: input.execution.environment } : {}) } : undefined
-    return this.guarded(async () => this.view(await this.coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task, ...(execution ? { execution } : {}) })))
+    return this.guarded(async () => this.view(await this.coding.start({ projectId: input.projectId, agentId: input.agentId, task: input.task,
+      ...(input.participantAgentIds ? { participantAgentIds: input.participantAgentIds } : {}), ...(execution ? { execution } : {}) })))
   }
 
   async continueSession(id: string, text?: string): Promise<SessionView> {

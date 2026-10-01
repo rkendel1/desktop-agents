@@ -5,7 +5,7 @@ import * as openaiResponses from '@earendil-works/pi-ai/api/openai-responses'
 import * as anthropic from '@earendil-works/pi-ai/api/anthropic-messages'
 import type { DesktopRepository, ProviderRecord } from './desktopRepository'
 import type { CredentialVault } from './credentialVault'
-import { CUSTOM_PROVIDER_PREFIX, customEndpoint, providerRequiresApiKey, type CustomProviderInput, type CustomModelConfig, type CustomModelTest } from '../shared/customModels'
+import { CUSTOM_PROVIDER_PREFIX, customEndpoint, isChatModelProvider, providerRequiresApiKey, type CustomProviderInput, type CustomModelConfig, type CustomModelTest } from '../shared/customModels'
 import { authorizeOpenAI, discoverOpenAIModels, OpenAIAuthError, refreshOpenAI, type OpenAICredential } from './openaiAuth'
 export interface CustomProviderRecord extends CustomProviderInput { apiKey: string; resolveApiKey?: () => Promise<string> }
 export function usesNativeOpenAITokens(p: Pick<CustomProviderInput, 'kind' | 'apiBase'>): boolean {
@@ -38,7 +38,7 @@ function providerErrorDetail(value: unknown, key: string): string | undefined {
 }
 export function validateCustomProvider(input: CustomProviderInput): CustomProviderInput {
   if (!input || typeof input.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(input.id)) throw new Error("Invalid provider ID.")
-  if (input.kind !== 'openai' && input.kind !== 'anthropic' && input.kind !== 'ollama') throw new Error("Select an API type.")
+  if (input.kind !== 'openai' && input.kind !== 'anthropic' && input.kind !== 'ollama' && input.kind !== 'jev') throw new Error("Select an API type.")
   if (typeof input.name !== 'string' || !input.name.trim()) throw new Error("Enter a provider name.")
   if (typeof input.apiBase !== 'string' || (input.apiKey !== undefined && typeof input.apiKey !== 'string')) throw new Error("Invalid configuration format.")
   const workspaceId = typeof input.workspaceId === 'string' ? input.workspaceId.trim() : ''
@@ -131,7 +131,7 @@ export class CustomModelStore {
   }
   async disconnectOpenAI(): Promise<CustomModelConfig> {
     const providers = (await this.repository.providers()).filter(item => item.id !== 'openai')
-    const choices = providers.flatMap(item => item.config.models.map(model => `${item.id}/${model}`))
+    const choices = providers.filter(item => item.kind !== 'jev').flatMap(item => item.config.models.map(model => `${item.id}/${model}`))
     const current = (await this.repository.setting<string>('defaultModel')) ?? ''
     await this.repository.replaceProviders(providers, choices.includes(current) ? current : choices[0] ?? '')
     this.vault.delete(this.reference('openai'))
@@ -156,7 +156,8 @@ export class CustomModelStore {
     const staged: { record: ProviderRecord; apiKey?: string }[] = inputs.map(validateCustomProvider).map(({ apiKey, ...p }) => {
       const previous = old.get(p.id)
       const sameDestination = previous && customEndpoint(previous.config.apiBase, previous.kind) === customEndpoint(p.apiBase, p.kind)
-      const canReuseKey = providerRequiresApiKey(p.kind) && sameDestination && Boolean(previous.credentialRef && this.vault.has(previous.credentialRef))
+      const acceptsKey = p.kind !== 'ollama'
+      const canReuseKey = acceptsKey && sameDestination && Boolean(previous?.credentialRef && this.vault.has(previous.credentialRef))
       // Never forward a stored key to a changed endpoint without explicit re-entry.
       if (p.authentication === 'chatgpt-oauth' && previous?.config.authentication === 'chatgpt-oauth' && !apiKey) {
         const { id, name, kind, ...config } = p
@@ -165,10 +166,10 @@ export class CustomModelStore {
       if (providerRequiresApiKey(p.kind) && !apiKey && previous && !sameDestination) throw new Error("The API URL changed. Enter the API key again.")
       if (providerRequiresApiKey(p.kind) && !apiKey && !canReuseKey) throw new Error("Enter an API key.")
       const { id, name, kind, ...config } = p
-      return { apiKey, record: { id, name, kind, config, ...(providerRequiresApiKey(kind) ? { credentialRef: this.reference(id) } : {}), updatedAt: Date.now() } }
+      return { apiKey, record: { id, name, kind, config, ...(acceptsKey && (apiKey || canReuseKey) ? { credentialRef: this.reference(id) } : {}), updatedAt: Date.now() } }
     })
     if (new Set(staged.map(item => item.record.id)).size !== staged.length) throw new Error("Duplicate provider IDs.")
-    const choices = staged.flatMap(item => item.record.config.models.map(m => `${item.record.id}/${m}`))
+    const choices = staged.filter(item => item.record.kind !== 'jev').flatMap(item => item.record.config.models.map(m => `${item.record.id}/${m}`))
     // Secrets first: a record must never reference a credential that was not stored.
     for (const item of staged) if (item.apiKey) this.vault.set(item.record.credentialRef!, item.apiKey)
     // The providers and the default model commit together.
@@ -188,15 +189,17 @@ export class CustomModelStore {
       const res = await fetch(nativeOpenAI ? 'https://api.openai.com/v1/responses' : customEndpoint(p.apiBase, p.kind), {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20000),
         headers: customProviderHeaders({ ...p, apiKey: key }, true),
-        body: JSON.stringify(nativeOpenAI ? { model: input.model, max_output_tokens: 16, input: 'Hi', store: false } : { model: input.model, ...completionTokenLimit(p, 16), messages: [{ role: 'user', content: 'Hi' }] })
+        body: JSON.stringify(nativeOpenAI ? { model: input.model, max_output_tokens: 16, input: 'Hi', store: false }
+          : p.kind === 'jev' ? { model: input.model, state: 'A test message.', questions: { test: { type: 'noul', instructions: 'Is the state a text message?' } } }
+            : { model: input.model, ...completionTokenLimit(p, 16), messages: [{ role: 'user', content: 'Hi' }] })
       })
       if (!res.ok) {
         let detail: string | undefined
         try { detail = providerErrorDetail(await res.json(), key) } catch { /* Some providers return an empty or non-JSON error body. */ }
         return { ok: false, error: `Connection failed (HTTP ${res.status})${detail ? `: ${detail}` : '. Check the API URL, key, and model ID.'}` }
       }
-      const data = await res.json() as { content?: unknown[]; choices?: unknown[]; model?: string }
-      if (!(p.kind === 'anthropic' ? Array.isArray(data.content) : nativeOpenAI ? typeof (data as { id?: unknown }).id === 'string' : Array.isArray(data.choices) && data.choices.length)) return { ok: false, error: 'The response format does not match the selected API type.' }
+      const data = await res.json() as { content?: unknown[]; choices?: unknown[]; model?: string; answers?: { test?: { noul?: unknown } } }
+      if (!(p.kind === 'anthropic' ? Array.isArray(data.content) : p.kind === 'jev' ? typeof data.answers?.test?.noul === 'number' : nativeOpenAI ? typeof (data as { id?: unknown }).id === 'string' : Array.isArray(data.choices) && data.choices.length)) return { ok: false, error: 'The response format does not match the selected API type.' }
       return { ok: true, model: input.model }
     } catch { return { ok: false, error: 'Connection failed or timed out. Check the network and API URL.' } }
   }
@@ -216,6 +219,7 @@ export function customModelDefinition(p: CustomProviderRecord, model: string, li
   } as Model<any>
 }
 export function customModelProvider(p: CustomProviderRecord): Provider {
+  if (!isChatModelProvider(p)) throw new Error('Jev providers are decision-only and cannot be registered as chat models.')
   const id = CUSTOM_PROVIDER_PREFIX + p.id
   const endpoint = customEndpoint(p.apiBase, p.kind)
   const baseUrl = endpoint.slice(0, -(p.kind === 'anthropic' ? '/v1/messages'.length : '/chat/completions'.length))
